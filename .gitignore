@@ -1,0 +1,14 @@
+/target
+/dist
+/tests/wpt/
+/tests/data/
+*.so
+*.pyd
+*.dylib
+__pycache__/
+*.egg-info/
+.venv/
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+

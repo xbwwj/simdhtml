@@ -1,0 +1,1599 @@
+//! Set-at-a-time selector evaluation.
+//!
+//! Every compound becomes a bitset.  Descendant, child, adjacent and general
+//! sibling combinators are bitset transforms (`ancestors`, `parents`,
+//! `prev_element_sibling`, `earlier_element_siblings`), so the main path has
+//! no per-element parent/prev backtracking.
+
+use std::borrow::Cow;
+use std::cell::{OnceCell, RefCell};
+use std::ops::Range;
+
+use rustc_hash::FxHashMap;
+use simdhtml::{FlatDoc, NO_NODE, NodeId, NodeKind};
+use thiserror::Error;
+
+use crate::bitset::BitSet;
+use crate::parser::{
+    AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
+    Selector,
+};
+use crate::record::{MatchKind, MatchRecord};
+
+const MAX_DEPTH: usize = 64;
+
+/// Selector evaluation error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum MatchError {
+    #[error("depth limit")]
+    /// Nested `:not`/`:is`/`:has` exceeded the recursion limit.
+    DepthLimit,
+}
+
+/// A typed projection of a selector result.
+///
+/// This is the GAT-based output mode for the query path: the same match mask
+/// can be materialized as records, strings, text, or just a count.  The
+/// lifetime parameter lets borrowed results (`Cow<str>`) point into the
+/// document input without an extra copy.
+pub trait Projection {
+    /// Projection result.  `'a` is the document borrow lifetime.
+    type Output<'a>;
+
+    /// Projects an already-computed match mask.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MatchError::DepthLimit`] if pseudo-element projection needs
+    /// to recurse past the limit.
+    fn finish<'a>(
+        doc: &'a FlatDoc<'_>,
+        selector: &Selector,
+        mask: BitSet,
+    ) -> Result<Self::Output<'a>, MatchError>;
+}
+
+/// Raw `MatchRecord` projection.
+pub struct Records;
+
+impl Projection for Records {
+    type Output<'a> = Vec<MatchRecord>;
+
+    fn finish<'a>(
+        doc: &'a FlatDoc<'_>,
+        selector: &Selector,
+        mask: BitSet,
+    ) -> Result<Self::Output<'a>, MatchError> {
+        {
+            let cache = QueryCache::root();
+            Ok(Eval::new(doc, &cache).records_for(selector, &mask))
+        }
+    }
+}
+
+/// Count-only projection; avoids allocating records.
+pub struct Count;
+
+impl Projection for Count {
+    type Output<'a> = usize;
+
+    fn finish<'a>(
+        doc: &'a FlatDoc<'_>,
+        selector: &Selector,
+        mask: BitSet,
+    ) -> Result<Self::Output<'a>, MatchError> {
+        if common_pseudo(selector).is_some() {
+            {
+                let cache = QueryCache::root();
+                Ok(Eval::new(doc, &cache).records_for(selector, &mask).len())
+            }
+        } else {
+            Ok(mask.count_ones() as usize)
+        }
+    }
+}
+
+/// `getall()`-style string projection.
+pub struct Html;
+
+impl Projection for Html {
+    type Output<'a> = Vec<Cow<'a, str>>;
+
+    fn finish<'a>(
+        doc: &'a FlatDoc<'_>,
+        selector: &Selector,
+        mask: BitSet,
+    ) -> Result<Self::Output<'a>, MatchError> {
+        let cache = QueryCache::root();
+        Ok(Eval::new(doc, &cache)
+            .records_for(selector, &mask)
+            .into_iter()
+            .map(|record| extract(doc, &record))
+            .collect())
+    }
+}
+
+/// Projection to text content / text nodes / attribute values.
+pub struct Texts;
+
+impl Projection for Texts {
+    type Output<'a> = Vec<Cow<'a, str>>;
+
+    fn finish<'a>(
+        doc: &'a FlatDoc<'_>,
+        selector: &Selector,
+        mask: BitSet,
+    ) -> Result<Self::Output<'a>, MatchError> {
+        let cache = QueryCache::root();
+        Ok(Eval::new(doc, &cache)
+            .records_for(selector, &mask)
+            .into_iter()
+            .map(|record| match record.kind {
+                MatchKind::Element => Cow::Owned(doc.text_content(record.node)),
+                MatchKind::Text => doc.text_of(record.node),
+                MatchKind::Attr => {
+                    let span = record.attr.as_ref().expect("attr record");
+                    doc.attr_value_span(span)
+                }
+            })
+            .collect())
+    }
+}
+
+/// Selects all elements matching `selector`, in document order.
+///
+/// # Errors
+///
+/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
+pub fn select(doc: &FlatDoc<'_>, selector: &Selector) -> Result<Vec<MatchRecord>, MatchError> {
+    let cache = QueryCache::root();
+    let ctx = Eval::new(doc, &cache);
+    ctx.select(selector, None)
+}
+
+/// Selects elements matching `selector` inside the subtrees of `roots`.
+///
+/// This is what chained `Selector.css()` uses: the selected elements become
+/// the search roots and only their descendants are considered.
+///
+/// # Errors
+///
+/// Same as [`select`].
+pub fn select_within(
+    doc: &FlatDoc<'_>,
+    selector: &Selector,
+    roots: &[NodeId],
+) -> Result<Vec<MatchRecord>, MatchError> {
+    let cache = QueryCache::root();
+    let ctx = Eval::new(doc, &cache);
+    ctx.select(selector, Some(roots))
+}
+
+/// Selects within `roots` using a chain-local cache.
+///
+/// # Errors
+///
+/// Same as [`select`].
+pub fn select_within_cache(
+    doc: &FlatDoc<'_>,
+    selector: &Selector,
+    roots: &[NodeId],
+    cache: &QueryCache,
+) -> Result<Vec<MatchRecord>, MatchError> {
+    Eval::new(doc, cache).select(selector, Some(roots))
+}
+
+/// Evaluates a projection within `roots` using a chain-local cache.
+///
+/// # Errors
+///
+/// Same as [`select_as`].
+pub fn select_as_within_cache<'a, P: Projection>(
+    doc: &'a FlatDoc<'_>,
+    selector: &Selector,
+    roots: &[NodeId],
+    cache: &QueryCache,
+) -> Result<P::Output<'a>, MatchError> {
+    let ctx = Eval::new(doc, cache);
+    let mask = ctx.mask_for(selector, Some(roots))?;
+    P::finish(doc, selector, mask)
+}
+
+/// Counts matches without materializing `MatchRecord`s.
+///
+/// This is the count projection used by the benchmark and by callers that only
+/// need existence/count.  For pseudo-elements it falls back to record
+/// projection so `::text` / `::attr()` counts stay correct.
+///
+/// # Errors
+///
+/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
+pub fn select_count(doc: &FlatDoc<'_>, selector: &Selector) -> Result<usize, MatchError> {
+    {
+        let cache = QueryCache::root();
+        Eval::new(doc, &cache).count(selector, None)
+    }
+}
+
+/// Like [`select_count`], but restricted to the subtrees of `roots`.
+///
+/// # Errors
+///
+/// Same as [`select_count`].
+pub fn select_count_within(
+    doc: &FlatDoc<'_>,
+    selector: &Selector,
+    roots: &[NodeId],
+) -> Result<usize, MatchError> {
+    {
+        let cache = QueryCache::root();
+        Eval::new(doc, &cache).count(selector, Some(roots))
+    }
+}
+
+/// Evaluates `selector` and projects the result with `P`.
+///
+/// # Errors
+///
+/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
+pub fn select_as<'a, P: Projection>(
+    doc: &'a FlatDoc<'_>,
+    selector: &Selector,
+) -> Result<P::Output<'a>, MatchError> {
+    let cache = QueryCache::root();
+    let ctx = Eval::new(doc, &cache);
+    let mask = ctx.mask_for(selector, None)?;
+    P::finish(doc, selector, mask)
+}
+
+/// Like [`select_as`], but restricted to the subtrees of `roots`.
+///
+/// # Errors
+///
+/// Same as [`select_as`].
+pub fn select_as_within<'a, P: Projection>(
+    doc: &'a FlatDoc<'_>,
+    selector: &Selector,
+    roots: &[NodeId],
+) -> Result<P::Output<'a>, MatchError> {
+    let cache = QueryCache::root();
+    let ctx = Eval::new(doc, &cache);
+    let mask = ctx.mask_for(selector, Some(roots))?;
+    P::finish(doc, selector, mask)
+}
+
+/// Extracts the text/HTML represented by a match record.
+#[must_use]
+pub fn extract<'a>(doc: &'a FlatDoc<'_>, record: &MatchRecord) -> std::borrow::Cow<'a, str> {
+    match record.kind {
+        MatchKind::Element => {
+            let bytes = doc.outer_html(record.node);
+            std::borrow::Cow::Borrowed(
+                std::str::from_utf8(bytes).expect("FlatDoc input is valid UTF-8"),
+            )
+        }
+        MatchKind::Text => doc.text_of(record.node),
+        MatchKind::Attr => {
+            let span = record.attr.as_ref().expect("attr record has a value span");
+            doc.attr_value_span(span)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OfType {
+    First,
+    Last,
+    Nth(i32, i32),
+    NthLast(i32, i32),
+}
+
+#[derive(Debug)]
+struct ChildIndex {
+    children: Vec<NodeId>,
+    child_start: Vec<u32>,
+    element_child_count: Vec<u32>,
+    element_index: Vec<u32>,
+}
+
+/// Query-local cache.
+///
+/// The cache is created for one selector evaluation and dropped afterwards.
+/// It owns only derived query data (`BitSet`s and a child index); it never
+/// borrows or owns the document.
+#[derive(Debug, Default)]
+pub struct QueryCache {
+    child_index: OnceCell<ChildIndex>,
+    tag_masks: RefCell<FxHashMap<String, BitSet>>,
+    attr_masks: RefCell<FxHashMap<String, BitSet>>,
+    bare_compounds: RefCell<FxHashMap<Compound, BitSet>>,
+}
+
+impl QueryCache {
+    /// Creates an empty query cache.
+    #[must_use]
+    pub fn root() -> Self {
+        Self::default()
+    }
+
+    fn get_tag_mask(&self, name: &str) -> Option<BitSet> {
+        self.tag_masks.borrow().get(name).cloned()
+    }
+
+    fn put_tag_mask(&self, name: String, mask: BitSet) {
+        self.tag_masks.borrow_mut().insert(name, mask);
+    }
+
+    fn get_attr_mask(&self, name: &str) -> Option<BitSet> {
+        self.attr_masks.borrow().get(name).cloned()
+    }
+
+    fn put_attr_mask(&self, name: String, mask: BitSet) {
+        self.attr_masks.borrow_mut().insert(name, mask);
+    }
+
+    fn get_compound(&self, compound: &Compound) -> Option<BitSet> {
+        self.bare_compounds.borrow().get(compound).cloned()
+    }
+
+    fn put_compound(&self, compound: Compound, mask: BitSet) {
+        self.bare_compounds.borrow_mut().insert(compound, mask);
+    }
+
+    fn child_index(&self, doc: &FlatDoc<'_>, n: usize) -> &ChildIndex {
+        self.child_index.get_or_init(|| {
+            let mut children = Vec::with_capacity(n.saturating_sub(1));
+            let mut child_start = vec![0u32; n + 1];
+            let mut element_child_count = vec![0u32; n];
+            let mut element_index = vec![0u32; n];
+
+            for id in 0..n {
+                let node = &doc.nodes[id];
+                child_start[id] = children.len() as u32;
+
+                let mut child = node.first_child;
+                while child != NO_NODE {
+                    children.push(child);
+                    if doc.nodes[child as usize].is_element() {
+                        element_child_count[id] += 1;
+                        element_index[child as usize] = element_child_count[id];
+                    }
+                    child = doc.nodes[child as usize].next_sibling;
+                }
+            }
+            child_start[n] = children.len() as u32;
+
+            ChildIndex {
+                children,
+                child_start,
+                element_child_count,
+                element_index,
+            }
+        })
+    }
+}
+
+/// Evaluation context borrowing a document and its progressive cache.
+struct Eval<'a> {
+    doc: &'a FlatDoc<'a>,
+    n: usize,
+    cache: &'a QueryCache,
+    scope: OnceCell<BitSet>,
+    root_element: Option<NodeId>,
+}
+
+impl<'a> Eval<'a> {
+    fn new(doc: &'a FlatDoc<'_>, cache: &'a QueryCache) -> Self {
+        let n = doc.nodes.len();
+
+        let mut root_element = None;
+        let mut child = doc.node(doc.root).first_child;
+        while child != NO_NODE {
+            if doc.node(child).is_element() {
+                root_element = Some(child);
+                break;
+            }
+            child = doc.node(child).next_sibling;
+        }
+
+        Self {
+            doc,
+            n,
+            cache,
+            scope: OnceCell::new(),
+            root_element,
+        }
+    }
+
+    fn child_index(&self) -> &ChildIndex {
+        self.cache.child_index(self.doc, self.n)
+    }
+
+    /// Computes the selector mask and applies an optional root-subtree
+    /// restriction.  The document root needs no restriction mask.
+    fn scope_mask(&self) -> &BitSet {
+        self.scope.get_or_init(|| {
+            let mut mask = BitSet::new(self.n);
+            if let Some(root) = self.root_element {
+                mask.set(root);
+            }
+            mask
+        })
+    }
+
+    fn set_scope(&self, roots: Option<&[NodeId]>) {
+        let mut mask = BitSet::new(self.n);
+        match roots {
+            None => {
+                if let Some(root) = self.root_element {
+                    mask.set(root);
+                }
+            }
+            Some(roots) => {
+                for &root in roots {
+                    let node = self.doc.node(root);
+                    if node.is_element() {
+                        mask.set(root);
+                    } else if node.kind == NodeKind::Root
+                        && let Some(root_element) = self.root_element
+                    {
+                        mask.set(root_element);
+                    }
+                }
+            }
+        }
+        let _ = self.scope.set(mask);
+    }
+
+    fn mask_for(
+        &self,
+        selector: &Selector,
+        roots: Option<&[NodeId]>,
+    ) -> Result<BitSet, MatchError> {
+        self.set_scope(roots);
+        let mut mask = self.selector_mask(selector, 0)?;
+        if let Some(roots) = roots
+            && !(roots.len() == 1 && roots[0] == self.doc.root)
+        {
+            let include_scope = selector_has_scope(selector);
+            let mut allowed = BitSet::new(self.n);
+            for &root in roots {
+                let node = self.doc.node(root);
+                if node.kind == NodeKind::Root {
+                    for id in 1..self.n as u32 {
+                        allowed.set(id);
+                    }
+                } else if node.is_element() {
+                    // Chained selectors search descendants, not the root itself.
+                    if include_scope {
+                        allowed.set(root);
+                    }
+                    for id in root + 1..node.subtree_end.min(self.n as u32) {
+                        allowed.set(id);
+                    }
+                } else if node.parent != NO_NODE {
+                    let parent = self.doc.node(node.parent);
+                    if parent.is_element() {
+                        for id in node.parent + 1..parent.subtree_end.min(self.n as u32) {
+                            allowed.set(id);
+                        }
+                    }
+                }
+            }
+            mask.and_assign(&allowed);
+        }
+        Ok(mask)
+    }
+
+    /// Turns an element mask into records, applying a trailing pseudo-element.
+    fn records_for(&self, scope: &Selector, mask: &BitSet) -> Vec<MatchRecord> {
+        let mut out = Vec::new();
+        for id in mask.iter_set() {
+            out.push(element_record(self.doc, id));
+        }
+
+        // Pseudo-elements are a projection of the element result set.  Keep
+        // the element records for plain selectors and expand only when the
+        // selector text asked for one.
+        if let Some(pseudo) = common_pseudo(scope) {
+            let mut projected = Vec::new();
+            for record in out {
+                self.project(record, &pseudo, &mut projected);
+            }
+            projected
+        } else {
+            out
+        }
+    }
+
+    fn select(
+        &self,
+        selector: &Selector,
+        roots: Option<&[NodeId]>,
+    ) -> Result<Vec<MatchRecord>, MatchError> {
+        let mask = self.mask_for(selector, roots)?;
+        Ok(self.records_for(selector, &mask))
+    }
+
+    fn count(&self, selector: &Selector, roots: Option<&[NodeId]>) -> Result<usize, MatchError> {
+        let mask = self.mask_for(selector, roots)?;
+        if common_pseudo(selector).is_some() {
+            Ok(self.records_for(selector, &mask).len())
+        } else {
+            Ok(mask.count_ones() as usize)
+        }
+    }
+
+    fn selector_mask(&self, selector: &Selector, depth: usize) -> Result<BitSet, MatchError> {
+        if depth > MAX_DEPTH {
+            return Err(MatchError::DepthLimit);
+        }
+        let mut out = BitSet::new(self.n);
+        for complex in &selector.complexes {
+            let mask = self.complex_mask(complex, depth)?;
+            out.or_assign(&mask);
+        }
+        Ok(out)
+    }
+
+    /// Evaluates a complex selector left-to-right.
+    ///
+    /// Left-to-right propagation keeps the final bitset equal to the rightmost
+    /// compound matches; it is equivalent to right-to-left filtering but avoids
+    /// per-element ancestor walks.
+    fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet, MatchError> {
+        if depth > MAX_DEPTH {
+            return Err(MatchError::DepthLimit);
+        }
+        let mut current: Vec<NodeId> = self
+            .compound_mask(&complex.compounds[0], depth)?
+            .iter_set()
+            .collect();
+        for (i, combinator) in complex.combinators.iter().enumerate() {
+            let windows = self.relation_windows(&current, *combinator);
+            current =
+                self.compound_points_in_windows(&complex.compounds[i + 1], &windows, depth)?;
+        }
+        let mut mask = BitSet::new(self.n);
+        for id in current {
+            mask.set(id);
+        }
+        Ok(mask)
+    }
+
+    /// Expands a node set into preorder windows for the next combinator.
+    ///
+    /// No global descendant/child bitmap is built: the windows come directly
+    /// from `subtree_end`, `first_child`/`next_sibling` and sibling links.
+    fn relation_windows(&self, set: &[NodeId], combinator: Combinator) -> Vec<Range<NodeId>> {
+        let mut windows = Vec::new();
+        match combinator {
+            Combinator::Descendant => {
+                for &id in set {
+                    let end = self.doc.node(id).subtree_end.min(self.n as NodeId);
+                    if id + 1 < end {
+                        windows.push(id + 1..end);
+                    }
+                }
+            }
+            Combinator::Child => {
+                for &id in set {
+                    let mut child = self.doc.node(id).first_child;
+                    while child != NO_NODE {
+                        windows.push(child..child + 1);
+                        child = self.doc.node(child).next_sibling;
+                    }
+                }
+            }
+            Combinator::Adjacent => {
+                for &id in set {
+                    let mut next = self.doc.node(id).next_sibling;
+                    while next != NO_NODE && !self.doc.node(next).is_element() {
+                        next = self.doc.node(next).next_sibling;
+                    }
+                    if next != NO_NODE {
+                        windows.push(next..next + 1);
+                    }
+                }
+            }
+            Combinator::GeneralSibling => {
+                for &id in set {
+                    let mut next = self.doc.node(id).next_sibling;
+                    while next != NO_NODE {
+                        windows.push(next..next + 1);
+                        next = self.doc.node(next).next_sibling;
+                    }
+                }
+            }
+        }
+        windows
+    }
+
+    fn compound_points_in_windows(
+        &self,
+        compound: &Compound,
+        windows: &[Range<NodeId>],
+        depth: usize,
+    ) -> Result<Vec<NodeId>, MatchError> {
+        let candidates = compound
+            .tag
+            .as_ref()
+            .map(|tag| self.tag_mask(tag))
+            .or_else(|| self.attr_candidates(compound));
+        let skip_tag = compound.tag.is_some();
+        let mut points = Vec::new();
+        for window in windows {
+            for id in window.clone() {
+                if candidates.as_ref().is_some_and(|c| !c.get(id)) {
+                    continue;
+                }
+                let node = self.doc.node(id);
+                if node.is_element() && self.matches_static(id, compound, skip_tag) {
+                    points.push(id);
+                }
+            }
+        }
+        points.sort_unstable();
+        points.dedup();
+        if !compound.pseudos.is_empty() {
+            let mut mask = BitSet::new(self.n);
+            for &id in &points {
+                mask.set(id);
+            }
+            for pseudo in &compound.pseudos {
+                self.apply_pseudo(&mut mask, pseudo, compound.tag.as_deref(), depth)?;
+            }
+            points = mask.iter_set().collect();
+        }
+        Ok(points)
+    }
+
+    fn tag_mask(&self, name: &str) -> BitSet {
+        if let Some(mask) = self.cache.get_tag_mask(name) {
+            return mask;
+        }
+        let mut mask = BitSet::new(self.n);
+        key_mask(
+            self.doc,
+            &self.doc.tag_name_start,
+            &self.doc.tag_name_len,
+            self.doc.tags.len(),
+            name,
+            |i| self.doc.tags[i].node,
+            &mut mask,
+        );
+        self.cache.put_tag_mask(name.to_string(), mask.clone());
+        mask
+    }
+
+    /// Elements carrying an attribute key.
+    ///
+    /// This is the query-side attribute index: `class` / `id` / `[data-x]`
+    /// selectors first get the set of elements that actually have that key,
+    /// instead of re-cutting every start tag's attribute span per candidate.
+    fn attr_mask(&self, name: &str) -> BitSet {
+        if let Some(mask) = self.cache.get_attr_mask(name) {
+            return mask;
+        }
+        let mut mask = BitSet::new(self.n);
+        key_mask(
+            self.doc,
+            &self.doc.attr_key_start,
+            &self.doc.attr_key_len,
+            self.doc.attr_key_start.len(),
+            name,
+            |a| {
+                let tag = self.doc.attr_tag[a] as usize;
+                self.doc.tags[tag].node
+            },
+            &mut mask,
+        );
+        self.cache.put_attr_mask(name.to_string(), mask.clone());
+        mask
+    }
+
+    /// Attribute-key candidate superset for a class-less compound, or `None`.
+    ///
+    /// `class` is deliberately not used here: an element with a class
+    /// attribute is almost every element in ordinary markup, so the extra
+    /// key-mask pass costs more than the cheap `is_element` scan it replaces.
+    /// `id` and named attributes are much more selective.
+    fn attr_candidates(&self, compound: &Compound) -> Option<BitSet> {
+        if compound.tag.is_some() {
+            return None;
+        }
+        let mut keys: Vec<&str> = Vec::new();
+        if compound.id.is_some() {
+            keys.push("id");
+        }
+        for pred in &compound.attrs {
+            keys.push(pred.name.as_str());
+        }
+        if keys.is_empty() {
+            return None;
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        let mut candidates: Option<BitSet> = None;
+        for key in keys {
+            let attr = self.attr_mask(key);
+            match &mut candidates {
+                Some(current) => {
+                    current.and_assign(&attr);
+                    if current.is_empty() {
+                        break;
+                    }
+                }
+                None => candidates = Some(attr),
+            }
+        }
+        candidates
+    }
+
+    /// Evaluates one compound into a bitset.
+    ///
+    /// A type selector uses the lazy tag index; an attribute key uses the
+    /// query-side attribute index.  Pseudos are applied as set filters
+    /// afterwards.
+    fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet, MatchError> {
+        if depth > MAX_DEPTH {
+            return Err(MatchError::DepthLimit);
+        }
+        if compound.pseudos.is_empty()
+            && let Some(mask) = self.cache.get_compound(compound)
+        {
+            return Ok(mask);
+        }
+        let mut mask = BitSet::new(self.n);
+
+        if let Some(tag) = &compound.tag {
+            for id in self.tag_mask(tag).iter_set() {
+                if self.matches_static(id, compound, true) {
+                    mask.set(id);
+                }
+            }
+        } else if let Some(candidates) = self.attr_candidates(compound) {
+            for id in candidates.iter_set() {
+                if self.matches_static(id, compound, false) {
+                    mask.set(id);
+                }
+            }
+        } else {
+            for id in 0..self.n {
+                let node = &self.doc.nodes[id];
+                if !node.is_element() {
+                    continue;
+                }
+                if self.matches_static(id as NodeId, compound, false) {
+                    mask.set(id as NodeId);
+                }
+            }
+        }
+
+        for pseudo in &compound.pseudos {
+            self.apply_pseudo(&mut mask, pseudo, compound.tag.as_deref(), depth)?;
+        }
+        if compound.pseudos.is_empty() {
+            self.cache.put_compound(compound.clone(), mask.clone());
+        }
+        Ok(mask)
+    }
+
+    fn matches_static(&self, id: NodeId, compound: &Compound, skip_tag: bool) -> bool {
+        let node = self.doc.node(id);
+        if !skip_tag
+            && let Some(tag) = &compound.tag
+            && !self.doc.tag_name(node.tag_token).eq_ignore_ascii_case(tag)
+        {
+            return false;
+        }
+
+        if let Some(id_value) = &compound.id {
+            match find_attr(self.doc, id, "id") {
+                Some(value) if value == *id_value => {}
+                _ => return false,
+            }
+        }
+
+        if !compound.classes.is_empty() {
+            let Some(class_value) = find_attr(self.doc, id, "class") else {
+                return false;
+            };
+            for class in &compound.classes {
+                if !class_value
+                    .split_ascii_whitespace()
+                    .any(|candidate| candidate == class)
+                {
+                    return false;
+                }
+            }
+        }
+
+        for pred in &compound.attrs {
+            if !matches_attr(self.doc, id, pred) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn apply_pseudo(
+        &self,
+        mask: &mut BitSet,
+        pseudo: &Pseudo,
+        tag: Option<&str>,
+        depth: usize,
+    ) -> Result<(), MatchError> {
+        if depth > MAX_DEPTH {
+            return Err(MatchError::DepthLimit);
+        }
+        match pseudo {
+            Pseudo::FirstChild => {
+                let index = self.child_index();
+                self.filter(mask, |id| index.element_index[id as usize] == 1)
+            }
+            Pseudo::LastChild => {
+                let index = self.child_index();
+                self.filter(mask, |id| {
+                    let node = self.doc.node(id);
+                    index.element_index[id as usize]
+                        == index.element_child_count[node.parent as usize]
+                })
+            }
+            Pseudo::OnlyChild => {
+                let index = self.child_index();
+                self.filter(mask, |id| {
+                    let node = self.doc.node(id);
+                    index.element_child_count[node.parent as usize] == 1
+                })
+            }
+            Pseudo::NthChild(a, b) => {
+                let index = self.child_index();
+                self.filter(mask, |id| nth(index.element_index[id as usize], *a, *b))
+            }
+            Pseudo::NthLastChild(a, b) => {
+                let index = self.child_index();
+                self.filter(mask, |id| {
+                    let node = self.doc.node(id);
+                    let count = index.element_child_count[node.parent as usize] as i64;
+                    nth_i64(count - index.element_index[id as usize] as i64 + 1, *a, *b)
+                })
+            }
+            Pseudo::FirstOfType => self.filter_of_type(mask, tag, OfType::First),
+            Pseudo::LastOfType => self.filter_of_type(mask, tag, OfType::Last),
+            Pseudo::NthOfType(a, b) => self.filter_of_type(mask, tag, OfType::Nth(*a, *b)),
+            Pseudo::NthLastOfType(a, b) => self.filter_of_type(mask, tag, OfType::NthLast(*a, *b)),
+            Pseudo::Not(list) => {
+                let nested = self.complex_list_mask(list, depth + 1)?;
+                mask.and_not_assign(&nested);
+            }
+            Pseudo::Is(list) => {
+                let nested = self.complex_list_mask(list, depth + 1)?;
+                mask.and_assign(&nested);
+            }
+            Pseudo::Has(relatives) => {
+                let mut matches = BitSet::new(self.n);
+                for relative in relatives {
+                    let nested = self.relative_mask(relative, depth + 1)?;
+                    matches.or_assign(&nested);
+                }
+                mask.and_assign(&matches);
+            }
+            Pseudo::Root => {
+                self.filter(mask, |id| Some(id) == self.root_element);
+            }
+            Pseudo::Empty => self.filter(mask, |id| self.doc.node(id).first_child == NO_NODE),
+            Pseudo::Scope => {
+                let scope = self.scope_mask().clone();
+                mask.and_assign(&scope);
+            }
+            Pseudo::Contains(text) => {
+                self.filter(mask, |id| self.doc.text_content(id).contains(text));
+            }
+            Pseudo::Never => {
+                mask.clear_all();
+            }
+        }
+        Ok(())
+    }
+
+    fn complex_list_mask(&self, list: &[Complex], depth: usize) -> Result<BitSet, MatchError> {
+        let mut out = BitSet::new(self.n);
+        for complex in list {
+            out.or_assign(&self.complex_mask(complex, depth)?);
+        }
+        Ok(out)
+    }
+
+    fn relative_mask(
+        &self,
+        relative: &RelativeSelector,
+        depth: usize,
+    ) -> Result<BitSet, MatchError> {
+        let nested = self.complex_mask(&relative.complex, depth)?;
+        Ok(match relative.relation {
+            Combinator::Descendant => self.ancestors(&nested),
+            Combinator::Child => self.parents(&nested),
+            Combinator::Adjacent => self.prev_element_sibling(&nested),
+            Combinator::GeneralSibling => self.earlier_element_siblings(&nested),
+        })
+    }
+
+    fn filter_of_type(&self, mask: &mut BitSet, tag: Option<&str>, mode: OfType) {
+        if tag.is_none() {
+            let ids: Vec<NodeId> = mask.iter_set().collect();
+            for id in ids {
+                let (index, total) = self.type_index_by_name(id);
+                let keep = match mode {
+                    OfType::First => index == 1,
+                    OfType::Last => index == total,
+                    OfType::Nth(a, b) => nth(index, a, b),
+                    OfType::NthLast(a, b) => nth_i64(total as i64 - index as i64 + 1, a, b),
+                };
+                if !keep {
+                    mask.clear(id);
+                }
+            }
+            return;
+        }
+        let index = self.child_index();
+        let type_mask = tag.map(|name| self.tag_mask(name));
+        for parent in 0..self.n {
+            let start = index.child_start[parent] as usize;
+            let end = index.child_start[parent + 1] as usize;
+            let total = if matches!(mode, OfType::Last | OfType::NthLast(..)) {
+                index.children[start..end]
+                    .iter()
+                    .filter(|&&child| {
+                        self.doc.node(child).is_element()
+                            && type_mask.as_ref().is_none_or(|m| m.get(child))
+                    })
+                    .count() as u32
+            } else {
+                0
+            };
+            let mut count = 0u32;
+            for &child in &index.children[start..end] {
+                if !self.doc.node(child).is_element() {
+                    continue;
+                }
+                if !type_mask.as_ref().is_some_and(|m| m.get(child)) {
+                    continue;
+                }
+                count += 1;
+                if !mask.get(child) {
+                    continue;
+                }
+                let keep = match mode {
+                    OfType::First => count == 1,
+                    OfType::Last => count == total,
+                    OfType::Nth(a, b) => nth(count, a, b),
+                    OfType::NthLast(a, b) => nth_i64(total as i64 - count as i64 + 1, a, b),
+                };
+                if !keep {
+                    mask.clear(child);
+                }
+            }
+        }
+    }
+
+    fn type_index_by_name(&self, id: NodeId) -> (u32, u32) {
+        let node = self.doc.node(id);
+        let name = self.doc.tag_name(node.tag_token);
+        let mut index = 0u32;
+        let mut total = 0u32;
+        let mut child = self.doc.node(node.parent).first_child;
+        while child != NO_NODE {
+            let child_node = self.doc.node(child);
+            if child_node.is_element()
+                && self
+                    .doc
+                    .tag_name(child_node.tag_token)
+                    .eq_ignore_ascii_case(name)
+            {
+                total += 1;
+                if child <= id {
+                    index += 1;
+                }
+            }
+            child = child_node.next_sibling;
+        }
+        (index, total)
+    }
+
+    fn filter(&self, mask: &mut BitSet, mut predicate: impl FnMut(NodeId) -> bool) {
+        let ids: Vec<NodeId> = mask.iter_set().collect();
+        for id in ids {
+            if !predicate(id) {
+                mask.clear(id);
+            }
+        }
+    }
+
+    /// `ancestors(S)` with preorder prefix counts over `subtree_end`.
+    fn ancestors(&self, set: &BitSet) -> BitSet {
+        let mut prefix = vec![0u32; self.n + 1];
+        for id in 0..self.n {
+            prefix[id + 1] = prefix[id] + u32::from(set.get(id as NodeId));
+        }
+
+        let mut out = BitSet::new(self.n);
+        for id in 0..self.n {
+            let node = &self.doc.nodes[id];
+            if !node.is_element() {
+                continue;
+            }
+            let end = (node.subtree_end as usize).min(self.n);
+            if prefix[end] > prefix[id + 1] {
+                out.set(id as NodeId);
+            }
+        }
+        out
+    }
+
+    /// `parents(S)` as a scatter over the set bits.
+    fn parents(&self, set: &BitSet) -> BitSet {
+        let mut out = BitSet::new(self.n);
+        for id in set.iter_set() {
+            let parent = self.doc.node(id).parent;
+            if parent != NO_NODE {
+                out.set(parent);
+            }
+        }
+        out
+    }
+
+    /// `prev_element_sibling(S)` as a scatter over the set bits.
+    fn prev_element_sibling(&self, set: &BitSet) -> BitSet {
+        let mut out = BitSet::new(self.n);
+        for id in set.iter_set() {
+            let prev = self.doc.node(id).prev_element_sibling;
+            if prev != NO_NODE {
+                out.set(prev);
+            }
+        }
+        out
+    }
+
+    /// `earlier_element_siblings(S)` as a reverse segmented OR per parent.
+    fn earlier_element_siblings(&self, set: &BitSet) -> BitSet {
+        let index = self.child_index();
+        let mut out = BitSet::new(self.n);
+        for parent in 0..self.n {
+            let start = index.child_start[parent] as usize;
+            let end = index.child_start[parent + 1] as usize;
+            let mut seen = false;
+            for &child in index.children[start..end].iter().rev() {
+                if !self.doc.node(child).is_element() {
+                    continue;
+                }
+                if seen {
+                    out.set(child);
+                }
+                if set.get(child) {
+                    seen = true;
+                }
+            }
+        }
+        out
+    }
+
+    /// Projects matched elements to their direct text children or attributes.
+    fn project(&self, record: MatchRecord, pseudo: &PseudoElement, out: &mut Vec<MatchRecord>) {
+        match pseudo {
+            PseudoElement::Text => {
+                let mut child = self.doc.node(record.node).first_child;
+                while child != NO_NODE {
+                    if self.doc.node(child).is_text() {
+                        out.push(MatchRecord {
+                            node: child,
+                            kind: MatchKind::Text,
+                            span: self.doc.node(child).span.clone(),
+                            outer_end: self.doc.node(child).outer_end,
+                            attr: None,
+                        });
+                    }
+                    child = self.doc.node(child).next_sibling;
+                }
+            }
+            PseudoElement::Attr(name) => {
+                if let Some(attr) = self.doc.find_attr(record.node, name) {
+                    let span = attr.value.unwrap_or(0..0);
+                    out.push(MatchRecord {
+                        node: record.node,
+                        kind: MatchKind::Attr,
+                        span: span.clone(),
+                        outer_end: span.end,
+                        attr: Some(span),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Scalar key mask used when AVX2 is unavailable or the key is too long.
+fn key_mask_scalar(
+    doc: &FlatDoc<'_>,
+    starts: &[u32],
+    lens: &[u16],
+    count: usize,
+    needle: &[u8],
+    resolve: impl Fn(usize) -> NodeId,
+    mask: &mut BitSet,
+) {
+    for i in 0..count {
+        let len = lens[i] as usize;
+        if len != needle.len() {
+            continue;
+        }
+        let start = starts[i] as usize;
+        if !doc.input[start..start + len].eq_ignore_ascii_case(needle) {
+            continue;
+        }
+        let node = resolve(i);
+        if node != NO_NODE {
+            mask.set(node);
+        }
+    }
+}
+
+/// Builds a node mask for a short, case-insensitive key (tag name or
+/// attribute name).
+///
+/// `starts`/`lens` are the SoA key spans and `resolve` maps a key index to the
+/// owning element node (`NO_NODE` for keys that do not own one, such as end
+/// tags).  Using the same kernel for tag and attribute keys keeps the SIMD
+/// path in one place.
+fn key_mask(
+    doc: &FlatDoc<'_>,
+    starts: &[u32],
+    lens: &[u16],
+    count: usize,
+    name: &str,
+    resolve: impl Fn(usize) -> NodeId + Copy,
+    mask: &mut BitSet,
+) {
+    let needle = name.as_bytes();
+    if count >= 64 && !needle.is_empty() && needle.len() <= 8 {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 checked above; the kernel bounds-checks its tail.
+                unsafe { key_mask_avx2(doc, starts, lens, count, needle, resolve, mask) };
+                return;
+            }
+        }
+    }
+    key_mask_scalar(doc, starts, lens, count, needle, resolve, mask);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn key_mask_avx2(
+    doc: &FlatDoc<'_>,
+    starts: &[u32],
+    lens: &[u16],
+    count: usize,
+    needle: &[u8],
+    resolve: impl Fn(usize) -> NodeId + Copy,
+    mask: &mut BitSet,
+) {
+    unsafe {
+        if needle.len() <= 4 {
+            key_mask_avx2_4(doc, starts, lens, count, needle, resolve, mask);
+        } else {
+            key_mask_avx2_8(doc, starts, lens, count, needle, resolve, mask);
+        }
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn key_mask_avx2_4(
+        doc: &FlatDoc<'_>,
+        starts: &[u32],
+        lens: &[u16],
+        count: usize,
+        needle: &[u8],
+        resolve: impl Fn(usize) -> NodeId + Copy,
+        mask: &mut BitSet,
+    ) {
+        unsafe {
+            use std::arch::x86_64::{
+                __m128i, __m256, __m256i, _mm_loadu_si128, _mm256_and_si256, _mm256_cmpeq_epi32,
+                _mm256_cvtepu16_epi32, _mm256_i32gather_epi32, _mm256_loadu_si256,
+                _mm256_movemask_ps, _mm256_or_si256, _mm256_set1_epi32,
+            };
+
+            let len = needle.len();
+            let mut expected = 0u32;
+            for (i, &b) in needle.iter().enumerate() {
+                expected |= u32::from(b.to_ascii_lowercase()) << (i * 8);
+            }
+            let byte_mask: u32 = if len == 4 {
+                u32::MAX
+            } else {
+                (1u32 << (len * 8)) - 1
+            };
+            let expected = _mm256_set1_epi32(expected as i32);
+            let byte_mask = _mm256_set1_epi32(byte_mask as i32);
+            let fold = _mm256_set1_epi32(0x2020_2020);
+            let needle_len = _mm256_set1_epi32(len as i32);
+            let input = doc.input.as_ptr();
+            let starts_ptr = starts.as_ptr();
+            let lens_ptr = lens.as_ptr();
+            let mut i = 0usize;
+
+            while i + 8 <= count {
+                let mut max_start = 0usize;
+                for j in 0..8 {
+                    max_start = max_start.max(starts[i + j] as usize);
+                }
+                if max_start + 4 > doc.input.len() {
+                    break;
+                }
+                let idx = _mm256_loadu_si256(starts_ptr.add(i).cast::<__m256i>());
+                let gathered = _mm256_i32gather_epi32(input.cast::<i32>(), idx, 1);
+                let folded = _mm256_or_si256(gathered, fold);
+                let masked = _mm256_and_si256(folded, byte_mask);
+                let bytes_ok = _mm256_cmpeq_epi32(masked, expected);
+                let lenv =
+                    _mm256_cvtepu16_epi32(_mm_loadu_si128(lens_ptr.add(i).cast::<__m128i>()));
+                let len_ok = _mm256_cmpeq_epi32(lenv, needle_len);
+                let mut bits =
+                    (_mm256_movemask_ps(std::mem::transmute::<__m256i, __m256>(bytes_ok))
+                        & _mm256_movemask_ps(std::mem::transmute::<__m256i, __m256>(len_ok)))
+                        as u32;
+                while bits != 0 {
+                    let j = bits.trailing_zeros() as usize;
+                    let node = resolve(i + j);
+                    if node != NO_NODE {
+                        mask.set(node);
+                    }
+                    bits &= bits - 1;
+                }
+                i += 8;
+            }
+            key_mask_scalar(
+                doc,
+                &starts[i..],
+                &lens[i..],
+                count - i,
+                needle,
+                |j| resolve(i + j),
+                mask,
+            );
+        }
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn key_mask_avx2_8(
+        doc: &FlatDoc<'_>,
+        starts: &[u32],
+        lens: &[u16],
+        count: usize,
+        needle: &[u8],
+        resolve: impl Fn(usize) -> NodeId + Copy,
+        mask: &mut BitSet,
+    ) {
+        unsafe {
+            use std::arch::x86_64::{
+                __m128i, __m256, __m256d, __m256i, _mm_loadu_si128, _mm256_and_si256,
+                _mm256_cmpeq_epi32, _mm256_cmpeq_epi64, _mm256_cvtepu16_epi32,
+                _mm256_i32gather_epi64, _mm256_movemask_pd, _mm256_movemask_ps, _mm256_or_si256,
+                _mm256_set1_epi32, _mm256_set1_epi64x,
+            };
+
+            let len = needle.len();
+            let mut expected = 0u64;
+            for (i, &b) in needle.iter().enumerate() {
+                expected |= u64::from(b.to_ascii_lowercase()) << (i * 8);
+            }
+            let byte_mask: u64 = if len == 8 {
+                u64::MAX
+            } else {
+                (1u64 << (len * 8)) - 1
+            };
+            let expected = _mm256_set1_epi64x(expected as i64);
+            let byte_mask = _mm256_set1_epi64x(byte_mask as i64);
+            let fold = _mm256_set1_epi64x(0x2020_2020_2020_2020);
+            let needle_len = _mm256_set1_epi32(len as i32);
+            let input = doc.input.as_ptr();
+            let starts_ptr = starts.as_ptr();
+            let lens_ptr = lens.as_ptr();
+            let mut i = 0usize;
+
+            while i + 8 <= count {
+                let mut max_start = 0usize;
+                for j in 0..8 {
+                    max_start = max_start.max(starts[i + j] as usize);
+                }
+                if max_start + 8 > doc.input.len() {
+                    break;
+                }
+                let idx = _mm_loadu_si128(starts_ptr.add(i).cast::<__m128i>());
+                let gathered = _mm256_i32gather_epi64(input.cast::<i64>(), idx, 1);
+                let folded = _mm256_or_si256(gathered, fold);
+                let masked = _mm256_and_si256(folded, byte_mask);
+                let bytes_ok = _mm256_cmpeq_epi64(masked, expected);
+                let lenv =
+                    _mm256_cvtepu16_epi32(_mm_loadu_si128(lens_ptr.add(i).cast::<__m128i>()));
+                let len_ok = _mm256_cmpeq_epi32(lenv, needle_len);
+                let mut bits =
+                    (_mm256_movemask_pd(std::mem::transmute::<__m256i, __m256d>(bytes_ok))
+                        & (_mm256_movemask_ps(std::mem::transmute::<__m256i, __m256>(len_ok))
+                            & 0xF)) as u32;
+                while bits != 0 {
+                    let j = bits.trailing_zeros() as usize;
+                    let node = resolve(i + j);
+                    if node != NO_NODE {
+                        mask.set(node);
+                    }
+                    bits &= bits - 1;
+                }
+                i += 4;
+            }
+            key_mask_scalar(
+                doc,
+                &starts[i..],
+                &lens[i..],
+                count - i,
+                needle,
+                |j| resolve(i + j),
+                mask,
+            );
+        }
+    }
+}
+
+fn selector_has_scope(selector: &Selector) -> bool {
+    let complexes = |list: &[Complex]| list.iter().any(complex_has_scope);
+    selector.complexes.iter().any(|complex| {
+        complex.compounds.iter().any(|compound| {
+            compound.pseudos.iter().any(|pseudo| match pseudo {
+                Pseudo::Scope => true,
+                Pseudo::Not(list) | Pseudo::Is(list) => complexes(list),
+                Pseudo::Has(rels) => rels.iter().any(|r| complex_has_scope(&r.complex)),
+                _ => false,
+            })
+        })
+    })
+}
+
+fn complex_has_scope(complex: &Complex) -> bool {
+    complex.compounds.iter().any(|compound| {
+        compound.pseudos.iter().any(|pseudo| match pseudo {
+            Pseudo::Scope => true,
+            Pseudo::Not(list) | Pseudo::Is(list) => list.iter().any(complex_has_scope),
+            Pseudo::Has(rels) => rels.iter().any(|r| complex_has_scope(&r.complex)),
+            _ => false,
+        })
+    })
+}
+
+fn element_record(doc: &FlatDoc<'_>, id: NodeId) -> MatchRecord {
+    let node = doc.node(id);
+    MatchRecord {
+        node: id,
+        kind: MatchKind::Element,
+        span: node.span.clone(),
+        outer_end: node.outer_end,
+        attr: None,
+    }
+}
+
+fn common_pseudo(selector: &Selector) -> Option<PseudoElement> {
+    let first = selector.complexes.first()?.pseudo.clone();
+    if selector
+        .complexes
+        .iter()
+        .all(|complex| complex.pseudo == first)
+    {
+        first
+    } else {
+        None
+    }
+}
+
+fn find_attr<'a>(
+    doc: &'a FlatDoc<'_>,
+    node: NodeId,
+    name: &str,
+) -> Option<std::borrow::Cow<'a, str>> {
+    doc.find_attr_index(node, name)
+        .map(|attr| doc.attr_decoded_value(attr))
+}
+
+fn matches_attr(doc: &FlatDoc<'_>, node: NodeId, pred: &AttrPred) -> bool {
+    let Some(value) = find_attr(doc, node, &pred.name) else {
+        return false;
+    };
+    if pred.op == AttrOp::Exists {
+        return true;
+    }
+    let expected = pred.value.as_deref().unwrap_or("");
+    let case_insensitive = pred.case_insensitive;
+
+    match pred.op {
+        AttrOp::Exists => true,
+        AttrOp::NotEquals => !eq(value.as_ref(), expected, case_insensitive),
+        AttrOp::Equals => eq(value.as_ref(), expected, case_insensitive),
+        AttrOp::Includes => value
+            .split_ascii_whitespace()
+            .any(|part| eq(part, expected, case_insensitive)),
+        AttrOp::DashMatch => {
+            eq(value.as_ref(), expected, case_insensitive)
+                || (value.len() > expected.len()
+                    && value.as_bytes().get(expected.len()) == Some(&b'-')
+                    && value
+                        .get(..expected.len())
+                        .is_some_and(|prefix| eq(prefix, expected, case_insensitive)))
+        }
+        AttrOp::Prefix => value
+            .get(..expected.len())
+            .is_some_and(|prefix| eq(prefix, expected, case_insensitive)),
+        AttrOp::Suffix => value
+            .get(value.len().saturating_sub(expected.len())..)
+            .is_some_and(|suffix| eq(suffix, expected, case_insensitive)),
+        AttrOp::Substring => {
+            if case_insensitive {
+                value
+                    .to_ascii_lowercase()
+                    .contains(&expected.to_ascii_lowercase())
+            } else {
+                value.contains(expected)
+            }
+        }
+    }
+}
+
+fn eq(left: &str, right: &str, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
+}
+
+fn nth(index: u32, a: i32, b: i32) -> bool {
+    nth_i64(i64::from(index), a, b)
+}
+
+fn nth_i64(index: i64, a: i32, b: i32) -> bool {
+    let diff = index - i64::from(b);
+    if a == 0 {
+        diff == 0
+    } else {
+        diff % i64::from(a) == 0 && diff / i64::from(a) >= 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_selector;
+    use simdhtml::{ParseMode, parse};
+
+    fn doc(html: &str) -> FlatDoc<'_> {
+        parse(html.as_bytes(), ParseMode::Fast).unwrap()
+    }
+
+    fn tags(doc: &FlatDoc<'_>, sel: &str) -> Vec<String> {
+        let selector = parse_selector(sel).unwrap();
+        select(doc, &selector)
+            .unwrap()
+            .into_iter()
+            .map(|r| doc.tag_name(doc.node(r.node).tag_token).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn simple_and_combinators() {
+        let d = doc("<div><p class=a><span>x</span></p><p><b>y</b></p></div>");
+        assert_eq!(tags(&d, "p"), vec!["p", "p"]);
+        assert_eq!(tags(&d, "div > p"), vec!["p", "p"]);
+        assert_eq!(tags(&d, "p .none"), Vec::<String>::new());
+        assert_eq!(tags(&d, "div span"), vec!["span"]);
+        assert_eq!(tags(&d, "p + p"), vec!["p"]);
+        assert_eq!(tags(&d, "p ~ p"), vec!["p"]);
+    }
+
+    #[test]
+    fn attrs_and_classes() {
+        let d = doc(r#"<a id=x class="foo bar" href="/a" data-v="A B">1</a><a class=foo>2</a>"#);
+        assert_eq!(tags(&d, "a#x"), vec!["a"]);
+        assert_eq!(tags(&d, ".foo"), vec!["a", "a"]);
+        assert_eq!(tags(&d, ".foo.bar"), vec!["a"]);
+        assert_eq!(tags(&d, "[href]"), vec!["a"]);
+        assert_eq!(tags(&d, "[href^='/']"), vec!["a"]);
+        assert_eq!(tags(&d, "[data-v~='B']"), vec!["a"]);
+        assert_eq!(tags(&d, "[data-v='a b' i]"), vec!["a"]);
+    }
+
+    #[test]
+    fn structural_pseudos() {
+        let d = doc("<ul><li>1<li>2<li>3</ul>");
+        assert_eq!(tags(&d, "li:first-child"), vec!["li"]);
+        assert_eq!(tags(&d, "li:last-child"), vec!["li"]);
+        assert_eq!(tags(&d, "li:nth-child(2)"), vec!["li"]);
+        assert_eq!(tags(&d, "li:nth-last-child(1)"), vec!["li"]);
+        assert_eq!(tags(&d, "li:not(:first-child)"), vec!["li", "li"]);
+    }
+
+    #[test]
+    fn has_relative() {
+        let d = doc("<div><a class=x>1</a></div><div><p>2</p></div>");
+        let sel = parse_selector("div:has(> a.x)").unwrap();
+        let recs = select(&d, &sel).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(doc_tag(&d, recs[0].node), "div");
+    }
+
+    #[test]
+    fn css_scope_and_contains() {
+        let d = doc(
+            "<div class=box><span class=title>hello scope</span></div><div class=other>x</div>",
+        );
+        let sel = crate::parser::parse_selector(":scope > .title").unwrap();
+        let recs = select_within(&d, &sel, &[1]).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(doc_tag(&d, recs[0].node), "span");
+        assert_eq!(tags(&d, "div:contains('hello')"), vec!["div"]);
+    }
+
+    #[test]
+    fn pseudo_elements() {
+        let d = doc("<div><a href='/x'>hello<span>!</span></a></div>");
+        let sel = parse_selector("a::text").unwrap();
+        let recs = select(&d, &sel).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(&*extract(&d, &recs[0]), "hello");
+        let sel = parse_selector("a::attr(href)").unwrap();
+        let recs = select(&d, &sel).unwrap();
+        assert_eq!(&*extract(&d, &recs[0]), "/x");
+    }
+
+    #[test]
+    fn simd_tag_mask_matches_scalar_on_many_tags() {
+        let mut html = String::from("<html><body>");
+        for i in 0..3000 {
+            match i % 5 {
+                0 => html.push_str("<div class=x>"),
+                1 => html.push_str("<p>"),
+                2 => html.push_str("<span>"),
+                3 => html.push_str("<DIV>"),
+                _ => html.push_str("<article>"),
+            }
+            html.push('x');
+            html.push_str("</");
+            match i % 5 {
+                0 => html.push_str("div>"),
+                1 => html.push_str("p>"),
+                2 => html.push_str("span>"),
+                3 => html.push_str("div>"),
+                _ => html.push_str("article>"),
+            }
+        }
+        html.push_str("</body></html>");
+        let d = doc(&html);
+        assert_eq!(d.tags.len(), 6004);
+        assert_eq!(tags(&d, "div").len(), 1200);
+        assert_eq!(tags(&d, "p").len(), 600);
+        assert_eq!(tags(&d, "span").len(), 600);
+        assert_eq!(tags(&d, "article").len(), 600);
+    }
+
+    #[test]
+    fn query_side_child_and_type_indexes() {
+        let d = doc("<div><p>a</p><span>x</span><p>b</p><p>c</p></div>");
+        assert_eq!(tags(&d, "p:nth-of-type(2)"), vec!["p"]);
+        assert_eq!(tags(&d, "p:last-of-type"), vec!["p"]);
+        assert_eq!(tags(&d, "p:nth-last-of-type(2)"), vec!["p"]);
+        assert_eq!(tags(&d, "span:nth-child(2)"), vec!["span"]);
+        assert_eq!(tags(&d, "p:last-child"), vec!["p"]);
+        assert_eq!(tags(&d, "*:nth-of-type(2)"), vec!["p"]);
+    }
+
+    fn doc_tag<'a>(doc: &'a FlatDoc<'a>, id: NodeId) -> &'a str {
+        doc.tag_name(doc.node(id).tag_token)
+    }
+}

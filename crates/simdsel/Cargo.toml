@@ -1,0 +1,28 @@
+[package]
+name = "simdsel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CSS selector compilation and set-at-a-time matching over simdhtml FlatDoc"
+
+[features]
+# Internal feature for external selector/streaming comparisons. Do not use in normal builds.
+bench-external = ["dep:lol_html", "dep:scraper"]
+
+[dependencies]
+lol_html = { version = "3.0.3", optional = true }
+rustc-hash = "2"
+scraper = { version = "0.27", default-features = false, optional = true }
+simdhtml = { path = "../simdhtml" }
+thiserror = "2.0.21"
+
+[[bench]]
+name = "cold_parse_select"
+path = "benches/cold_parse_select.rs"
+harness = false
+
+[[bench]]
+name = "external_compare"
+path = "benches/external_compare.rs"
+harness = false
+required-features = ["bench-external"]
