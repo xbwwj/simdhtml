@@ -1,6 +1,7 @@
 /target
 /dist
 /data/commoncrawl-one/
+/data/commoncrawl/
 *.so
 *.pyd
 *.dylib
