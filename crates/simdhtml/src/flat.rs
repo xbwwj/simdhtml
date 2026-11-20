@@ -17,10 +17,13 @@ use crate::{NO_NODE, NodeId};
 /// Parsing is therefore zero-copy: spans index into `input`.
 #[derive(Clone, Debug)]
 pub struct FlatDoc<'a> {
-    /// 原始 UTF-8 字符串
     pub input: &'a [u8],
 
-    /// 所有节点，index 0 是 root
+    // PERF: too many Vec allocs here, bad allocation and RSS remained by glibc
+    // should consider capacity prediction and arena.
+
+    // TODO: node should also be SoA.
+    /// All nodes in **preorder**.
     pub nodes: Vec<Node>,
 
     /// Parsed tags.
@@ -28,24 +31,19 @@ pub struct FlatDoc<'a> {
 
     /// Tag name span start per tag token (SoA for query masks).
     pub tag_name_start: Vec<u32>,
-    /// Tag name length per tag token.
     pub tag_name_len: Vec<u16>,
+
     /// Number of real tag tokens; later tag indices are synthetic.
     pub base_tag_count: u32,
     /// Synthetic tag names, indexed by `tag - base_tag_count`.
     pub synthetic_names: Vec<&'static str>,
 
-    /// Attribute SoA: owner tag index.
+    // Attribute SoA
     pub attr_tag: Vec<u32>,
-    /// Attribute key span start.
     pub attr_key_start: Vec<u32>,
-    /// Attribute key length.
     pub attr_key_len: Vec<u16>,
-    /// Attribute value span start.
     pub attr_value_start: Vec<u32>,
-    /// Attribute value length.
     pub attr_value_len: Vec<u32>,
-    /// Attribute quoting style.
     pub attr_quote: Vec<Quote>,
 
     /// Root node (always 0).
@@ -61,12 +59,17 @@ pub struct FlatDoc<'a> {
 /// One node in the preorder array.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Node {
-    /// 节点类型，root | node | text
     pub kind: NodeKind,
 
+    // PERF: it seems that we do not need parent since we already adopt a preorder nodes array and
+    // use ltr search rather than rtl backtrace. Selector should at build time knows that they
+    // need to keep parent id to backtrace rather than being a global memory burden.
     /// 指向 parent id, 或者 NO_NODE
     pub parent: NodeId,
 
+    // PERF: first_child and has_child can be inferred from subtree_end.
+    // TODO: NO_NODE can be Option<NonZero<NodeId>>, this avoid a potential subtract instruction before
+    // cmp. since we no longer need parent here. NodeId(0) can be reused for None.
     /// 第一个子元素, or NO_NODE
     pub first_child: NodeId,
 
@@ -79,6 +82,7 @@ pub struct Node {
     /// 子树 last node + 1
     pub subtree_end: NodeId,
 
+    // TODO: think do we really need depth?
     /// 从 root 到这的深度 (root = 0)
     pub depth: u16,
 
