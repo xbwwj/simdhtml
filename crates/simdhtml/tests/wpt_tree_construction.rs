@@ -1,7 +1,7 @@
 //! WPT html5lib tree-construction compatibility test.
 //!
 //! This is an ignored integration test because it requires an external WPT
-//! checkout under `tests/wpt`. It compares `simdhtml` against the expected
+//! checkout under `data/wpt`. It compares `simdhtml` against the expected
 //! tree only; no external parser is used as an oracle.
 //!
 //! ```text
@@ -392,10 +392,10 @@ fn process_file(file: &Path) -> Option<FileStats> {
 const MIN_V1_PASS: usize = 854;
 
 #[test]
-#[ignore = "requires tests/wpt checkout"]
+#[ignore = "requires data/wpt checkout"]
 fn wpt_tree_construction() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/wpt/html/syntax/parsing/resources");
+        .join("../../data/wpt/html/syntax/parsing/resources");
     if !root.is_dir() {
         eprintln!(
             "skip wpt_tree_construction: {} is not present",

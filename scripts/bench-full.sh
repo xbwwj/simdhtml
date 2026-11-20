@@ -17,10 +17,10 @@ echo "== python synthetic corpora =="
 uv run --group bench python crates/simdsel-py/benchmarks/synthetic_corpora.py \
     --json target/bench/synthetic_corpora.json
 
-if [[ -d tests/data/commoncrawl-one ]]; then
+if [[ -d data/commoncrawl-one ]]; then
     echo "== common crawl =="
     uv run --group bench python crates/simdsel-py/benchmarks/common_crawl.py \
         --reps "${REPS:-3}" --json target/bench/common_crawl.json
 else
-    echo "skip Common Crawl: tests/data/commoncrawl-one is not present"
+    echo "skip Common Crawl: data/commoncrawl-one is not present"
 fi

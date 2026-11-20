@@ -9,9 +9,9 @@ cargo bench -p simdhtml --bench classify
 echo "== simdhtml raw scan =="
 cargo bench -p simdhtml --bench raw --features bench-internal
 
-if [[ -d tests/data/commoncrawl-one ]]; then
+if [[ -d data/commoncrawl-one ]]; then
     echo "== simdhtml raw scan (common crawl) =="
-    cargo bench -p simdhtml --bench raw --features bench-internal -- "$PWD/tests/data/commoncrawl-one"
+    cargo bench -p simdhtml --bench raw --features bench-internal -- "$PWD/data/commoncrawl-one"
 fi
 
 echo "== simdhtml stage1 =="

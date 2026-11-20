@@ -1,7 +1,6 @@
 /target
 /dist
-/tests/wpt/
-/tests/data/
+/data/commoncrawl-one/
 *.so
 *.pyd
 *.dylib

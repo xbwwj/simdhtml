@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Common Crawl benchmark on tests/data/commoncrawl-one, bucketed by document size.
+"""Common Crawl benchmark on data/commoncrawl-one, bucketed by document size.
 
 Measures parse-only and cold `parse + all queries` per backend.  Every measured
 iteration re-parses the file and re-runs the queries; no warm query cache.
@@ -32,7 +32,7 @@ from synthetic_corpora import (  # noqa: E402
     SimdselBackend,
 )
 
-CORPUS = ROOT / "tests/data/commoncrawl-one"
+CORPUS = ROOT / "data/commoncrawl-one"
 
 QUERIES = (
     Query("a", "a"),
