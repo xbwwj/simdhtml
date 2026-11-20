@@ -68,9 +68,7 @@ pub struct Node {
     // PERF: it seems that we do not need parent since we already adopt a preorder nodes array and
     // use ltr search rather than rtl backtrace. Selector should at build time knows that they
     // need to keep parent id to backtrace rather than being a global memory burden.
-    // NOTE: 对，parent 全放到查询时维护比较好，因为 api 调用不明确，所有保险查询时还是保留 node id.
-    // 如果未来实现 xpath 多元素，则可以一次计划而不多存，不过目前还是存在查询中。
-    // 总体原则是 DOM 负责紧凑存储和寻址，查询自己维护遍历上下文
+    // NOTE: 对于 root, parent 或许应该是自己（不动点），通过别的来区分？
     /// 指向 parent id, 或者 NO_NODE
     pub parent: NodeId,
 
