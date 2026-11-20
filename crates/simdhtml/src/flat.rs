@@ -33,6 +33,10 @@ pub struct FlatDoc<'a> {
     pub tag_name_start: Vec<u32>,
     pub tag_name_len: Vec<u16>,
 
+    // FIXME: 目前本质是虚假节点放在最后，这不好，应该整个 SIMD 临时多 bitmap，连同 HTML 修复一起
+    // 直接一次 prefix sum 合并到里面同时去修复 nodeid, 保持严格 preorder 关系。
+    // 合成名称放在这吗？intern 其实也合理，或者看下 html 规范，修复的虚假节点类型，是否可以直接
+    // static dispatch?
     /// Number of real tag tokens; later tag indices are synthetic.
     pub base_tag_count: u32,
     /// Synthetic tag names, indexed by `tag - base_tag_count`.
@@ -64,6 +68,9 @@ pub struct Node {
     // PERF: it seems that we do not need parent since we already adopt a preorder nodes array and
     // use ltr search rather than rtl backtrace. Selector should at build time knows that they
     // need to keep parent id to backtrace rather than being a global memory burden.
+    // NOTE: 对，parent 全放到查询时维护比较好，因为 api 调用不明确，所有保险查询时还是保留 node id.
+    // 如果未来实现 xpath 多元素，则可以一次计划而不多存，不过目前还是存在查询中。
+    // 总体原则是 DOM 负责紧凑存储和寻址，查询自己维护遍历上下文
     /// 指向 parent id, 或者 NO_NODE
     pub parent: NodeId,
 
@@ -332,6 +339,7 @@ pub struct Warning {
 
 impl FlatDoc<'_> {
     /// Returns a node.
+    // PERF: Node 绝对应该 SoA, 而不是为了这里做成 AoS.
     #[must_use]
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id as usize]
