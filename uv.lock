@@ -418,6 +418,36 @@ wheels = [
 ]
 
 [[package]]
+name = "simdsel"
+version = "0.1.0"
+source = { editable = "." }
+
+[package.dev-dependencies]
+bench = [
+    { name = "cssselect", version = "1.3.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "cssselect", version = "1.5.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "cssselect", version = "1.6.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "lxml" },
+    { name = "parsel", version = "1.10.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "parsel", version = "1.12.1", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "selectolax" },
+]
+dev = [
+    { name = "maturin" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+bench = [
+    { name = "cssselect", specifier = ">=1.2" },
+    { name = "lxml", specifier = ">=5.0" },
+    { name = "parsel", specifier = ">=1.10" },
+    { name = "selectolax", specifier = ">=1.0" },
+]
+dev = [{ name = "maturin", specifier = ">=1.7,<2.0" }]
+
+[[package]]
 name = "tomli"
 version = "2.5.0"
 source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
@@ -536,33 +566,3 @@ sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/c1/4a/76
 wheels = [
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/aa/51/c3a48500fd4f211126b09d07850df33874455c432b7e8e5e0cfef8fcf7ba/w3lib-2.6.0-py3-none-any.whl", hash = "sha256:e62ce6b7f845b5e8588223d44e64990673a0fefd6815d6b3f2e6d39bf9ef308c", size = 40096, upload-time = "2026-11-05T15:37:12.524Z" },
 ]
-
-[[package]]
-name = "wjsel"
-version = "0.1.0"
-source = { editable = "." }
-
-[package.dev-dependencies]
-bench = [
-    { name = "cssselect", version = "1.3.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version < '3.10'" },
-    { name = "cssselect", version = "1.5.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version == '3.10.*'" },
-    { name = "cssselect", version = "1.6.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "lxml" },
-    { name = "parsel", version = "1.10.0", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version < '3.10'" },
-    { name = "parsel", version = "1.12.1", source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }, marker = "python_full_version >= '3.10'" },
-    { name = "selectolax" },
-]
-dev = [
-    { name = "maturin" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-bench = [
-    { name = "cssselect", specifier = ">=1.2" },
-    { name = "lxml", specifier = ">=5.0" },
-    { name = "parsel", specifier = ">=1.10" },
-    { name = "selectolax", specifier = ">=1.0" },
-]
-dev = [{ name = "maturin", specifier = ">=1.7,<2.0" }]

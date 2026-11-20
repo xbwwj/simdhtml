@@ -18,4 +18,33 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+# Internal crates
+simdhtml = { path = "crates/simdhtml" }
+simdsel = { path = "crates/simdsel" }
+
+# Parsing and text processing
+entities = "1"
+html5ever_039 = { package = "html5ever", version = "0.39" }
+markup5ever_rcdom = "0.39"
 memchr = "2"
+simdutf8 = "0.1"
+
+# SIMD and data structures
+bitflags = "2"
+rustc-hash = "2"
+
+# Selector and HTML comparison
+lol_html = "3.0.3"
+scraper = { version = "0.27", default-features = false }
+
+# Python bindings
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
+regex-lite = "0.1"
+self_cell = "1.3"
+
+# Error handling
+thiserror = "2.0.21"
+
+# Testing and fuzzing
+proptest = "1"
+libfuzzer-sys = "0.4"

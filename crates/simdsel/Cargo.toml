@@ -10,11 +10,11 @@ description = "CSS selector compilation and set-at-a-time matching over simdhtml
 bench-external = ["dep:lol_html", "dep:scraper"]
 
 [dependencies]
-lol_html = { version = "3.0.3", optional = true }
-rustc-hash = "2"
-scraper = { version = "0.27", default-features = false, optional = true }
-simdhtml = { path = "../simdhtml" }
-thiserror = "2.0.21"
+lol_html = { workspace = true, optional = true }
+rustc-hash.workspace = true
+scraper = { workspace = true, optional = true }
+simdhtml.workspace = true
+thiserror.workspace = true
 
 [[bench]]
 name = "cold_parse_select"
