@@ -26,7 +26,6 @@ use simdsel::{MatchRecord, NodeId, Selector as CoreSelector};
 self_cell!(
     struct PyDoc {
         owner: Box<[u8]>,
-
         #[covariant]
         dependent: FlatDoc,
     }
@@ -50,6 +49,7 @@ pub struct PySelector {
     unsendable
 )]
 pub struct PySelectorList {
+    // PERF: too expensive here
     items: Vec<PySelector>,
 }
 
@@ -66,6 +66,7 @@ impl PySelector {
         })
     }
 
+    // PERF: clone each time here.
     fn with_core<R>(&self, f: impl for<'a> FnOnce(CoreSelector<'a>) -> R) -> R {
         self.doc.with_dependent(|_, doc| {
             f(CoreSelector::from_parts(
@@ -104,6 +105,7 @@ impl PySelector {
                 "simdsel v1 only supports type='html'",
             ));
         }
+        // FIXME: encoding is ignored. Do we want a simd based encoding?
         let _ = encoding;
         let bytes: Vec<u8> = match (text, body) {
             (Some(text), _) => text.as_bytes().to_vec(),
@@ -181,7 +183,9 @@ impl PySelector {
     }
 
     /// Apply a regex to `get()`.
+    // FIXME: replace_entities is ignored
     #[pyo3(signature = (pattern, replace_entities=true))]
+    // PERF: re should be cached
     fn re(&self, pattern: &str, replace_entities: bool) -> PyResult<Vec<String>> {
         let _ = replace_entities;
         let Some(text) = self.get() else {
@@ -206,6 +210,7 @@ impl PySelector {
         }
     }
 
+    // PERF: bool triggers a full get
     fn __bool__(&self) -> bool {
         self.get().is_some_and(|value| !value.is_empty())
     }
@@ -337,6 +342,7 @@ impl PySelectorList {
         Ok(self.items[index as usize].clone())
     }
 
+    // PERF: from_core copies here, `into_parts` instead?
     fn from_core(doc: Rc<PyDoc>, result: CoreSelector<'_>, base_url: Option<String>) -> Self {
         let items = result
             .split()
