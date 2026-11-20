@@ -1,0 +1,72 @@
+[package]
+name = "simdhtml-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Criterion benchmarks for simdhtml/simdsel over the real corpora"
+publish = false
+
+[features]
+# External-engine comparisons need html5ever/scraper/dom_query.  Off by default
+# so `cargo bench -p simdhtml-bench` only builds our own crates.
+external = [
+    "dep:html5ever_039",
+    "dep:markup5ever_rcdom",
+    "dep:dom_query",
+    "dep:scraper",
+]
+# Python-engine comparisons embed CPython through PyO3 and call parsel /
+# selectolax from Rust.  The interpreter is selected by PYO3_PYTHON.
+python = ["dep:pyo3-embed"]
+
+[dependencies]
+criterion.workspace = true
+flate2.workspace = true
+warc.workspace = true
+dom_query = { workspace = true, optional = true }
+html5ever_039 = { workspace = true, optional = true }
+markup5ever_rcdom = { workspace = true, optional = true }
+scraper = { workspace = true, optional = true }
+pyo3-embed = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+simdhtml.workspace = true
+simdsel.workspace = true
+
+[[bench]]
+name = "markup"
+path = "benches/markup.rs"
+harness = false
+
+[[bench]]
+name = "parse"
+path = "benches/parse.rs"
+harness = false
+
+[[bench]]
+name = "classify"
+path = "benches/classify.rs"
+harness = false
+
+[[bench]]
+name = "parse_compare"
+path = "benches/parse_compare.rs"
+harness = false
+required-features = ["external"]
+
+[[bench]]
+name = "select"
+path = "benches/select.rs"
+harness = false
+
+[[bench]]
+name = "extract"
+path = "benches/extract.rs"
+harness = false
+required-features = ["external"]
+
+[[bench]]
+name = "python_compare"
+path = "benches/python_compare.rs"
+harness = false
+required-features = ["python"]

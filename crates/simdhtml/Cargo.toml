@@ -6,9 +6,6 @@ license.workspace = true
 description = "Fast read-only HTML parsing into a preorder FlatDoc"
 
 [features]
-# Exposes crate internals to the microbenchmarks. Do not use in normal builds.
-bench-internal = []
-
 # Internal feature for external parse-only comparisons. Do not use in normal builds.
 bench-external = ["dep:html5ever_039", "dep:markup5ever_rcdom"]
 
@@ -19,28 +16,8 @@ html5ever_039 = { workspace = true, optional = true }
 markup5ever_rcdom = { workspace = true, optional = true }
 memchr.workspace = true
 simdutf8.workspace = true
+thiserror = { workspace = true }
+encoding_rs = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true
-
-[[bench]]
-name = "stage1"
-path = "benches/stage1.rs"
-harness = false
-
-[[bench]]
-name = "classify"
-path = "benches/classify.rs"
-harness = false
-
-[[bench]]
-name = "raw"
-path = "benches/raw.rs"
-harness = false
-required-features = ["bench-internal"]
-
-[[bench]]
-name = "html5ever_compare"
-path = "benches/html5ever_compare.rs"
-harness = false
-required-features = ["bench-external"]

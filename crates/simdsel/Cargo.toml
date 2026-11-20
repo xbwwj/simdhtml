@@ -5,24 +5,7 @@ edition.workspace = true
 license.workspace = true
 description = "CSS selector compilation and set-at-a-time matching over simdhtml FlatDoc"
 
-[features]
-# Internal feature for external selector/streaming comparisons. Do not use in normal builds.
-bench-external = ["dep:lol_html", "dep:scraper"]
-
 [dependencies]
-lol_html = { workspace = true, optional = true }
 rustc-hash.workspace = true
-scraper = { workspace = true, optional = true }
 simdhtml.workspace = true
 thiserror.workspace = true
-
-[[bench]]
-name = "cold_parse_select"
-path = "benches/cold_parse_select.rs"
-harness = false
-
-[[bench]]
-name = "external_compare"
-path = "benches/external_compare.rs"
-harness = false
-required-features = ["bench-external"]

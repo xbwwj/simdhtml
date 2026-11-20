@@ -1,0 +1,124 @@
+//! Raw-column readers over [`Document`].
+//!
+//! `simdhtml` deliberately exposes its columns instead of accessor wrappers, so
+//! the two-line span reads live here, in the consumer, rather than in the
+//! parser. Nothing in this module touches the fast paths for tag/attribute
+//! key masks; those index the columns directly.
+
+use std::borrow::Cow;
+use std::ops::Range;
+
+use simdhtml::{Document, NO_TAG, NodeId, decode_character_references};
+
+/// Raw attribute-name bytes (not lowercased, not interned).
+pub(crate) fn attr_name<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
+    let start = doc.attr_name_start[attr as usize] as usize;
+    let end = start + doc.attr_name_len[attr as usize] as usize;
+    &doc.input[start..end]
+}
+
+/// Raw attribute value bytes (character references **not** decoded).
+///
+/// Predicates that only compare or split on whitespace do not need the decoded
+/// value, and decoding was the single largest cost in `a[href]` (25% of the
+/// query in `perf`).  Callers that must compare against decoded text check for
+/// `&` first and fall back to [`attr_value`].
+#[inline]
+pub(crate) fn attr_value_raw<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
+    let start = doc.attr_value_start[attr as usize] as usize;
+    let end = start + doc.attr_value_len[attr as usize] as usize;
+    &doc.input[start..end]
+}
+
+/// Attribute value bytes with character references decoded.
+pub(crate) fn attr_value<'a>(doc: &'a Document<'_>, attr: u32) -> Cow<'a, str> {
+    let start = doc.attr_value_start[attr as usize] as usize;
+    let end = start + doc.attr_value_len[attr as usize] as usize;
+    decode_span(doc, start..end)
+}
+
+/// Decodes a raw attribute value span.
+pub(crate) fn attr_value_span<'a>(doc: &'a Document<'_>, span: &Range<u32>) -> Cow<'a, str> {
+    decode_span(doc, span.start as usize..span.end as usize)
+}
+
+fn decode_span<'a>(doc: &'a Document<'_>, span: Range<usize>) -> Cow<'a, str> {
+    let raw = std::str::from_utf8(&doc.input[span]).expect("Document input is valid UTF-8");
+    simdhtml::replace_nulls(decode_character_references(raw, true))
+}
+
+/// Attribute index range owned by an element, empty for non-elements.
+pub(crate) fn attr_range(doc: &Document<'_>, node: NodeId) -> Range<u32> {
+    let tag = doc.node(node).tag_token();
+    if tag == NO_TAG {
+        return 0..0;
+    }
+    doc.tags[tag as usize].attr_range.clone()
+}
+
+/// ASCII-case-insensitive equality where `name` is a known-good lowercase
+/// identifier.
+///
+/// Comparing up to 8 bytes as one word costs a few cycles, while the generic
+/// `eq_ignore_ascii_case` on slices lowers to a byte loop that dominates
+/// `find_attr` (45-75 ns per candidate, measured).  OR-ing both sides with
+/// `0x20` folds case; the only other bytes it collapses are `[@[\]^_` and
+/// `{` followed by the same range, none of which a selector name contains, so a
+/// document attribute named `[ref` cannot be confused with `href`.
+#[inline]
+fn name_eq(candidate: &[u8], name: &[u8]) -> bool {
+    if candidate.len() != name.len() {
+        return false;
+    }
+    if candidate.len() <= 8 {
+        let mut a = [0u8; 8];
+        let mut b = [0u8; 8];
+        a[..candidate.len()].copy_from_slice(candidate);
+        b[..name.len()].copy_from_slice(name);
+        (u64::from_le_bytes(a) | 0x2020_2020_2020_2020)
+            == (u64::from_le_bytes(b) | 0x2020_2020_2020_2020)
+    } else {
+        candidate.eq_ignore_ascii_case(name)
+    }
+}
+
+/// First attribute with `name` (HTML keeps the first duplicate).
+#[inline]
+pub(crate) fn find_attr(doc: &Document<'_>, node: NodeId, name: &str) -> Option<u32> {
+    find_attr_bytes(doc, node, name.as_bytes())
+}
+
+#[inline]
+pub(crate) fn find_attr_bytes(doc: &Document<'_>, node: NodeId, name: &[u8]) -> Option<u32> {
+    let range = attr_range(doc, node);
+    let mut attr = range.start;
+    while attr < range.end {
+        if name_eq(attr_name(doc, attr), name) {
+            return Some(attr);
+        }
+        attr += 1;
+    }
+    None
+}
+
+/// Concatenated character data of a subtree, in tree order.
+pub(crate) fn text_content(doc: &Document<'_>, node: NodeId) -> String {
+    let n = doc.node(node);
+    if n.is_text() {
+        return doc.text(node).into_owned();
+    }
+    let mut out = String::new();
+    for child in node..n.subtree_end() {
+        if doc.node(child).is_text() {
+            out.push_str(&doc.text(child));
+        }
+    }
+    out
+}
+
+/// Original bytes of a node's outer HTML.
+pub(crate) fn outer_html<'a>(doc: &'a Document<'_>, node: NodeId) -> &'a [u8] {
+    let n = doc.node(node);
+    let span = n.span();
+    &doc.input[span.start as usize..n.outer_end() as usize]
+}

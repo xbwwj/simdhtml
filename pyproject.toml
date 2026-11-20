@@ -20,8 +20,7 @@ dev = ["maturin>=1.7,<2.0"]
 bench = [
     "parsel>=1.10",
     "selectolax>=1.0",
-    "lxml>=5.0",
-    "cssselect>=1.2",
+    "beautifulsoup4>=4.12",
 ]
 
 [tool.maturin]

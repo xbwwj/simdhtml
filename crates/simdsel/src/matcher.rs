@@ -10,7 +10,7 @@ use std::cell::{OnceCell, RefCell};
 use std::ops::Range;
 
 use rustc_hash::FxHashMap;
-use simdhtml::{FlatDoc, NO_NODE, NodeId, NodeKind};
+use simdhtml::{Document, NO_NODE, NodeId, NodeKind};
 use thiserror::Error;
 
 use crate::bitset::BitSet;
@@ -47,7 +47,7 @@ pub trait Projection {
     /// Returns [`MatchError::DepthLimit`] if pseudo-element projection needs
     /// to recurse past the limit.
     fn finish<'a>(
-        doc: &'a FlatDoc<'_>,
+        doc: &'a Document<'_>,
         selector: &Selector,
         mask: BitSet,
     ) -> Result<Self::Output<'a>, MatchError>;
@@ -60,7 +60,7 @@ impl Projection for Records {
     type Output<'a> = Vec<MatchRecord>;
 
     fn finish<'a>(
-        doc: &'a FlatDoc<'_>,
+        doc: &'a Document<'_>,
         selector: &Selector,
         mask: BitSet,
     ) -> Result<Self::Output<'a>, MatchError> {
@@ -78,7 +78,7 @@ impl Projection for Count {
     type Output<'a> = usize;
 
     fn finish<'a>(
-        doc: &'a FlatDoc<'_>,
+        doc: &'a Document<'_>,
         selector: &Selector,
         mask: BitSet,
     ) -> Result<Self::Output<'a>, MatchError> {
@@ -100,7 +100,7 @@ impl Projection for Html {
     type Output<'a> = Vec<Cow<'a, str>>;
 
     fn finish<'a>(
-        doc: &'a FlatDoc<'_>,
+        doc: &'a Document<'_>,
         selector: &Selector,
         mask: BitSet,
     ) -> Result<Self::Output<'a>, MatchError> {
@@ -120,7 +120,7 @@ impl Projection for Texts {
     type Output<'a> = Vec<Cow<'a, str>>;
 
     fn finish<'a>(
-        doc: &'a FlatDoc<'_>,
+        doc: &'a Document<'_>,
         selector: &Selector,
         mask: BitSet,
     ) -> Result<Self::Output<'a>, MatchError> {
@@ -129,11 +129,11 @@ impl Projection for Texts {
             .records_for(selector, &mask)
             .into_iter()
             .map(|record| match record.kind {
-                MatchKind::Element => Cow::Owned(doc.text_content(record.node)),
-                MatchKind::Text => doc.text_of(record.node),
+                MatchKind::Element => Cow::Owned(crate::raw::text_content(doc, record.node)),
+                MatchKind::Text => doc.text(record.node),
                 MatchKind::Attr => {
                     let span = record.attr.as_ref().expect("attr record");
-                    doc.attr_value_span(span)
+                    crate::raw::attr_value_span(doc, span)
                 }
             })
             .collect())
@@ -145,7 +145,7 @@ impl Projection for Texts {
 /// # Errors
 ///
 /// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select(doc: &FlatDoc<'_>, selector: &Selector) -> Result<Vec<MatchRecord>, MatchError> {
+pub fn select(doc: &Document<'_>, selector: &Selector) -> Result<Vec<MatchRecord>, MatchError> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     ctx.select(selector, None)
@@ -160,7 +160,7 @@ pub fn select(doc: &FlatDoc<'_>, selector: &Selector) -> Result<Vec<MatchRecord>
 ///
 /// Same as [`select`].
 pub fn select_within(
-    doc: &FlatDoc<'_>,
+    doc: &Document<'_>,
     selector: &Selector,
     roots: &[NodeId],
 ) -> Result<Vec<MatchRecord>, MatchError> {
@@ -175,7 +175,7 @@ pub fn select_within(
 ///
 /// Same as [`select`].
 pub fn select_within_cache(
-    doc: &FlatDoc<'_>,
+    doc: &Document<'_>,
     selector: &Selector,
     roots: &[NodeId],
     cache: &QueryCache,
@@ -189,7 +189,7 @@ pub fn select_within_cache(
 ///
 /// Same as [`select_as`].
 pub fn select_as_within_cache<'a, P: Projection>(
-    doc: &'a FlatDoc<'_>,
+    doc: &'a Document<'_>,
     selector: &Selector,
     roots: &[NodeId],
     cache: &QueryCache,
@@ -208,7 +208,7 @@ pub fn select_as_within_cache<'a, P: Projection>(
 /// # Errors
 ///
 /// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select_count(doc: &FlatDoc<'_>, selector: &Selector) -> Result<usize, MatchError> {
+pub fn select_count(doc: &Document<'_>, selector: &Selector) -> Result<usize, MatchError> {
     {
         let cache = QueryCache::root();
         Eval::new(doc, &cache).count(selector, None)
@@ -221,7 +221,7 @@ pub fn select_count(doc: &FlatDoc<'_>, selector: &Selector) -> Result<usize, Mat
 ///
 /// Same as [`select_count`].
 pub fn select_count_within(
-    doc: &FlatDoc<'_>,
+    doc: &Document<'_>,
     selector: &Selector,
     roots: &[NodeId],
 ) -> Result<usize, MatchError> {
@@ -237,7 +237,7 @@ pub fn select_count_within(
 ///
 /// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
 pub fn select_as<'a, P: Projection>(
-    doc: &'a FlatDoc<'_>,
+    doc: &'a Document<'_>,
     selector: &Selector,
 ) -> Result<P::Output<'a>, MatchError> {
     let cache = QueryCache::root();
@@ -252,7 +252,7 @@ pub fn select_as<'a, P: Projection>(
 ///
 /// Same as [`select_as`].
 pub fn select_as_within<'a, P: Projection>(
-    doc: &'a FlatDoc<'_>,
+    doc: &'a Document<'_>,
     selector: &Selector,
     roots: &[NodeId],
 ) -> Result<P::Output<'a>, MatchError> {
@@ -264,18 +264,18 @@ pub fn select_as_within<'a, P: Projection>(
 
 /// Extracts the text/HTML represented by a match record.
 #[must_use]
-pub fn extract<'a>(doc: &'a FlatDoc<'_>, record: &MatchRecord) -> std::borrow::Cow<'a, str> {
+pub fn extract<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> std::borrow::Cow<'a, str> {
     match record.kind {
         MatchKind::Element => {
-            let bytes = doc.outer_html(record.node);
+            let bytes = crate::raw::outer_html(doc, record.node);
             std::borrow::Cow::Borrowed(
-                std::str::from_utf8(bytes).expect("FlatDoc input is valid UTF-8"),
+                std::str::from_utf8(bytes).expect("Document input is valid UTF-8"),
             )
         }
-        MatchKind::Text => doc.text_of(record.node),
+        MatchKind::Text => doc.text(record.node),
         MatchKind::Attr => {
             let span = record.attr.as_ref().expect("attr record has a value span");
-            doc.attr_value_span(span)
+            crate::raw::attr_value_span(doc, span)
         }
     }
 }
@@ -288,6 +288,17 @@ enum OfType {
     NthLast(i32, i32),
 }
 
+impl OfType {
+    fn keep(self, at: u32, total: u32) -> bool {
+        match self {
+            Self::First => at == 1,
+            Self::Last => at == total,
+            Self::Nth(a, b) => nth(at, a, b),
+            Self::NthLast(a, b) => nth_i64(total as i64 - at as i64 + 1, a, b),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ChildIndex {
     children: Vec<NodeId>,
@@ -296,11 +307,23 @@ struct ChildIndex {
     element_index: Vec<u32>,
 }
 
-/// Query-local cache.
+/// Document-derived query cache.
 ///
-/// The cache is created for one selector evaluation and dropped afterwards.
-/// It owns only derived query data (`BitSet`s and a child index); it never
-/// borrows or owns the document.
+/// It owns only data derived from the *document* (`BitSet`s per tag, attribute
+/// and bare compound, plus a child index); it never borrows or owns the
+/// document, and every entry is valid only for the document it was built from.
+///
+/// Two lifetimes are in play:
+///
+/// - the one-shot API ([`select`], [`select_count`], ...) creates a throwaway
+///   cache per call, because a single query cannot amortise a full-document
+///   mask scan;
+/// - the [`crate::Selector`] facade creates one per selector chain and shares it
+///   with everything derived from that selector (`css`, `split`, `Clone`), so a
+///   crawl loop pays for each document-wide mask once.
+///
+/// Sharing a cache between two documents would be wrong by construction, which
+/// is why the facade ties it to a `Selector` that owns exactly one document.
 #[derive(Debug, Default)]
 pub struct QueryCache {
     child_index: OnceCell<ChildIndex>,
@@ -340,28 +363,49 @@ impl QueryCache {
         self.bare_compounds.borrow_mut().insert(compound, mask);
     }
 
-    fn child_index(&self, doc: &FlatDoc<'_>, n: usize) -> &ChildIndex {
+    /// Children of every node, in one pass over the preorder tape.
+    ///
+    /// `children[p]` ranges are built by counting children per parent, then
+    /// filling in node order: because the tape is preorder, a parent's children
+    /// appear in increasing id order, so a cursor per parent is enough.  The
+    /// previous version walked `first_child`/`next_sibling` for every node,
+    /// i.e. it read the same records again and followed two links per child;
+    /// this reads `parent()` once and writes sequentially.
+    fn child_index(&self, doc: &Document<'_>, n: usize) -> &ChildIndex {
         self.child_index.get_or_init(|| {
-            let mut children = Vec::with_capacity(n.saturating_sub(1));
+            let node = |id: u32| doc.node(id);
             let mut child_start = vec![0u32; n + 1];
-            let mut element_child_count = vec![0u32; n];
-            let mut element_index = vec![0u32; n];
-
-            for id in 0..n {
-                let node = &doc.nodes[id];
-                child_start[id] = children.len() as u32;
-
-                let mut child = node.first_child;
-                while child != NO_NODE {
-                    children.push(child);
-                    if doc.nodes[child as usize].is_element() {
-                        element_child_count[id] += 1;
-                        element_index[child as usize] = element_child_count[id];
-                    }
-                    child = doc.nodes[child as usize].next_sibling;
+            for id in 1..n as u32 {
+                let parent = node(id).parent();
+                if (parent as usize) < n {
+                    child_start[parent as usize] += 1;
                 }
             }
-            child_start[n] = children.len() as u32;
+            // Prefix sum: counts become start offsets.
+            let mut sum = 0u32;
+            for start in &mut child_start[..n] {
+                let count = *start;
+                *start = sum;
+                sum += count;
+            }
+            child_start[n] = sum;
+
+            let mut children = vec![0u32; sum as usize];
+            let mut cursor = child_start.clone();
+            let mut element_child_count = vec![0u32; n];
+            let mut element_index = vec![0u32; n];
+            for id in 1..n as u32 {
+                let parent = node(id).parent();
+                if parent as usize >= n {
+                    continue;
+                }
+                children[cursor[parent as usize] as usize] = id;
+                cursor[parent as usize] += 1;
+                if node(id).is_element() {
+                    element_child_count[parent as usize] += 1;
+                    element_index[id as usize] = element_child_count[parent as usize];
+                }
+            }
 
             ChildIndex {
                 children,
@@ -373,9 +417,31 @@ impl QueryCache {
     }
 }
 
+/// One sibling-position pseudo, evaluated against `(index, total)`.
+#[derive(Clone, Copy, Debug)]
+enum Position {
+    FirstChild,
+    LastChild,
+    OnlyChild,
+    Nth(i32, i32),
+    NthLast(i32, i32),
+}
+
+impl Position {
+    fn keep(self, at: u32, total: u32) -> bool {
+        match self {
+            Self::FirstChild => at == 1,
+            Self::LastChild => at == total,
+            Self::OnlyChild => total == 1,
+            Self::Nth(a, b) => nth(at, a, b),
+            Self::NthLast(a, b) => nth_i64(total as i64 - at as i64 + 1, a, b),
+        }
+    }
+}
+
 /// Evaluation context borrowing a document and its progressive cache.
 struct Eval<'a> {
-    doc: &'a FlatDoc<'a>,
+    doc: &'a Document<'a>,
     n: usize,
     cache: &'a QueryCache,
     scope: OnceCell<BitSet>,
@@ -383,17 +449,18 @@ struct Eval<'a> {
 }
 
 impl<'a> Eval<'a> {
-    fn new(doc: &'a FlatDoc<'_>, cache: &'a QueryCache) -> Self {
-        let n = doc.nodes.len();
+    fn new(doc: &'a Document<'_>, cache: &'a QueryCache) -> Self {
+        let n = doc.node_tape.len();
 
         let mut root_element = None;
-        let mut child = doc.node(doc.root).first_child;
+        let mut child = doc.node(doc.root).first_child();
         while child != NO_NODE {
-            if doc.node(child).is_element() {
+            let node = doc.node(child);
+            if node.is_element() {
                 root_element = Some(child);
                 break;
             }
-            child = doc.node(child).next_sibling;
+            child = node.next_sibling();
         }
 
         Self {
@@ -434,7 +501,7 @@ impl<'a> Eval<'a> {
                     let node = self.doc.node(root);
                     if node.is_element() {
                         mask.set(root);
-                    } else if node.kind == NodeKind::Root
+                    } else if node.kind() == NodeKind::Document
                         && let Some(root_element) = self.root_element
                     {
                         mask.set(root_element);
@@ -459,7 +526,7 @@ impl<'a> Eval<'a> {
             let mut allowed = BitSet::new(self.n);
             for &root in roots {
                 let node = self.doc.node(root);
-                if node.kind == NodeKind::Root {
+                if node.kind() == NodeKind::Document {
                     for id in 1..self.n as u32 {
                         allowed.set(id);
                     }
@@ -468,13 +535,13 @@ impl<'a> Eval<'a> {
                     if include_scope {
                         allowed.set(root);
                     }
-                    for id in root + 1..node.subtree_end.min(self.n as u32) {
+                    for id in root + 1..node.subtree_end().min(self.n as u32) {
                         allowed.set(id);
                     }
-                } else if node.parent != NO_NODE {
-                    let parent = self.doc.node(node.parent);
+                } else if node.parent() != NO_NODE {
+                    let parent = self.doc.node(node.parent());
                     if parent.is_element() {
-                        for id in node.parent + 1..parent.subtree_end.min(self.n as u32) {
+                        for id in node.parent() + 1..parent.subtree_end().min(self.n as u32) {
                             allowed.set(id);
                         }
                     }
@@ -545,6 +612,12 @@ impl<'a> Eval<'a> {
         if depth > MAX_DEPTH {
             return Err(MatchError::DepthLimit);
         }
+        // No combinator: the compound mask *is* the answer.  Collecting it into
+        // a `Vec` only to rebuild the same bitset was an allocation and a copy
+        // per query, on the shape almost every selector has.
+        if complex.combinators.is_empty() {
+            return self.compound_mask(&complex.compounds[0], depth);
+        }
         let mut current: Vec<NodeId> = self
             .compound_mask(&complex.compounds[0], depth)?
             .iter_set()
@@ -570,7 +643,7 @@ impl<'a> Eval<'a> {
         match combinator {
             Combinator::Descendant => {
                 for &id in set {
-                    let end = self.doc.node(id).subtree_end.min(self.n as NodeId);
+                    let end = self.doc.node(id).subtree_end().min(self.n as NodeId);
                     if id + 1 < end {
                         windows.push(id + 1..end);
                     }
@@ -578,18 +651,18 @@ impl<'a> Eval<'a> {
             }
             Combinator::Child => {
                 for &id in set {
-                    let mut child = self.doc.node(id).first_child;
+                    let mut child = self.doc.node(id).first_child();
                     while child != NO_NODE {
                         windows.push(child..child + 1);
-                        child = self.doc.node(child).next_sibling;
+                        child = self.doc.node(child).next_sibling();
                     }
                 }
             }
             Combinator::Adjacent => {
                 for &id in set {
-                    let mut next = self.doc.node(id).next_sibling;
+                    let mut next = self.doc.node(id).next_sibling();
                     while next != NO_NODE && !self.doc.node(next).is_element() {
-                        next = self.doc.node(next).next_sibling;
+                        next = self.doc.node(next).next_sibling();
                     }
                     if next != NO_NODE {
                         windows.push(next..next + 1);
@@ -598,10 +671,10 @@ impl<'a> Eval<'a> {
             }
             Combinator::GeneralSibling => {
                 for &id in set {
-                    let mut next = self.doc.node(id).next_sibling;
+                    let mut next = self.doc.node(id).next_sibling();
                     while next != NO_NODE {
                         windows.push(next..next + 1);
-                        next = self.doc.node(next).next_sibling;
+                        next = self.doc.node(next).next_sibling();
                     }
                 }
             }
@@ -653,15 +726,21 @@ impl<'a> Eval<'a> {
             return mask;
         }
         let mut mask = BitSet::new(self.n);
-        key_mask(
-            self.doc,
-            &self.doc.tag_name_start,
-            &self.doc.tag_name_len,
-            self.doc.tags.len(),
-            name,
-            |i| self.doc.tags[i].node,
-            &mut mask,
-        );
+        let code = simdhtml::tag_code_of(name.as_bytes());
+        if code == 0 {
+            // No dedicated code: fall back to folding and comparing name spans.
+            key_mask(
+                self.doc,
+                &self.doc.tag_name_start,
+                &self.doc.tag_name_len,
+                self.doc.tags.len(),
+                name,
+                |i| self.doc.tag_element[i],
+                &mut mask,
+            );
+        } else {
+            tag_code_mask(self.doc, code, &mut mask);
+        }
         self.cache.put_tag_mask(name.to_string(), mask.clone());
         mask
     }
@@ -678,13 +757,13 @@ impl<'a> Eval<'a> {
         let mut mask = BitSet::new(self.n);
         key_mask(
             self.doc,
-            &self.doc.attr_key_start,
-            &self.doc.attr_key_len,
-            self.doc.attr_key_start.len(),
+            &self.doc.attr_name_start,
+            &self.doc.attr_name_len,
+            self.doc.attr_name_start.len(),
             name,
             |a| {
                 let tag = self.doc.attr_tag[a] as usize;
-                self.doc.tags[tag].node
+                self.doc.tag_element[tag]
             },
             &mut mask,
         );
@@ -692,12 +771,15 @@ impl<'a> Eval<'a> {
         mask
     }
 
-    /// Attribute-key candidate superset for a class-less compound, or `None`.
+    /// Attribute-key candidate superset for a compound, or `None`.
     ///
-    /// `class` is deliberately not used here: an element with a class
-    /// attribute is almost every element in ordinary markup, so the extra
-    /// key-mask pass costs more than the cheap `is_element` scan it replaces.
-    /// `id` and named attributes are much more selective.
+    /// `class` used to be excluded here on the grounds that almost every
+    /// element carries a class attribute, so the key-mask pass could cost more
+    /// than the element scan it replaces.  The pass is now a SIMD scan
+    /// (`key_mask_avx2`) that costs ~2 us on a 140 KiB page, while testing one
+    /// candidate costs ~10 ns: on the corpus 45% of elements have a class, so
+    /// the mask pays for itself and `div.x` / `.x` start from |class| elements
+    /// instead of all of them.
     fn attr_candidates(&self, compound: &Compound) -> Option<BitSet> {
         if compound.tag.is_some() {
             return None;
@@ -705,6 +787,9 @@ impl<'a> Eval<'a> {
         let mut keys: Vec<&str> = Vec::new();
         if compound.id.is_some() {
             keys.push("id");
+        }
+        if !compound.classes.is_empty() {
+            keys.push("class");
         }
         for pred in &compound.attrs {
             keys.push(pred.name.as_str());
@@ -760,8 +845,7 @@ impl<'a> Eval<'a> {
             }
         } else {
             for id in 0..self.n {
-                let node = &self.doc.nodes[id];
-                if !node.is_element() {
+                if !self.doc.node(id as NodeId).is_element() {
                     continue;
                 }
                 if self.matches_static(id as NodeId, compound, false) {
@@ -783,28 +867,49 @@ impl<'a> Eval<'a> {
         let node = self.doc.node(id);
         if !skip_tag
             && let Some(tag) = &compound.tag
-            && !self.doc.tag_name(node.tag_token).eq_ignore_ascii_case(tag)
+            && !self
+                .doc
+                .tag_name(node.tag_token())
+                .eq_ignore_ascii_case(tag)
         {
             return false;
         }
 
         if let Some(id_value) = &compound.id {
-            match find_attr(self.doc, id, "id") {
-                Some(value) if value == *id_value => {}
-                _ => return false,
+            let Some(attr) = crate::raw::find_attr(self.doc, id, "id") else {
+                return false;
+            };
+            let raw = crate::raw::attr_value_raw(self.doc, attr);
+            if raw.contains(&b'&') {
+                if crate::raw::attr_value(self.doc, attr).as_ref() != id_value.as_str() {
+                    return false;
+                }
+            } else if raw != id_value.as_bytes() {
+                return false;
             }
         }
 
         if !compound.classes.is_empty() {
-            let Some(class_value) = find_attr(self.doc, id, "class") else {
+            let Some(attr) = crate::raw::find_attr(self.doc, id, "class") else {
                 return false;
             };
-            for class in &compound.classes {
-                if !class_value
-                    .split_ascii_whitespace()
-                    .any(|candidate| candidate == class)
-                {
-                    return false;
+            let raw = crate::raw::attr_value_raw(self.doc, attr);
+            if raw.contains(&b'&') {
+                // Rare: a class value with character references.
+                let value = crate::raw::attr_value(self.doc, attr);
+                for class in &compound.classes {
+                    if !value.split_ascii_whitespace().any(|c| c == class) {
+                        return false;
+                    }
+                }
+            } else {
+                for class in &compound.classes {
+                    if !raw
+                        .split(|byte: &u8| byte.is_ascii_whitespace())
+                        .any(|c| c == class.as_bytes())
+                    {
+                        return false;
+                    }
                 }
             }
         }
@@ -828,37 +933,11 @@ impl<'a> Eval<'a> {
             return Err(MatchError::DepthLimit);
         }
         match pseudo {
-            Pseudo::FirstChild => {
-                let index = self.child_index();
-                self.filter(mask, |id| index.element_index[id as usize] == 1)
-            }
-            Pseudo::LastChild => {
-                let index = self.child_index();
-                self.filter(mask, |id| {
-                    let node = self.doc.node(id);
-                    index.element_index[id as usize]
-                        == index.element_child_count[node.parent as usize]
-                })
-            }
-            Pseudo::OnlyChild => {
-                let index = self.child_index();
-                self.filter(mask, |id| {
-                    let node = self.doc.node(id);
-                    index.element_child_count[node.parent as usize] == 1
-                })
-            }
-            Pseudo::NthChild(a, b) => {
-                let index = self.child_index();
-                self.filter(mask, |id| nth(index.element_index[id as usize], *a, *b))
-            }
-            Pseudo::NthLastChild(a, b) => {
-                let index = self.child_index();
-                self.filter(mask, |id| {
-                    let node = self.doc.node(id);
-                    let count = index.element_child_count[node.parent as usize] as i64;
-                    nth_i64(count - index.element_index[id as usize] as i64 + 1, *a, *b)
-                })
-            }
+            Pseudo::FirstChild => self.filter_position(mask, Position::FirstChild),
+            Pseudo::LastChild => self.filter_position(mask, Position::LastChild),
+            Pseudo::OnlyChild => self.filter_position(mask, Position::OnlyChild),
+            Pseudo::NthChild(a, b) => self.filter_position(mask, Position::Nth(*a, *b)),
+            Pseudo::NthLastChild(a, b) => self.filter_position(mask, Position::NthLast(*a, *b)),
             Pseudo::FirstOfType => self.filter_of_type(mask, tag, OfType::First),
             Pseudo::LastOfType => self.filter_of_type(mask, tag, OfType::Last),
             Pseudo::NthOfType(a, b) => self.filter_of_type(mask, tag, OfType::Nth(*a, *b)),
@@ -882,13 +961,15 @@ impl<'a> Eval<'a> {
             Pseudo::Root => {
                 self.filter(mask, |id| Some(id) == self.root_element);
             }
-            Pseudo::Empty => self.filter(mask, |id| self.doc.node(id).first_child == NO_NODE),
+            Pseudo::Empty => self.filter(mask, |id| self.doc.node(id).first_child() == NO_NODE),
             Pseudo::Scope => {
                 let scope = self.scope_mask().clone();
                 mask.and_assign(&scope);
             }
             Pseudo::Contains(text) => {
-                self.filter(mask, |id| self.doc.text_content(id).contains(text));
+                self.filter(mask, |id| {
+                    crate::raw::text_content(self.doc, id).contains(text)
+                });
             }
             Pseudo::Never => {
                 mask.clear_all();
@@ -919,7 +1000,108 @@ impl<'a> Eval<'a> {
         })
     }
 
+    /// Candidate count below which walking each candidate's sibling list is
+    /// tried before the full child index.
+    const SPARSE_CANDIDATES: u32 = 64;
+
+    /// Position of `id` among its parent's element children, charging the walk
+    /// against `budget`; `None` means the walk did not fit.
+    fn sibling_position_within(
+        &self,
+        id: NodeId,
+        of_type: bool,
+        budget: &mut usize,
+    ) -> Option<(u32, u32)> {
+        let node = self.doc.node(id);
+        let parent = node.parent();
+        if parent == id || parent as usize >= self.n {
+            return Some((0, 0));
+        }
+        let want = of_type.then(|| {
+            let tag = node.tag_token();
+            (self.doc.tag_code[tag as usize], self.doc.tag_name(tag))
+        });
+        let (mut at, mut total) = (0u32, 0u32);
+        let mut child = self.doc.node(parent).first_child();
+        while child != NO_NODE {
+            if *budget == 0 {
+                return None;
+            }
+            *budget -= 1;
+            let child_node = self.doc.node(child);
+            let hit = child_node.is_element()
+                && match &want {
+                    None => true,
+                    Some((code, name)) => {
+                        let tag = child_node.tag_token();
+                        if *code == 0 {
+                            self.doc.tag_name(tag).eq_ignore_ascii_case(name)
+                        } else {
+                            self.doc.tag_code[tag as usize] == *code
+                        }
+                    }
+                };
+            if hit {
+                total += 1;
+                if child == id {
+                    at = total;
+                }
+            }
+            child = child_node.next_sibling();
+        }
+        Some((at, total))
+    }
+
+    /// Tries the per-candidate sibling walk for a small candidate set.
+    ///
+    /// Returns `false` when the walks exceed the step budget (the whole
+    /// document, once), in which case the caller falls back to the child index.
+    /// A budget is required: without it a page that is one huge list turns this
+    /// into O(candidates * siblings) — a 5 MiB trap page went from 1.8 ms to
+    /// 3.8 s.
+    fn filter_sparse(
+        &self,
+        mask: &mut BitSet,
+        of_type: bool,
+        keep: impl Fn(u32, u32) -> bool,
+    ) -> bool {
+        if mask.count_ones() > Self::SPARSE_CANDIDATES {
+            return false;
+        }
+        let mut budget = self.n;
+        let mut plan: Vec<(NodeId, u32, u32)> = Vec::with_capacity(mask.count_ones() as usize);
+        for id in mask.iter_set() {
+            match self.sibling_position_within(id, of_type, &mut budget) {
+                Some((at, total)) => plan.push((id, at, total)),
+                None => return false,
+            }
+        }
+        for (id, at, total) in plan {
+            if !keep(at, total) {
+                mask.clear(id);
+            }
+        }
+        true
+    }
+
+    /// Filters `mask` by a sibling-position pseudo.
+    fn filter_position(&self, mask: &mut BitSet, position: Position) {
+        if self.filter_sparse(mask, false, |at, total| position.keep(at, total)) {
+            return;
+        }
+        let index = self.child_index();
+        let filter = |id: NodeId| {
+            let at = index.element_index[id as usize];
+            let total = index.element_child_count[self.doc.node(id).parent() as usize];
+            position.keep(at, total)
+        };
+        self.filter(mask, filter);
+    }
+
     fn filter_of_type(&self, mask: &mut BitSet, tag: Option<&str>, mode: OfType) {
+        if tag.is_some() && self.filter_sparse(mask, true, |at, total| mode.keep(at, total)) {
+            return;
+        }
         if tag.is_none() {
             let ids: Vec<NodeId> = mask.iter_set().collect();
             for id in ids {
@@ -979,16 +1161,16 @@ impl<'a> Eval<'a> {
 
     fn type_index_by_name(&self, id: NodeId) -> (u32, u32) {
         let node = self.doc.node(id);
-        let name = self.doc.tag_name(node.tag_token);
+        let name = self.doc.tag_name(node.tag_token());
         let mut index = 0u32;
         let mut total = 0u32;
-        let mut child = self.doc.node(node.parent).first_child;
+        let mut child = self.doc.node(node.parent()).first_child();
         while child != NO_NODE {
             let child_node = self.doc.node(child);
             if child_node.is_element()
                 && self
                     .doc
-                    .tag_name(child_node.tag_token)
+                    .tag_name(child_node.tag_token())
                     .eq_ignore_ascii_case(name)
             {
                 total += 1;
@@ -996,7 +1178,7 @@ impl<'a> Eval<'a> {
                     index += 1;
                 }
             }
-            child = child_node.next_sibling;
+            child = child_node.next_sibling();
         }
         (index, total)
     }
@@ -1019,11 +1201,11 @@ impl<'a> Eval<'a> {
 
         let mut out = BitSet::new(self.n);
         for id in 0..self.n {
-            let node = &self.doc.nodes[id];
+            let node = self.doc.node(id as NodeId);
             if !node.is_element() {
                 continue;
             }
-            let end = (node.subtree_end as usize).min(self.n);
+            let end = (node.subtree_end() as usize).min(self.n);
             if prefix[end] > prefix[id + 1] {
                 out.set(id as NodeId);
             }
@@ -1035,7 +1217,7 @@ impl<'a> Eval<'a> {
     fn parents(&self, set: &BitSet) -> BitSet {
         let mut out = BitSet::new(self.n);
         for id in set.iter_set() {
-            let parent = self.doc.node(id).parent;
+            let parent = self.doc.node(id).parent();
             if parent != NO_NODE {
                 out.set(parent);
             }
@@ -1047,7 +1229,7 @@ impl<'a> Eval<'a> {
     fn prev_element_sibling(&self, set: &BitSet) -> BitSet {
         let mut out = BitSet::new(self.n);
         for id in set.iter_set() {
-            let prev = self.doc.node(id).prev_element_sibling;
+            let prev = self.doc.node(id).prev_element_sibling();
             if prev != NO_NODE {
                 out.set(prev);
             }
@@ -1082,23 +1264,24 @@ impl<'a> Eval<'a> {
     fn project(&self, record: MatchRecord, pseudo: &PseudoElement, out: &mut Vec<MatchRecord>) {
         match pseudo {
             PseudoElement::Text => {
-                let mut child = self.doc.node(record.node).first_child;
+                let mut child = self.doc.node(record.node).first_child();
                 while child != NO_NODE {
                     if self.doc.node(child).is_text() {
                         out.push(MatchRecord {
                             node: child,
                             kind: MatchKind::Text,
-                            span: self.doc.node(child).span.clone(),
-                            outer_end: self.doc.node(child).outer_end,
+                            span: self.doc.node(child).span(),
+                            outer_end: self.doc.node(child).outer_end(),
                             attr: None,
                         });
                     }
-                    child = self.doc.node(child).next_sibling;
+                    child = self.doc.node(child).next_sibling();
                 }
             }
             PseudoElement::Attr(name) => {
-                if let Some(attr) = self.doc.find_attr(record.node, name) {
-                    let span = attr.value.unwrap_or(0..0);
+                if let Some(attr) = crate::raw::find_attr(self.doc, record.node, name) {
+                    let start = self.doc.attr_value_start[attr as usize];
+                    let span = start..start + self.doc.attr_value_len[attr as usize];
                     out.push(MatchRecord {
                         node: record.node,
                         kind: MatchKind::Attr,
@@ -1114,7 +1297,7 @@ impl<'a> Eval<'a> {
 
 /// Scalar key mask used when AVX2 is unavailable or the key is too long.
 fn key_mask_scalar(
-    doc: &FlatDoc<'_>,
+    doc: &Document<'_>,
     starts: &[u32],
     lens: &[u16],
     count: usize,
@@ -1145,8 +1328,70 @@ fn key_mask_scalar(
 /// owning element node (`NO_NODE` for keys that do not own one, such as end
 /// tags).  Using the same kernel for tag and attribute keys keeps the SIMD
 /// path in one place.
+/// Sets every element whose tag code is `code`.
+///
+/// `Document::tag_code` is one byte per tag token, so this is a dense
+/// `cmpeq`+`movemask` scan (32 tags per iteration) instead of a gather over
+/// scattered name bytes: measured 0.22 vs 7.90 cycles per tag.
+fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if doc.tag_code.len() >= 32 && std::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 checked above; the kernel bounds-checks its tail.
+            unsafe { tag_code_mask_avx2(doc, code, mask) };
+            return;
+        }
+    }
+    tag_code_mask_scalar(doc, code, mask);
+}
+
+fn tag_code_mask_scalar(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
+    for (i, &c) in doc.tag_code.iter().enumerate() {
+        if c == code {
+            let node = doc.tag_element[i];
+            if node != NO_NODE {
+                mask.set(node);
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn tag_code_mask_avx2(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
+    use std::arch::x86_64::{
+        __m256i, _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_set1_epi8,
+    };
+    unsafe {
+        let codes = &doc.tag_code;
+        let needle = _mm256_set1_epi8(code as i8);
+        let mut i = 0usize;
+        while i + 32 <= codes.len() {
+            let v = _mm256_loadu_si256(codes.as_ptr().add(i).cast::<__m256i>());
+            let mut bits = _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, needle)) as u32;
+            while bits != 0 {
+                let j = bits.trailing_zeros() as usize;
+                let node = doc.tag_element[i + j];
+                if node != NO_NODE {
+                    mask.set(node);
+                }
+                bits &= bits - 1;
+            }
+            i += 32;
+        }
+        for (k, item) in codes.iter().enumerate().skip(i) {
+            if *item == code {
+                let node = doc.tag_element[k];
+                if node != NO_NODE {
+                    mask.set(node);
+                }
+            }
+        }
+    }
+}
+
 fn key_mask(
-    doc: &FlatDoc<'_>,
+    doc: &Document<'_>,
     starts: &[u32],
     lens: &[u16],
     count: usize,
@@ -1171,7 +1416,7 @@ fn key_mask(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn key_mask_avx2(
-    doc: &FlatDoc<'_>,
+    doc: &Document<'_>,
     starts: &[u32],
     lens: &[u16],
     count: usize,
@@ -1189,7 +1434,7 @@ unsafe fn key_mask_avx2(
 
     #[target_feature(enable = "avx2")]
     unsafe fn key_mask_avx2_4(
-        doc: &FlatDoc<'_>,
+        doc: &Document<'_>,
         starts: &[u32],
         lens: &[u16],
         count: usize,
@@ -1267,7 +1512,7 @@ unsafe fn key_mask_avx2(
 
     #[target_feature(enable = "avx2")]
     unsafe fn key_mask_avx2_8(
-        doc: &FlatDoc<'_>,
+        doc: &Document<'_>,
         starts: &[u32],
         lens: &[u16],
         count: usize,
@@ -1370,13 +1615,13 @@ fn complex_has_scope(complex: &Complex) -> bool {
     })
 }
 
-fn element_record(doc: &FlatDoc<'_>, id: NodeId) -> MatchRecord {
+fn element_record(doc: &Document<'_>, id: NodeId) -> MatchRecord {
     let node = doc.node(id);
     MatchRecord {
         node: id,
         kind: MatchKind::Element,
-        span: node.span.clone(),
-        outer_end: node.outer_end,
+        span: node.span(),
+        outer_end: node.outer_end(),
         attr: None,
     }
 }
@@ -1394,34 +1639,39 @@ fn common_pseudo(selector: &Selector) -> Option<PseudoElement> {
     }
 }
 
-fn find_attr<'a>(
-    doc: &'a FlatDoc<'_>,
-    node: NodeId,
-    name: &str,
-) -> Option<std::borrow::Cow<'a, str>> {
-    doc.find_attr_index(node, name)
-        .map(|attr| doc.attr_decoded_value(attr))
-}
-
-fn matches_attr(doc: &FlatDoc<'_>, node: NodeId, pred: &AttrPred) -> bool {
-    let Some(value) = find_attr(doc, node, &pred.name) else {
+#[inline]
+fn matches_attr(doc: &Document<'_>, node: NodeId, pred: &AttrPred) -> bool {
+    let Some(attr) = crate::raw::find_attr(doc, node, &pred.name) else {
         return false;
     };
+    // Presence needs no value at all, and a value without character references
+    // needs no decoding: both used to go through `find_attr_value`, which was
+    // the largest single cost in attribute selectors.
     if pred.op == AttrOp::Exists {
         return true;
     }
+    let raw = crate::raw::attr_value_raw(doc, attr);
+    if !raw.contains(&b'&') {
+        let value = std::str::from_utf8(raw).expect("Document input is valid UTF-8");
+        return matches_attr_value(value, pred);
+    }
+    let value = crate::raw::attr_value(doc, attr);
+    matches_attr_value(value.as_ref(), pred)
+}
+
+fn matches_attr_value(value: &str, pred: &AttrPred) -> bool {
     let expected = pred.value.as_deref().unwrap_or("");
     let case_insensitive = pred.case_insensitive;
 
     match pred.op {
         AttrOp::Exists => true,
-        AttrOp::NotEquals => !eq(value.as_ref(), expected, case_insensitive),
-        AttrOp::Equals => eq(value.as_ref(), expected, case_insensitive),
+        AttrOp::NotEquals => !eq(value, expected, case_insensitive),
+        AttrOp::Equals => eq(value, expected, case_insensitive),
         AttrOp::Includes => value
             .split_ascii_whitespace()
             .any(|part| eq(part, expected, case_insensitive)),
         AttrOp::DashMatch => {
-            eq(value.as_ref(), expected, case_insensitive)
+            eq(value, expected, case_insensitive)
                 || (value.len() > expected.len()
                     && value.as_bytes().get(expected.len()) == Some(&b'-')
                     && value
@@ -1471,18 +1721,22 @@ fn nth_i64(index: i64, a: i32, b: i32) -> bool {
 mod tests {
     use super::*;
     use crate::parser::parse_selector;
-    use simdhtml::{ParseMode, parse};
+    use simdhtml::{ParseOptions, RepairMode};
 
-    fn doc(html: &str) -> FlatDoc<'_> {
-        parse(html.as_bytes(), ParseMode::Fast).unwrap()
+    fn doc(html: &str) -> Document<'_> {
+        Document::parse_with(
+            html.as_bytes(),
+            ParseOptions::new().repair(RepairMode::Spec),
+        )
+        .unwrap()
     }
 
-    fn tags(doc: &FlatDoc<'_>, sel: &str) -> Vec<String> {
+    fn tags(doc: &Document<'_>, sel: &str) -> Vec<String> {
         let selector = parse_selector(sel).unwrap();
         select(doc, &selector)
             .unwrap()
             .into_iter()
-            .map(|r| doc.tag_name(doc.node(r.node).tag_token).to_string())
+            .map(|r| doc.tag_name(doc.node(r.node).tag_token()).to_string())
             .collect()
     }
 
@@ -1534,7 +1788,16 @@ mod tests {
             "<div class=box><span class=title>hello scope</span></div><div class=other>x</div>",
         );
         let sel = crate::parser::parse_selector(":scope > .title").unwrap();
-        let recs = select_within(&d, &sel, &[1]).unwrap();
+        // The parser now synthesises html/head/body, so the scope root is looked
+        // up by name instead of assumed to be node 1.
+        let root = d
+            .node_tape
+            .iter()
+            .position(|node| {
+                node.is_element() && d.tag_name(node.tag_token()).eq_ignore_ascii_case("div")
+            })
+            .expect("div") as simdhtml::NodeId;
+        let recs = select_within(&d, &sel, &[root]).unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(doc_tag(&d, recs[0].node), "span");
         assert_eq!(tags(&d, "div:contains('hello')"), vec!["div"]);
@@ -1575,11 +1838,32 @@ mod tests {
         }
         html.push_str("</body></html>");
         let d = doc(&html);
-        assert_eq!(d.tags.len(), 6004);
+        // `html` and `body` are explicit in this document; `head` is implied.
+        assert_eq!(d.tags.len(), 6004 + 1);
         assert_eq!(tags(&d, "div").len(), 1200);
         assert_eq!(tags(&d, "p").len(), 600);
         assert_eq!(tags(&d, "span").len(), 600);
         assert_eq!(tags(&d, "article").len(), 600);
+    }
+
+    /// A single huge list is the case that made an earlier, unbudgeted
+    /// per-candidate sibling walk quadratic (1.8 ms -> 3.8 s on a 5 MiB page).
+    /// The budget must fall back to the child index and stay correct.
+    #[test]
+    fn positional_pseudos_on_a_huge_list() {
+        let mut html = String::from("<ul>");
+        for i in 0..600 {
+            html.push_str(&format!("<li>{i}</li>"));
+        }
+        html.push_str("</ul>");
+        let d = doc(&html);
+        assert_eq!(tags(&d, "li:nth-child(1)").len(), 1);
+        assert_eq!(tags(&d, "li:nth-child(2)").len(), 1);
+        assert_eq!(tags(&d, "li:nth-child(2n+1)").len(), 300);
+        assert_eq!(tags(&d, "li:last-child").len(), 1);
+        assert_eq!(tags(&d, "li:nth-of-type(3)").len(), 1);
+        assert_eq!(tags(&d, "li:nth-last-of-type(1)").len(), 1);
+        assert_eq!(tags(&d, "ul > li:nth-child(2n)").len(), 300);
     }
 
     #[test]
@@ -1593,7 +1877,7 @@ mod tests {
         assert_eq!(tags(&d, "*:nth-of-type(2)"), vec!["p"]);
     }
 
-    fn doc_tag<'a>(doc: &'a FlatDoc<'a>, id: NodeId) -> &'a str {
-        doc.tag_name(doc.node(id).tag_token)
+    fn doc_tag<'a>(doc: &'a Document<'a>, id: NodeId) -> &'a str {
+        doc.tag_name(doc.node(id).tag_token())
     }
 }

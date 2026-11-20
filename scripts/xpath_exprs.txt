@@ -1,0 +1,52 @@
+# Core location paths, axes, predicates, functions.  Lines starting with # are
+# ignored; every one is run through both engines on the same tree.
+//p
+//p[2]
+//div/p[1]
+//p/text()
+//a/@href
+//div[@id='b']/span
+//div[contains(@class,'y')]
+//p[last()]
+//*[@id]
+//div//a
+/html/body/div[1]
+//span[position()>1]
+//div | //span
+//p[.='two']
+//div/following-sibling::div
+//span[2]/preceding-sibling::span
+count(//p)
+//td[2]
+//p[@class]
+//div[@id='a']/p/text()
+//*[@class]/@class
+//table//tr[1]//text()
+//div[not(@id='a')]
+//span[position()=last()]
+//a[starts-with(@href,'http')]
+//h1
+//h2/following-sibling::p[1]
+//*[@class='content']//p
+//td | //th
+//*[count(*)>2]
+//text()
+//*
+//node()
+//p/@*
+//*[@id]/following-sibling::*
+//a/@href | //td/text()
+//*[position()=1]
+//p[position() mod 2 = 1]
+//div[.//p]
+//div[count(p)>1]
+//*[starts-with(@class,'content')]
+//body/node()[1]
+//*[@id]//@class
+//td[last()-1]
+//*[@class and @id]
+//div[@class='content'][1]
+//a[not(@href)]
+//img/@src
+//div[@id='a']/descendant::text()
+//descendant-or-self::div/ancestor::body

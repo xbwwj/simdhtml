@@ -1,140 +1,281 @@
-//! Fast read-only HTML parsing into a preorder [`FlatDoc`].
+//! Fast read-only HTML parsing into a preorder [`Document`].
 //!
-//! [`build_markup_index`] is stage-1: it only records tag/text/raw positions.
-//! [`parse`] runs stage-2: tokenizer, normalizer, and the preorder [`FlatDoc`]
-//! builder.
+//! One module per step of the pipeline, each named after the artifact it hands
+//! to the next step (not after its position in the pipeline):
+//!
+//! - `markup`: where markup starts and ends — tag spans, text runs, opaque regions
+//! - `tokenizer`: tag / attribute token spans
+//! - `tree_builder`: token stream to preorder node tape
+//! - `document`: the resulting data model `Document`, `Node`
+//!
+//! `tag_code` is the tag vocabulary shared by the tokenizer and the tree
+//! builder, `character_reference` is the lazy decoder, and `simd` holds the
+//! instruction-set kernels.
 
-#![deny(unsafe_op_in_unsafe_fn)]
-
+mod character_reference;
 mod document;
-mod entities;
-mod flat;
-mod markup;
-mod normalize;
-mod raw;
+pub mod encoding;
+pub mod markup;
+mod repair;
 pub mod simd;
-mod stage1;
-mod tagcode;
+mod tag_code;
+pub mod token_data;
 mod tokenizer;
+mod tree_builder;
 
-use std::fmt;
+use thiserror::Error;
 
-pub use entities::decode_html_entities;
-pub use flat::{
-    AttrIter, AttrRef, DocFlags, FlatDoc, Node, NodeKind, Quote, TagKind, TagToken, Warning,
-    WarningKind,
+pub use crate::character_reference::decode_character_references;
+pub use crate::document::{
+    Document, DocumentFlags, NS_HTML, NS_MATH, NS_MATH_TEXT_POINT, NS_SVG, NS_SVG_HTML_POINT, Node,
+    NodeKind, Warning, WarningKind,
 };
-pub use markup::{MarkupFlags, MarkupIndex};
-pub use stage1::{Stage1Error, build_markup_index};
-
-/// Benchmark-only wrapper around the raw region scan.
-///
-/// Returns `(span_count, flags)` so the microbenchmark can time Pass A without
-/// exposing [`crate::raw`] types. Enabled by the `bench-internal` feature.
-#[cfg(feature = "bench-internal")]
-#[doc(hidden)]
-#[must_use]
-pub fn bench_scan_raw_spans(input: &[u8]) -> (usize, MarkupFlags) {
-    let (spans, flags) = raw::scan_raw_spans(input);
-    (spans.len(), flags)
-}
+pub use crate::document::{normalize_newlines, replace_nulls};
+pub use crate::markup::{MarkupDiagnostics, MarkupError, MarkupIndex, OpaqueRegion, RegionKind};
+pub use crate::repair::RepairMode;
+pub use crate::tag_code::code_of as tag_code_of;
+pub use crate::tokenizer::{AttrQuote, TagKind, TagToken};
 
 /// A node index in a flattened document.
 pub type NodeId = u32;
 
 /// Sentinel used for "no node".
 pub const NO_NODE: NodeId = u32::MAX;
-
 /// Sentinel used for "no tag".
 pub const NO_TAG: u32 = u32::MAX;
 
-/// How strictly [`parse`] treats constructs outside the fast path.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ParseMode {
-    /// Best effort: keep the flattened document and expose diagnostics in
-    /// [`FlatDoc::flags`].  This is the mode the benchmark and selector use.
-    #[default]
-    Fast,
-    /// If the fast path reports a structural problem, request the html5ever
-    /// fallback.  The fallback itself is a later milestone; for now this
-    /// returns [`ParseError::FallbackRequired`].
-    Safe,
-    /// Reject structural problems instead of recovering.
-    Strict,
-}
-
 /// Fatal parse errors.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// Recoverable problems are reported per-document in [`Document::flags`] and
+/// [`Document::warnings`] instead.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum ParseError {
-    /// Input exceeds the `u32` span limit.
+    #[error("input exceeds u32::MAX bytes")]
     InputTooLarge,
-    /// Input is not valid UTF-8.
-    InvalidUtf8(simd::Utf8Error),
-    /// [`ParseMode::Safe`] would need the html5ever fallback.
-    FallbackRequired(DocFlags),
-    /// [`ParseMode::Strict`] rejected the document.
-    Malformed(DocFlags),
+    #[error("invalid utf-8: {0}")]
+    InvalidUtf8(encoding::Utf8Error),
 }
 
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InputTooLarge => write!(f, "input is larger than u32::MAX bytes"),
-            Self::InvalidUtf8(err) => write!(f, "invalid utf-8: {err}"),
-            Self::FallbackRequired(flags) => {
-                write!(f, "document requires fallback (flags: {flags:?})")
-            }
-            Self::Malformed(flags) => write!(f, "malformed document (flags: {flags:?})"),
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-impl From<Stage1Error> for ParseError {
-    fn from(_: Stage1Error) -> Self {
+impl From<MarkupError> for ParseError {
+    fn from(_: MarkupError) -> Self {
         Self::InputTooLarge
     }
 }
 
-/// Parses `input` into a flattened document.
+/// Where the parser gets its UTF-8 bytes from.
 ///
-/// # Errors
+/// The input to a parser is *bytes*, not text: the specification starts with
+/// the encoding sniffing algorithm, and roughly half of the real web is not
+/// UTF-8.  This enum is the choice between running that algorithm
+/// ([`Self::Sniff`]), trusting a charset the caller already knows
+/// ([`Self::Explicit`]) and trusting the caller that the bytes already are
+/// UTF-8 ([`Self::Utf8`]).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EncodingMode {
+    /// The specification's sniffing algorithm (see [`encoding`]): byte order
+    /// mark, then `<meta charset>` in the first 1024 bytes, then UTF-8 if the
+    /// bytes validate and windows-1252 otherwise.
+    #[default]
+    Sniff,
+    /// The caller already knows the charset: an HTTP `Content-Type` header, or
+    /// an explicit `encoding=` argument in a binding.  A byte order mark still
+    /// wins; `<meta charset>` declarations no longer do.  Bytes that are
+    /// invalid in `encoding` are replaced and reported through
+    /// [`Document::had_encoding_errors`].
+    ///
+    /// [`encoding::lookup`] turns a label such as `"gbk"` into the `Encoding`.
+    Explicit(&'static encoding_rs::Encoding),
+    /// The input already is UTF-8: the document borrows it unchanged, and
+    /// bytes that are not UTF-8 are an error instead of being read as some
+    /// legacy encoding.
+    Utf8,
+}
+
+/// Everything that changes how bytes become a [`Document`].
 ///
-/// Returns a [`ParseError`] for non-UTF-8/oversized input, or when
-/// [`ParseMode::Safe`]/[`ParseMode::Strict`] rejects the document.
-pub fn parse(input: &[u8], mode: ParseMode) -> Result<FlatDoc<'_>, ParseError> {
-    simd::validate_utf8(input).map_err(ParseError::InvalidUtf8)?;
+/// The pipeline has two independent knobs - how far tree construction follows
+/// the specification, and where the UTF-8 bytes come from - and the parser used
+/// to expose one function per combination.  They are collected here instead, so
+/// [`Document::parse_with`] is the only entry point that takes arguments.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParseOptions {
+    /// How much tree-construction recovery to apply.
+    pub repair: RepairMode,
+    /// How to obtain UTF-8 bytes from the input.
+    pub encoding: EncodingMode,
+}
 
-    let index = build_markup_index(input)?;
-    let tokens = tokenizer::tokenize(input, &index);
-    let doc = document::build(input, &index, tokens);
-
-    let risky = doc.flags.intersects(
-        DocFlags::NEEDS_FALLBACK
-            | DocFlags::MISNESTED
-            | DocFlags::UNBALANCED_TAG
-            | DocFlags::DEPTH_LIMIT,
-    );
-
-    match mode {
-        ParseMode::Fast => Ok(doc),
-        ParseMode::Safe if risky => Err(ParseError::FallbackRequired(doc.flags)),
-        ParseMode::Strict if risky => Err(ParseError::Malformed(doc.flags)),
-        ParseMode::Safe | ParseMode::Strict => Ok(doc),
+impl ParseOptions {
+    /// The defaults: [`RepairMode::None`] and [`EncodingMode::Sniff`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            repair: RepairMode::None,
+            encoding: EncodingMode::Sniff,
+        }
     }
+
+    /// Sets [`Self::repair`].
+    #[must_use]
+    pub const fn repair(mut self, repair: RepairMode) -> Self {
+        self.repair = repair;
+        self
+    }
+
+    /// Sets [`Self::encoding`].
+    #[must_use]
+    pub const fn encoding(mut self, encoding: EncodingMode) -> Self {
+        self.encoding = encoding;
+        self
+    }
+}
+
+impl<'a> Document<'a> {
+    /// Parses `input` into a flattened document with default [`ParseOptions`].
+    ///
+    /// The input is *bytes*, not a string: the encoding is sniffed and decoded
+    /// per the HTML specification (see [`encoding`]).
+    ///
+    /// The default [`RepairMode`] is [`RepairMode::None`]: no implied tags and
+    /// no adoption-agency machinery.  Ask for [`RepairMode::Spec`] through
+    /// [`Document::parse_with`] when the WHATWG tree is required.
+    ///
+    /// # Errors
+    ///
+    /// [`ParseError::InputTooLarge`] for oversized input.
+    pub fn parse(input: &'a [u8]) -> Result<Self, ParseError> {
+        Self::parse_with(input, ParseOptions::new())
+    }
+
+    /// Parses `input` with explicit [`ParseOptions`].
+    ///
+    /// [`RepairMode::None`] skips HTML error recovery entirely: the tree is the
+    /// flat result of "a start tag opens, a matching end tag closes", which is
+    /// cheaper and is what a caller gets to choose when the markup is already
+    /// well-formed (or when it wants the unrepaired nesting).
+    ///
+    /// # Errors
+    ///
+    /// [`ParseError::InvalidUtf8`] when [`EncodingMode::Utf8`] was asked for
+    /// and the bytes are not UTF-8, and [`ParseError::InputTooLarge`] for
+    /// oversized input.
+    pub fn parse_with(input: &'a [u8], options: ParseOptions) -> Result<Self, ParseError> {
+        let decoded = match options.encoding {
+            EncodingMode::Sniff => encoding::decode(input),
+            EncodingMode::Explicit(encoding) => encoding::decode_with(input, encoding),
+            EncodingMode::Utf8 => {
+                encoding::validate_utf8(input).map_err(ParseError::InvalidUtf8)?;
+                encoding::Decoded {
+                    bytes: std::borrow::Cow::Borrowed(input),
+                    encoding: encoding_rs::UTF_8,
+                    errors: false,
+                }
+            }
+        };
+        build(decoded, options.repair)
+    }
+}
+
+impl Document<'static> {
+    /// Parses `input`, taking ownership of it.
+    ///
+    /// This is [`Document::parse`] for a buffer the caller would otherwise have
+    /// to keep alive next to the document (a fetched response body, or the
+    /// result of a binding's argument conversion).
+    ///
+    /// Transcoding a legacy encoding still allocates; what this avoids is the
+    /// document borrowing the caller's buffer, which would tie it to a local
+    /// and stop [`crate::Document`] from being returned from a function.
+    ///
+    /// # Errors
+    ///
+    /// [`ParseError::InputTooLarge`] for oversized input.
+    pub fn parse_owned(input: Vec<u8>) -> Result<Self, ParseError> {
+        Self::parse_owned_with(input, ParseOptions::new())
+    }
+
+    /// [`Document::parse_owned`] with explicit [`ParseOptions`].
+    ///
+    /// # Errors
+    ///
+    /// [`ParseError::InvalidUtf8`] when [`EncodingMode::Utf8`] was asked for
+    /// and the bytes are not UTF-8, and [`ParseError::InputTooLarge`] for
+    /// oversized input.
+    pub fn parse_owned_with(input: Vec<u8>, options: ParseOptions) -> Result<Self, ParseError> {
+        let decoded = match options.encoding {
+            EncodingMode::Sniff => encoding::decode_owned(input),
+            EncodingMode::Explicit(encoding) => encoding::decode_with_owned(input, encoding),
+            EncodingMode::Utf8 => {
+                encoding::validate_utf8(&input).map_err(ParseError::InvalidUtf8)?;
+                encoding::Decoded {
+                    bytes: std::borrow::Cow::Owned(input),
+                    encoding: encoding_rs::UTF_8,
+                    errors: false,
+                }
+            }
+        };
+        build(decoded, options.repair)
+    }
+}
+
+fn build(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Document<'_>, ParseError> {
+    let index = markup::scan(&decoded.bytes)?;
+    let tokens = tokenizer::tokenize(&decoded.bytes, &index);
+    let mut doc = tree_builder::build_with(decoded.bytes, &index, tokens, repair);
+    doc.encoding = decoded.encoding;
+    doc.had_encoding_errors = decoded.errors;
+    Ok(doc)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NodeId;
 
-    fn doc(input: &'static str) -> FlatDoc<'static> {
-        parse(input.as_bytes(), ParseMode::Fast).unwrap()
+    fn doc(input: &'static str) -> Document<'static> {
+        Document::parse_with(
+            input.as_bytes(),
+            ParseOptions::new().repair(RepairMode::Spec),
+        )
+        .unwrap()
     }
 
-    fn elements(doc: &FlatDoc<'_>) -> Vec<String> {
-        doc.nodes
+    /// Outer HTML bytes of a node: element tags or character data.
+    fn outer<'a>(doc: &'a Document<'_>, id: NodeId) -> &'a [u8] {
+        let node = doc.node(id);
+        match node.kind() {
+            NodeKind::Document => &doc.input,
+            NodeKind::Element | NodeKind::Text | NodeKind::Comment => {
+                let span = node.span();
+                &doc.input[span.start as usize..node.outer_end() as usize]
+            }
+        }
+    }
+
+    /// Concatenated character data of a subtree.
+    fn text_content(doc: &Document<'_>, id: NodeId) -> String {
+        let node = doc.node(id);
+        if node.is_text() {
+            return doc.text(id).into_owned();
+        }
+        let mut out = String::new();
+        for child in id..node.subtree_end() {
+            if doc.node(child).is_text() {
+                out.push_str(&doc.text(child));
+            }
+        }
+        out
+    }
+
+    fn first_text(doc: &Document<'_>) -> String {
+        let id = (0..doc.node_tape.len() as NodeId)
+            .find(|&id| doc.node(id).is_text())
+            .expect("a text node");
+        doc.text(id).into_owned()
+    }
+
+    fn elements(doc: &Document<'_>) -> Vec<String> {
+        doc.node_tape
             .iter()
             .enumerate()
             .filter(|(_, n)| n.is_element())
@@ -142,11 +283,11 @@ mod tests {
                 format!(
                     "{}:{}:{}..{}:end{}:depth{}",
                     i,
-                    doc.tag_name(n.tag_token),
-                    n.span.start,
-                    n.span.end,
-                    n.subtree_end,
-                    n.depth
+                    doc.tag_name(n.tag_token()),
+                    n.span().start,
+                    n.span().end,
+                    n.subtree_end(),
+                    n.depth()
                 )
             })
             .collect()
@@ -158,89 +299,228 @@ mod tests {
         assert_eq!(
             elements(&d),
             vec![
-                "1:div:0..5:end6:depth1",
-                "2:p:5..8:end4:depth2",
-                "4:p:14..17:end6:depth2",
+                "1:html:0..0:end9:depth1",
+                "2:head:0..0:end3:depth2",
+                "3:body:0..0:end9:depth2",
+                "4:div:0..5:end9:depth3",
+                "5:p:5..8:end7:depth4",
+                "7:p:14..17:end9:depth4",
             ]
         );
-        assert_eq!(d.text_content(1), "hiyo");
-        assert_eq!(d.outer_html(1), b"<div><p>hi</p><p>yo</p></div>");
-        assert_eq!(d.outer_html(2), b"<p>hi</p>");
-        assert_eq!(d.text_of(3), "hi");
+        assert_eq!(text_content(&d, 4), "hiyo");
+        assert_eq!(outer(&d, 4), b"<div><p>hi</p><p>yo</p></div>");
+        assert_eq!(outer(&d, 5), b"<p>hi</p>");
+        assert_eq!(d.text(6), "hi");
     }
 
     #[test]
     fn void_elements_and_optional_end_tags() {
         let d = doc("<ul><li>a<li>b</ul><br>");
         let names: Vec<_> = d
-            .nodes
+            .node_tape
             .iter()
             .filter(|n| n.is_element())
-            .map(|n| d.tag_name(n.tag_token).to_string())
+            .map(|n| d.tag_name(n.tag_token()).to_string())
             .collect();
-        assert_eq!(names, vec!["ul", "li", "li", "br"]);
-        assert!(d.flags.contains(DocFlags::SYNTHETIC_END));
+        assert_eq!(names, vec!["html", "head", "body", "ul", "li", "li", "br"]);
+        assert!(d.flags.contains(DocumentFlags::IMPLIED_END));
 
         let br = d
-            .nodes
+            .node_tape
             .iter()
-            .position(|n| n.is_element() && d.tag_name(n.tag_token) == "br")
+            .position(|n| n.is_element() && d.tag_name(n.tag_token()) == "br")
             .unwrap();
-        assert_eq!(d.outer_html(br as NodeId), b"<br>");
+        assert_eq!(outer(&d, br as NodeId), b"<br>");
     }
 
     #[test]
     fn attributes_and_entities_are_lazy() {
         let d = doc(r#"<a href="/x?a=1&amp;b=2" title="a &lt; b" disabled>x</a>"#);
-        let a = 1;
-        let attrs: Vec<_> = d.attr_iter(a).collect();
-        assert_eq!(attrs.len(), 3);
-        assert_eq!(&*d.attr_value(&attrs[0]), "/x?a=1&b=2");
-        assert_eq!(&*d.attr_value(&attrs[1]), "a < b");
-        assert_eq!(attrs[2].quote, Quote::Boolean);
-        assert_eq!(&*d.text_of(2), "x");
+        let anchor = d
+            .node_tape
+            .iter()
+            .position(|n| n.is_element() && d.tag_name(n.tag_token()) == "a")
+            .expect("anchor");
+        let tag = d.node(anchor as NodeId).tag_token();
+        let range = d.tags[tag as usize].attr_range.clone();
+        assert_eq!(range.len(), 3);
+        let value = |a: u32| {
+            let start = d.attr_value_start[a as usize] as usize;
+            let end = start + d.attr_value_len[a as usize] as usize;
+            let raw = std::str::from_utf8(&d.input[start..end]).unwrap();
+            decode_character_references(raw, true).into_owned()
+        };
+        assert_eq!(value(range.start), "/x?a=1&b=2");
+        assert_eq!(value(range.start + 1), "a < b");
+        assert_eq!(d.attr_quote[range.start as usize + 2], AttrQuote::Empty);
+        let text = d.node_tape.iter().position(|n| n.is_text()).expect("text");
+        assert_eq!(&*d.text(text as NodeId), "x");
     }
 
     #[test]
     fn duplicate_attributes_keep_first_wins() {
         let d = doc(r#"<a href="first" HREF="second">x</a>"#);
-        assert_eq!(d.tags[0].attrs.len(), 2);
-        let attr = d.find_attr_index(1, "href").expect("href");
-        assert_eq!(&*d.attr_decoded_value(attr), "first");
+        let range = d.tags[0].attr_range.clone();
+        assert_eq!(range.len(), 2);
+        let name = |a: u32| {
+            let start = d.attr_name_start[a as usize] as usize;
+            let end = start + d.attr_name_len[a as usize] as usize;
+            &d.input[start..end]
+        };
+        let first = range
+            .clone()
+            .find(|&a| name(a).eq_ignore_ascii_case(b"href"))
+            .expect("href");
+        assert_eq!(first, range.start);
     }
 
     #[test]
     fn raw_text_is_not_entity_decoded() {
         let d = doc("<script>a &amp; b</script><p>x &amp; y</p>");
-        let script_text = d.nodes.iter().position(|n| n.is_text()).unwrap();
-        assert_eq!(&*d.text_of(script_text as NodeId), "a &amp; b");
-        let p_text = d.nodes.iter().rposition(|n| n.is_text()).unwrap();
-        assert_eq!(&*d.text_of(p_text as NodeId), "x & y");
+        let script_text = d.node_tape.iter().position(|n| n.is_text()).unwrap();
+        assert_eq!(&*d.text(script_text as NodeId), "a &amp; b");
+        let p_text = d.node_tape.iter().rposition(|n| n.is_text()).unwrap();
+        assert_eq!(&*d.text(p_text as NodeId), "x & y");
     }
 
     #[test]
     fn implied_end_outer_html_is_original() {
         let d = doc("<ul><li>a<li>b</ul>");
-        let first_li = 2;
-        assert_eq!(d.outer_html(first_li), b"<li>a");
-        let ul = 1;
-        assert_eq!(d.outer_html(ul), b"<ul><li>a<li>b</ul>");
+        let find = |name: &str| {
+            d.node_tape
+                .iter()
+                .position(|n| n.is_element() && d.tag_name(n.tag_token()) == name)
+                .expect("element") as NodeId
+        };
+        assert_eq!(outer(&d, find("li")), b"<li>a");
+        assert_eq!(outer(&d, find("ul")), b"<ul><li>a<li>b</ul>");
     }
 
     #[test]
-    fn safe_and_strict_request_fallback() {
-        let err = parse(b"</div>", ParseMode::Safe).unwrap_err();
-        assert!(matches!(err, ParseError::FallbackRequired(_)));
-        let err = parse(b"</div>", ParseMode::Strict).unwrap_err();
-        assert!(matches!(err, ParseError::Malformed(_)));
-        assert!(parse(b"<div></div>", ParseMode::Safe).is_ok());
+    fn escapable_raw_text_decodes_character_references() {
+        let d = doc("<title>a &amp; b</title><script>x &amp; y</script>");
+        let texts: Vec<_> = d
+            .node_tape
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is_text())
+            .map(|(i, _)| d.text(i as NodeId).into_owned())
+            .collect();
+        assert_eq!(texts.len(), 2);
+        assert_eq!(texts[0], "a & b", "title is RCDATA: decoded");
+        assert_eq!(texts[1], "x &amp; y", "script is raw text: verbatim");
     }
 
     #[test]
-    fn invalid_utf8_is_rejected() {
+    fn unexpected_end_tag_is_flagged() {
+        let d = doc("</div>");
+        assert!(d.flags.contains(DocumentFlags::UNEXPECTED_END_TAG));
+        assert_eq!(d.warnings.len(), 1);
+        assert!(Document::parse(b"<div></div>").is_ok());
+    }
+
+    #[test]
+    fn default_repair_mode_is_none() {
+        assert_eq!(RepairMode::default(), RepairMode::None);
+        let none = Document::parse(b"<p>a").unwrap();
+        let spec =
+            Document::parse_with(b"<p>a", ParseOptions::new().repair(RepairMode::Spec)).unwrap();
+        assert!(none.node_tape.len() < spec.node_tape.len());
+        assert!(
+            !none
+                .node_tape
+                .iter()
+                .any(|n| n.is_element() && none.tag_name(n.tag_token()) == "html")
+        );
+        assert!(
+            spec.node_tape
+                .iter()
+                .any(|n| n.is_element() && spec.tag_name(n.tag_token()) == "html")
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_is_rejected_by_utf8_mode() {
         assert!(matches!(
-            parse(b"<p>\xFF</p>", ParseMode::Fast),
+            Document::parse_with(
+                b"<p>\xFF</p>",
+                ParseOptions::new().encoding(EncodingMode::Utf8)
+            ),
             Err(ParseError::InvalidUtf8(_))
         ));
+    }
+
+    #[test]
+    fn invalid_utf8_is_decoded_by_parse() {
+        // No declaration and invalid UTF-8: a browser reads the page as
+        // windows-1252, so 0xFF becomes U+00FF and nothing fails.
+        let d = Document::parse(b"<p>\xFF</p>").unwrap();
+        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
+        assert!(!d.had_encoding_errors);
+        assert_eq!(first_text(&d), "\u{ff}");
+    }
+
+    #[test]
+    fn legacy_encoding_declaration_is_honoured() {
+        let d = Document::parse(b"<meta charset=windows-1252><p>caf\xE9</p>").unwrap();
+        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
+        assert_eq!(first_text(&d), "caf\u{e9}");
+    }
+
+    #[test]
+    fn explicit_encoding_outranks_the_declaration() {
+        // The page claims UTF-8; the caller says otherwise, which is what a
+        // transport charset header does.
+        let input = b"<meta charset=utf-8><p>caf\xE9</p>";
+        let d = Document::parse_with(
+            input,
+            ParseOptions::new()
+                .repair(RepairMode::Spec)
+                .encoding(EncodingMode::Explicit(encoding_rs::WINDOWS_1252)),
+        )
+        .unwrap();
+        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
+        assert!(!d.had_encoding_errors);
+        assert_eq!(first_text(&d), "caf\u{e9}");
+    }
+
+    #[test]
+    fn explicit_utf8_reports_invalid_bytes() {
+        let d = Document::parse_with(
+            b"<p>caf\xE9</p>",
+            ParseOptions::new()
+                .repair(RepairMode::Spec)
+                .encoding(EncodingMode::Explicit(encoding_rs::UTF_8)),
+        )
+        .unwrap();
+        assert_eq!(d.encoding, encoding_rs::UTF_8);
+        assert!(d.had_encoding_errors);
+    }
+
+    #[test]
+    fn owned_input_needs_no_caller_buffer() {
+        let d =
+            Document::parse_owned(b"<meta charset=windows-1252><p>caf\xE9</p>".to_vec()).unwrap();
+        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
+        assert_eq!(first_text(&d), "caf\u{e9}");
+
+        let d = Document::parse_owned(b"<p>x</p>".to_vec()).unwrap();
+        assert_eq!(d.encoding, encoding_rs::UTF_8);
+        assert!(matches!(d.input, std::borrow::Cow::Owned(_)));
+        assert_eq!(first_text(&d), "x");
+
+        // A UTF-8 BOM is still consumed on the owned path.
+        let d = Document::parse_owned(b"\xEF\xBB\xBF<p>x</p>".to_vec()).unwrap();
+        assert_eq!(&*d.input, b"<p>x</p>");
+    }
+
+    #[test]
+    fn utf8_input_stays_zero_copy() {
+        let input = b"<p>x</p>";
+        let d = Document::parse(input).unwrap();
+        assert_eq!(d.encoding, encoding_rs::UTF_8);
+        assert!(
+            matches!(d.input, std::borrow::Cow::Borrowed(bytes) if bytes.as_ptr() == input.as_ptr())
+        );
     }
 }

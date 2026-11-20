@@ -8,9 +8,8 @@ fuzz_target!(|data: &[u8]| {
     let Ok(query) = std::str::from_utf8(data) else {
         return;
     };
-    let Ok(doc) = simdsel::parse(HTML, simdsel::ParseMode::Fast) else {
+    let Ok(selector) = simdsel::Selector::from_bytes(HTML) else {
         return;
     };
-    let selector = simdsel::Selector::new(&doc);
     let _ = selector.css(query);
 });

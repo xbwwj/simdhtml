@@ -10,8 +10,8 @@ name = "_simdsel"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+encoding_rs.workspace = true
 pyo3.workspace = true
 regex-lite.workspace = true
-self_cell.workspace = true
 simdhtml.workspace = true
 simdsel.workspace = true

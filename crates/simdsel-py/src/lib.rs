@@ -1,16 +1,7 @@
 //! PyO3 bindings for simdsel.
-//!
-//! The public Python module is `simdsel`, with a thin pure-Python `__init__.py`
-//! re-exporting the classes from `simdsel._simdsel`.  The binding is intentionally
-//! a facade over the Rust [`simdsel::Selector`] type: parsing/matching happen in
-//! Rust, and `get()`/`getall()` slice the original input.
-//!
-//! `PySelector` owns the input bytes inside a [`self_cell`] and stores a
-//! [`simdhtml::FlatDoc`] that borrows those bytes.  Rust-side `Selector`s are
-//! constructed only for the duration of a method call.
 
-#![warn(missing_docs)]
-
+use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -18,26 +9,25 @@ use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyTypeError, PyValue
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyAnyMethods, PySlice, PySliceMethods};
 use regex_lite::Regex;
-use self_cell::self_cell;
 
-use simdhtml::{FlatDoc, ParseMode};
-use simdsel::{MatchRecord, NodeId, Selector as CoreSelector};
+use encoding_rs::Encoding;
+use simdhtml::{Document, EncodingMode, ParseOptions};
+use simdsel::{
+    MatchRecord, NodeId, QueryCache, extract, record_attrib, record_text, select_query_within_cache,
+};
 
-self_cell!(
-    struct PyDoc {
-        owner: Box<[u8]>,
-        #[covariant]
-        dependent: FlatDoc,
-    }
-);
+// The document owns its bytes (`Document::parse_owned_with`), so the binding
+// needs no owner/dependent pair: `Rc<Document>` is the whole sharing story, and
+// text/attribute values are decoded lazily from the document's source spans.
 
 /// Parsel-shaped single selector.
 #[pyclass(name = "Selector", module = "simdsel._simdsel", unsendable)]
 #[derive(Clone)]
 pub struct PySelector {
-    doc: Rc<PyDoc>,
+    doc: Rc<Document<'static>>,
     roots: Vec<NodeId>,
     records: Vec<MatchRecord>,
+    cache: Rc<QueryCache>,
     base_url: Option<String>,
 }
 
@@ -49,39 +39,43 @@ pub struct PySelector {
     unsendable
 )]
 pub struct PySelectorList {
-    // PERF: too expensive here
-    items: Vec<PySelector>,
+    doc: Rc<Document<'static>>,
+    records: Vec<MatchRecord>,
+    cache: Rc<QueryCache>,
+    base_url: Option<String>,
 }
 
 impl PySelector {
-    fn from_bytes(bytes: Box<[u8]>, base_url: Option<String>) -> PyResult<Self> {
-        let doc = PyDoc::try_new(bytes, |owner| simdhtml::parse(owner, ParseMode::Fast))
+    /// Parses `bytes`, taking ownership of them, with options already resolved.
+    fn parse_owned(
+        bytes: Vec<u8>,
+        base_url: Option<String>,
+        options: ParseOptions,
+    ) -> PyResult<Self> {
+        let doc = Document::parse_owned_with(bytes, options)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
-        let root = doc.borrow_dependent().root;
+        let root = doc.root;
+
         Ok(Self {
             doc: Rc::new(doc),
             roots: vec![root],
             records: Vec::new(),
+            cache: Rc::new(QueryCache::root()),
             base_url,
         })
     }
 
-    // PERF: clone each time here.
-    fn with_core<R>(&self, f: impl for<'a> FnOnce(CoreSelector<'a>) -> R) -> R {
-        self.doc.with_dependent(|_, doc| {
-            f(CoreSelector::from_parts(
-                doc,
-                self.roots.clone(),
-                self.records.clone(),
-            ))
-        })
-    }
-
-    fn from_core(doc: Rc<PyDoc>, result: CoreSelector<'_>, base_url: Option<String>) -> Self {
+    fn from_record(
+        doc: Rc<Document<'static>>,
+        cache: Rc<QueryCache>,
+        record: &MatchRecord,
+        base_url: Option<String>,
+    ) -> Self {
         Self {
             doc,
-            roots: result.roots().to_vec(),
-            records: result.records().to_vec(),
+            roots: vec![record.node],
+            records: vec![record.clone()],
+            cache,
             base_url,
         }
     }
@@ -90,13 +84,14 @@ impl PySelector {
 #[pymethods]
 impl PySelector {
     #[new]
-    #[pyo3(signature = (text=None, body=None, encoding=None, base_url=None, r#type=None))]
+    #[pyo3(signature = (text=None, body=None, encoding=None, base_url=None, r#type=None, mode=None))]
     fn new(
         text: Option<&str>,
         body: Option<&[u8]>,
         encoding: Option<String>,
         base_url: Option<String>,
         r#type: Option<String>,
+        mode: Option<&str>,
     ) -> PyResult<Self> {
         if let Some(kind) = r#type.as_deref()
             && kind.eq_ignore_ascii_case("xml")
@@ -105,14 +100,46 @@ impl PySelector {
                 "simdsel v1 only supports type='html'",
             ));
         }
-        // FIXME: encoding is ignored. Do we want a simd based encoding?
-        let _ = encoding;
-        let bytes: Vec<u8> = match (text, body) {
-            (Some(text), _) => text.as_bytes().to_vec(),
-            (None, Some(body)) => body.to_vec(),
-            (None, None) => Vec::new(),
+
+        let encoding = explicit_encoding(encoding.as_deref())?;
+        let repair = repair_mode(mode)?;
+        let (bytes, options) = match (text, body) {
+            // `text` is already Unicode.  Like parsel, an explicit `encoding=`
+            // round-trips it through that encoding before parsing (characters
+            // the encoding cannot represent end up as character references
+            // instead of being lost), and an absent one leaves the bytes as the
+            // UTF-8 they are: `<meta charset>` in already decoded text is
+            // document data, not a hint that should re-read it as legacy bytes.
+            (Some(text), _) => match encoding {
+                Some(encoding) => (
+                    encoding.encode(text).0.into_owned(),
+                    ParseOptions::new()
+                        .repair(repair)
+                        .encoding(EncodingMode::Explicit(encoding)),
+                ),
+                None => (
+                    text.as_bytes().to_vec(),
+                    ParseOptions::new()
+                        .repair(repair)
+                        .encoding(EncodingMode::Utf8),
+                ),
+            },
+            // `body=` is bytes off the wire, so the charset comes from `encoding=`
+            // or, absent that, from the spec's sniffing algorithm (the
+            // documented deviation from parsel's hard-coded utf-8).
+            (None, Some(body)) => (
+                body.to_vec(),
+                match encoding {
+                    Some(encoding) => ParseOptions::new()
+                        .repair(repair)
+                        .encoding(EncodingMode::Explicit(encoding)),
+                    None => ParseOptions::new().repair(repair),
+                },
+            ),
+            (None, None) => (Vec::new(), ParseOptions::new().repair(repair)),
         };
-        Self::from_bytes(bytes.into_boxed_slice(), base_url)
+
+        Self::parse_owned(bytes, base_url, options)
     }
 
     /// Parses a list of byte buffers sequentially.
@@ -123,7 +150,7 @@ impl PySelector {
     fn parse_many(bodies: Vec<Vec<u8>>) -> PyResult<Vec<PySelector>> {
         bodies
             .into_iter()
-            .map(|body| PySelector::from_bytes(body.into_boxed_slice(), None))
+            .map(|body| PySelector::parse_owned(body, None, ParseOptions::new()))
             .collect()
     }
 
@@ -135,29 +162,29 @@ impl PySelector {
 
     /// Compiles and evaluates a CSS selector.
     fn css(&self, query: &str) -> PyResult<PySelectorList> {
-        self.with_core(|core| {
-            let result = core.css(query).map_err(to_py_err)?;
-            Ok(PySelectorList::from_core(
-                Rc::clone(&self.doc),
-                result,
-                self.base_url.clone(),
-            ))
+        let records = select_query_within_cache(&self.doc, &self.roots, &self.cache, query)
+            .map_err(to_py_err)?;
+        Ok(PySelectorList {
+            doc: Rc::clone(&self.doc),
+            records,
+            cache: Rc::clone(&self.cache),
+            base_url: self.base_url.clone(),
         })
     }
 
     /// Serialized current value.
     fn get(&self) -> Option<String> {
-        self.with_core(|core| core.get().map(|value| value.into_owned()))
+        self.records
+            .first()
+            .map(|record| extract(&self.doc, record).into_owned())
     }
 
     /// Serialized values (a one-element list for a Selector).
     fn getall(&self) -> Vec<String> {
-        self.with_core(|core| {
-            core.getall()
-                .into_iter()
-                .map(|value| value.into_owned())
-                .collect()
-        })
+        self.records
+            .iter()
+            .map(|record| extract(&self.doc, record).into_owned())
+            .collect()
     }
 
     /// `extract()` alias for `get()`.
@@ -173,25 +200,33 @@ impl PySelector {
     /// Text content of the current result.
     #[getter]
     fn text(&self) -> Option<String> {
-        self.with_core(|core| core.text().map(|value| value.into_owned()))
+        self.records
+            .first()
+            .and_then(|record| record_text(&self.doc, record))
+            .map(|value| value.into_owned())
     }
 
     /// Attributes of the first element result.
     #[getter]
     fn attrib(&self) -> HashMap<String, String> {
-        self.with_core(|core| attributes(&core))
+        self.records
+            .first()
+            .and_then(|record| record_attrib(&self.doc, record))
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 
     /// Apply a regex to `get()`.
-    // FIXME: replace_entities is ignored
     #[pyo3(signature = (pattern, replace_entities=true))]
-    // PERF: re should be cached
     fn re(&self, pattern: &str, replace_entities: bool) -> PyResult<Vec<String>> {
-        let _ = replace_entities;
-        let Some(text) = self.get() else {
+        let Some(record) = self.records.first() else {
             return Ok(Vec::new());
         };
-        extract_regex(&text, pattern)
+        extract_regex(
+            &with_entities(extract(&self.doc, record), replace_entities),
+            pattern,
+        )
     }
 
     /// First regex match or `default`.
@@ -202,17 +237,20 @@ impl PySelector {
         default: Option<String>,
         replace_entities: bool,
     ) -> PyResult<Option<String>> {
-        let mut matches = self.re(pattern, replace_entities)?;
-        if matches.is_empty() {
-            Ok(default)
-        } else {
-            Ok(Some(matches.remove(0)))
+        match self.records.first() {
+            Some(record) => Ok(extract_regex_first(
+                &with_entities(extract(&self.doc, record), replace_entities),
+                pattern,
+            )?
+            .or(default)),
+            None => Ok(default),
         }
     }
 
-    // PERF: bool triggers a full get
     fn __bool__(&self) -> bool {
-        self.get().is_some_and(|value| !value.is_empty())
+        self.records
+            .first()
+            .is_some_and(|record| !extract(&self.doc, record).is_empty())
     }
 
     fn __str__(&self) -> String {
@@ -228,7 +266,7 @@ impl PySelector {
 impl PySelectorList {
     /// Number of selected nodes.
     fn __len__(&self) -> usize {
-        self.items.len()
+        self.records.len()
     }
 
     /// Integer index or Python slice access.
@@ -237,13 +275,22 @@ impl PySelectorList {
             return Ok(Py::new(py, self.item_at(index)?)?.into_any());
         }
         if let Ok(slice) = index.cast::<PySlice>() {
-            let indices = slice.indices(self.items.len() as isize)?;
-            let mut out = Vec::with_capacity(indices.slicelength);
+            let indices = slice.indices(self.records.len() as isize)?;
+            let mut records = Vec::with_capacity(indices.slicelength);
             for k in 0..indices.slicelength {
                 let idx = indices.start + k as isize * indices.step;
-                out.push(self.items[idx as usize].clone());
+                records.push(self.records[idx as usize].clone());
             }
-            return Ok(Py::new(py, PySelectorList { items: out })?.into_any());
+            return Ok(Py::new(
+                py,
+                PySelectorList {
+                    doc: Rc::clone(&self.doc),
+                    records,
+                    cache: Rc::clone(&self.cache),
+                    base_url: self.base_url.clone(),
+                },
+            )?
+            .into_any());
         }
         Err(PyTypeError::new_err(
             "SelectorList index must be int or slice",
@@ -252,22 +299,40 @@ impl PySelectorList {
 
     /// Applies CSS to every item and flattens the result.
     fn css(&self, query: &str) -> PyResult<PySelectorList> {
-        let mut out = Vec::new();
-        for item in &self.items {
-            out.extend(item.css(query)?.items);
+        let mut records = Vec::new();
+        for record in &self.records {
+            let mut selected = select_query_within_cache(
+                &self.doc,
+                std::slice::from_ref(&record.node),
+                &self.cache,
+                query,
+            )
+            .map_err(to_py_err)?;
+            records.append(&mut selected);
         }
-        Ok(PySelectorList { items: out })
+        Ok(PySelectorList {
+            doc: Rc::clone(&self.doc),
+            records,
+            cache: Rc::clone(&self.cache),
+            base_url: self.base_url.clone(),
+        })
     }
 
     /// First item's value, or `default` when empty.
     #[pyo3(signature = (default=None))]
     fn get(&self, default: Option<String>) -> Option<String> {
-        self.items.first().and_then(PySelector::get).or(default)
+        self.records
+            .first()
+            .map(|record| extract(&self.doc, record).into_owned())
+            .or(default)
     }
 
     /// All items' values.
     fn getall(&self) -> Vec<String> {
-        self.items.iter().flat_map(PySelector::getall).collect()
+        self.records
+            .iter()
+            .map(|record| extract(&self.doc, record).into_owned())
+            .collect()
     }
 
     /// `extract()` alias for `getall()`.
@@ -284,24 +349,33 @@ impl PySelectorList {
     /// All items' text content.
     #[getter]
     fn text(&self) -> Vec<String> {
-        self.items.iter().filter_map(PySelector::text).collect()
+        self.records
+            .iter()
+            .filter_map(|record| record_text(&self.doc, record))
+            .map(|value| value.into_owned())
+            .collect()
     }
 
     /// First item's attributes.
     #[getter]
     fn attrib(&self) -> HashMap<String, String> {
-        self.items
+        self.records
             .first()
-            .map(PySelector::attrib)
+            .and_then(|record| record_attrib(&self.doc, record))
             .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 
     /// Apply a regex to every item and flatten.
     #[pyo3(signature = (pattern, replace_entities=true))]
     fn re(&self, pattern: &str, replace_entities: bool) -> PyResult<Vec<String>> {
         let mut out = Vec::new();
-        for item in &self.items {
-            out.extend(item.re(pattern, replace_entities)?);
+        for record in &self.records {
+            out.extend(extract_regex(
+                &with_entities(extract(&self.doc, record), replace_entities),
+                pattern,
+            )?);
         }
         Ok(out)
     }
@@ -314,52 +388,117 @@ impl PySelectorList {
         default: Option<String>,
         replace_entities: bool,
     ) -> PyResult<Option<String>> {
-        for item in &self.items {
-            let mut matches = item.re(pattern, replace_entities)?;
-            if !matches.is_empty() {
-                return Ok(Some(matches.remove(0)));
+        for record in &self.records {
+            if let Some(matched) = extract_regex_first(
+                &with_entities(extract(&self.doc, record), replace_entities),
+                pattern,
+            )? {
+                return Ok(Some(matched));
             }
         }
         Ok(default)
     }
 
     fn __bool__(&self) -> bool {
-        !self.items.is_empty()
+        !self.records.is_empty()
     }
 
     fn __repr__(&self) -> String {
-        format!("<SelectorList len={}>", self.items.len())
+        format!("<SelectorList len={}>", self.records.len())
     }
 }
 
 impl PySelectorList {
     fn item_at(&self, index: isize) -> PyResult<PySelector> {
-        let len = self.items.len() as isize;
+        let len = self.records.len() as isize;
         let index = if index < 0 { len + index } else { index };
         if index < 0 || index >= len {
             return Err(PyIndexError::new_err("SelectorList index out of range"));
         }
-        Ok(self.items[index as usize].clone())
-    }
-
-    // PERF: from_core copies here, `into_parts` instead?
-    fn from_core(doc: Rc<PyDoc>, result: CoreSelector<'_>, base_url: Option<String>) -> Self {
-        let items = result
-            .split()
-            .into_iter()
-            .map(|inner| PySelector::from_core(Rc::clone(&doc), inner, base_url.clone()))
-            .collect();
-        Self { items }
+        Ok(PySelector::from_record(
+            Rc::clone(&self.doc),
+            Rc::clone(&self.cache),
+            &self.records[index as usize],
+            self.base_url.clone(),
+        ))
     }
 }
 
-fn attributes(selector: &CoreSelector<'_>) -> HashMap<String, String> {
-    selector.attrib().unwrap_or_default().into_iter().collect()
+/// The `encoding=` keyword: a charset label such as `"utf-8"` or `"gbk"`.
+///
+/// `None` (or an empty label) means "let the parser sniff", which is what
+/// parsel does when no encoding is passed.
+fn explicit_encoding(label: Option<&str>) -> PyResult<Option<&'static Encoding>> {
+    let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) else {
+        return Ok(None);
+    };
+    simdhtml::encoding::lookup(label)
+        .map(Some)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown encoding {label:?}")))
+}
+
+/// The `mode=` keyword: which tree-construction mode to parse with.
+///
+/// `none` is the default (no repair; the tree is the flat start/end-tag
+/// result), `practical` keeps structural repairs but skips the
+/// formatting-element machinery, and `spec` is full WHATWG compatibility.
+fn repair_mode(mode: Option<&str>) -> PyResult<simdhtml::RepairMode> {
+    Ok(match mode.unwrap_or("none").to_ascii_lowercase().as_str() {
+        "none" | "" => simdhtml::RepairMode::None,
+        "practical" => simdhtml::RepairMode::Practical,
+        "spec" => simdhtml::RepairMode::Spec,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown parse mode {other:?}: expected \"none\", \"practical\" or \"spec\""
+            )));
+        }
+    })
+}
+
+/// Compiled regex cache: crawl loops usually reuse a handful of patterns.
+fn cached_regex(pattern: &str) -> PyResult<Rc<Regex>> {
+    thread_local! {
+        static CACHE: RefCell<HashMap<Box<str>, Rc<Regex>>> = RefCell::new(HashMap::new());
+    }
+    /// Regexes are small; a few hundred is plenty and bounds memory.
+    const MAX_ENTRIES: usize = 128;
+
+    CACHE.with(|cache| {
+        if let Some(regex) = cache.borrow().get(pattern) {
+            return Ok(Rc::clone(regex));
+        }
+        let regex = Rc::new(
+            Regex::new(pattern)
+                .map_err(|err| PyValueError::new_err(format!("invalid regex: {err}")))?,
+        );
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= MAX_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(pattern.into(), Rc::clone(&regex));
+        Ok(regex)
+    })
+}
+
+/// Applies parsel's `replace_entities` to the string a regex runs against.
+///
+/// Text nodes and attribute values are decoded when they are projected, so this
+/// only changes anything for element results (whose serialized HTML keeps its
+/// references) and for literal references in raw-text elements.  Decoding is
+/// skipped when the string has no references, which is the common case.
+fn with_entities<'a>(text: Cow<'a, str>, replace_entities: bool) -> Cow<'a, str> {
+    if !replace_entities {
+        return text;
+    }
+    match simdhtml::decode_character_references(&text, false) {
+        // Nothing decoded: keep the original, borrowed or not.
+        Cow::Borrowed(_) => text,
+        Cow::Owned(decoded) => Cow::Owned(decoded),
+    }
 }
 
 fn extract_regex(text: &str, pattern: &str) -> PyResult<Vec<String>> {
-    let regex = Regex::new(pattern)
-        .map_err(|err| PyValueError::new_err(format!("invalid regex: {err}")))?;
+    let regex = cached_regex(pattern)?;
     let groups = regex.captures_len();
     let extract_group = regex
         .capture_names()
@@ -383,6 +522,32 @@ fn extract_regex(text: &str, pattern: &str) -> PyResult<Vec<String>> {
         }
     }
     Ok(out)
+}
+
+fn extract_regex_first(text: &str, pattern: &str) -> PyResult<Option<String>> {
+    let regex = cached_regex(pattern)?;
+    let groups = regex.captures_len();
+    let extract_group = regex
+        .capture_names()
+        .position(|name| name == Some("extract"));
+    for captures in regex.captures_iter(text) {
+        if let Some(group) = extract_group {
+            if let Some(matched) = captures.get(group) {
+                return Ok(Some(matched.as_str().to_string()));
+            }
+        } else if groups <= 1 {
+            if let Some(matched) = captures.get(0) {
+                return Ok(Some(matched.as_str().to_string()));
+            }
+        } else {
+            for group in 1..groups {
+                if let Some(matched) = captures.get(group) {
+                    return Ok(Some(matched.as_str().to_string()));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn to_py_err(error: simdsel::Error) -> PyErr {

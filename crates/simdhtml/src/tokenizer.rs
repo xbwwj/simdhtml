@@ -1,92 +1,90 @@
-//! Stage-2 tag/text tokenizer.
+//! Cut tag spans into a tag/attribute token stream.
 //!
-//! Stage-1 has already found tag spans and text runs, so this is O(#tags +
+//! The markup scan has already found tag spans and text runs, so this is O(#tags +
 //! #text-runs), not O(bytes).  Attribute and text values keep their original
 //! byte spans; entities are decoded lazily later.
+//!
+//! This module owns the tag vocabulary that the rest of the crate speaks:
+//! [`TagToken`], [`TagKind`] and [`AttrQuote`] describe a token, and
+//! [`tokenize`] is the only place that cuts attribute names and values.
 
 use std::ops::Range;
 
-use crate::{MarkupIndex, Quote, TagKind, TagToken};
+use crate::MarkupIndex;
+use crate::tag_code::TagCode;
 
-use crate::tagcode::TagCode;
+/// Tag token kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TagKind {
+    /// `<name ...>`
+    Start,
+    /// `</name>`
+    End,
+}
 
-/// A text run between tags.
+/// A parsed tag.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TextRun {
+pub struct TagToken {
+    /// `<` through `>` inclusive (`end` is one past `>`).
     pub span: Range<u32>,
-    pub raw: bool,
+
+    /// Start or end.
+    pub kind: TagKind,
+
+    /// Attribute index range owned by this tag.
+    pub attr_range: Range<u32>,
+
+    /// Whether the source had a self-closing slash.
+    pub self_closing: bool,
 }
 
-/// Lazy text-run source.  The tokenizer no longer materializes a `Vec<TextRun>`;
-/// normalizer/builder consume text runs directly in source order.
-pub(crate) struct TextRuns<'a> {
-    index: &'a MarkupIndex,
-    next: usize,
-    raw_cursor: usize,
-}
-
-impl<'a> TextRuns<'a> {
-    pub(crate) fn new(_input: &'a [u8], index: &'a MarkupIndex) -> Self {
-        Self {
-            index,
-            next: 0,
-            raw_cursor: 0,
-        }
-    }
-}
-
-impl Iterator for TextRuns<'_> {
-    type Item = TextRun;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let run = self.index.text_runs.get(self.next)?.clone();
-        self.next += 1;
-        while self.raw_cursor < self.index.raw_ranges.len()
-            && self.index.raw_ranges[self.raw_cursor].end <= run.start
-        {
-            self.raw_cursor += 1;
-        }
-        let raw = self.raw_cursor < self.index.raw_ranges.len()
-            && self.index.raw_ranges[self.raw_cursor].start <= run.start
-            && self.index.raw_ranges[self.raw_cursor].end >= run.end;
-        Some(TextRun { span: run, raw })
-    }
+/// Attribute value quoting style.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttrQuote {
+    /// `"value"` — attribute value (double-quoted) syntax.
+    DoubleQuoted,
+    /// `'value'` — attribute value (single-quoted) syntax.
+    SingleQuoted,
+    /// `value` — attribute value (unquoted) syntax.
+    Unquoted,
+    /// Just the name, no `=` — empty attribute syntax.
+    Empty,
 }
 
 /// Tokenizer output: structural tags, per-token tag codes and attribute spans.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Tokenized {
+pub(crate) struct Tokens {
     pub tags: Vec<TagToken>,
     pub tag_name_start: Vec<u32>,
     pub tag_name_len: Vec<u16>,
     pub tag_code: Vec<TagCode>,
     pub attr_tag: Vec<u32>,
-    pub attr_key_start: Vec<u32>,
-    pub attr_key_len: Vec<u16>,
+    pub attr_name_start: Vec<u32>,
+    pub attr_name_len: Vec<u16>,
     pub attr_value_start: Vec<u32>,
     pub attr_value_len: Vec<u32>,
-    pub attr_quote: Vec<Quote>,
+    pub attr_quote: Vec<AttrQuote>,
 }
 
-/// Tokenizes every stage-1 tag span.
+/// Tokenizes every tag span in the markup index.
 ///
 /// Attributes are cut into structural key/value spans here (no entity decode,
 /// lowercase or interning). Text runs are produced lazily by [`TextRuns`].
-pub(crate) fn tokenize(input: &[u8], index: &MarkupIndex) -> Tokenized {
-    let mut out = Tokenized {
-        tags: Vec::with_capacity(index.tag_starts.len()),
-        tag_name_start: Vec::with_capacity(index.tag_starts.len()),
-        tag_name_len: Vec::with_capacity(index.tag_starts.len()),
-        tag_code: Vec::with_capacity(index.tag_starts.len()),
-        attr_tag: Vec::with_capacity(index.tag_starts.len()),
-        attr_key_start: Vec::with_capacity(index.tag_starts.len()),
-        attr_key_len: Vec::with_capacity(index.tag_starts.len()),
-        attr_value_start: Vec::with_capacity(index.tag_starts.len()),
-        attr_value_len: Vec::with_capacity(index.tag_starts.len()),
-        attr_quote: Vec::with_capacity(index.tag_starts.len()),
+pub(crate) fn tokenize(input: &[u8], index: &MarkupIndex) -> Tokens {
+    let mut out = Tokens {
+        tags: Vec::with_capacity(index.tag_open.len()),
+        tag_name_start: Vec::with_capacity(index.tag_open.len()),
+        tag_name_len: Vec::with_capacity(index.tag_open.len()),
+        tag_code: Vec::with_capacity(index.tag_open.len()),
+        attr_tag: Vec::with_capacity(index.tag_open.len()),
+        attr_name_start: Vec::with_capacity(index.tag_open.len()),
+        attr_name_len: Vec::with_capacity(index.tag_open.len()),
+        attr_value_start: Vec::with_capacity(index.tag_open.len()),
+        attr_value_len: Vec::with_capacity(index.tag_open.len()),
+        attr_quote: Vec::with_capacity(index.tag_open.len()),
     };
 
-    for (&start, &end) in index.tag_starts.iter().zip(&index.tag_ends) {
+    for (&start, &end) in index.tag_open.iter().zip(&index.tag_close) {
         let start = start as usize;
         let end = end as usize;
         debug_assert!(start <= end && end < input.len());
@@ -100,8 +98,8 @@ pub(crate) fn tokenize(input: &[u8], index: &MarkupIndex) -> Tokenized {
 /// Parses one `<...>` span into a `TagToken`.
 ///
 /// End tags ignore attributes. Start-tag attributes are recorded as raw spans;
-/// selectors use the attribute SoA or [`FlatDoc::attr_iter`].
-fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> TagToken {
+/// selectors use the attribute SoA or [`Document::attr_iter`].
+fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokens) -> TagToken {
     let span = start as u32..(end + 1) as u32;
     let tag_index = out.tags.len() as u32;
 
@@ -118,8 +116,7 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
         return TagToken {
             span,
             kind: TagKind::End,
-            attrs: 0..0,
-            node: crate::NO_NODE,
+            attr_range: 0..0,
             self_closing: false,
         };
     }
@@ -137,7 +134,7 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
     let mut self_closing = false;
 
     while i < end {
-        while i < end && is_whitespace(input[i]) {
+        while i < end && is_ws(input[i]) {
             i += 1;
         }
         if i >= end {
@@ -153,7 +150,7 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
         }
 
         let key_start = i;
-        while i < end && !is_whitespace(input[i]) && !matches!(input[i], b'=' | b'/' | b'>') {
+        while i < end && !is_name_stop(input[i]) {
             i += 1;
         }
         let key_end = i;
@@ -162,22 +159,24 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
             continue;
         }
 
-        while i < end && is_whitespace(input[i]) {
+        while i < end && is_ws(input[i]) {
             i += 1;
         }
 
         let (value_start, value_len, quote) = if i < end && input[i] == b'=' {
             i += 1;
-            while i < end && is_whitespace(input[i]) {
+            while i < end && is_ws(input[i]) {
                 i += 1;
             }
             if i < end && matches!(input[i], b'"' | b'\'') {
                 let q = input[i];
                 i += 1;
                 let start = i;
-                while i < end && input[i] != q {
-                    i += 1;
-                }
+                // 98% of attributes are quoted (85.5% double, 12.6% single) and
+                // account for 99.5% of all value bytes, so this one scan is
+                // where the tokenizer's time goes: `memchr` (AVX2) instead of a
+                // byte loop.
+                i += memchr::memchr(q, &input[start..end]).unwrap_or(end - start);
                 let len = i - start;
                 if i < end {
                     i += 1;
@@ -186,20 +185,20 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
                     start as u32,
                     len as u32,
                     if q == b'"' {
-                        Quote::Double
+                        AttrQuote::DoubleQuoted
                     } else {
-                        Quote::Single
+                        AttrQuote::SingleQuoted
                     },
                 )
             } else {
                 let start = i;
-                while i < end && !is_whitespace(input[i]) && input[i] != b'>' {
+                while i < end && !is_value_stop(input[i]) {
                     i += 1;
                 }
-                (start as u32, (i - start) as u32, Quote::Unquoted)
+                (start as u32, (i - start) as u32, AttrQuote::Unquoted)
             }
         } else {
-            (i as u32, 0, Quote::Boolean)
+            (i as u32, 0, AttrQuote::Empty)
         };
 
         // Structural cut only: keep duplicate attributes in source order.
@@ -207,8 +206,8 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
         // `find_attr` already return the first occurrence, and multi-attribute
         // projections de-duplicate themselves.
         out.attr_tag.push(tag_index);
-        out.attr_key_start.push(key_start as u32);
-        out.attr_key_len
+        out.attr_name_start.push(key_start as u32);
+        out.attr_name_len
             .push((key_end - key_start).min(u16::MAX as usize) as u16);
         out.attr_value_start.push(value_start);
         out.attr_value_len.push(value_len);
@@ -218,14 +217,65 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokenized) -> Tag
     TagToken {
         span,
         kind: TagKind::Start,
-        attrs: attrs_start..out.attr_tag.len() as u32,
-        node: crate::NO_NODE,
+        attr_range: attrs_start..out.attr_tag.len() as u32,
         self_closing,
     }
 }
 
 fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\x0C' | b'\r')
+}
+
+/// Lookup tables for the attribute scanner.
+///
+/// The scalar loops test whitespace, `=`, `/` and `>` per byte; three branches
+/// per byte on ~37 bytes of attribute text per attribute is most of what the
+/// tokenizer spends.  A table lookup is one load and no branch misprediction.
+const fn class_table() -> [u8; 256] {
+    let mut table = [0u8; 256];
+    let mut b = 0usize;
+    while b < 256 {
+        let byte = b as u8;
+        let ws = matches!(byte, b' ' | b'\t' | b'\n' | b'\x0C' | b'\r');
+        let mut flags = 0u8;
+        if ws {
+            flags |= FLAG_WS;
+        }
+        if ws || byte == b'=' || byte == b'/' || byte == b'>' {
+            flags |= FLAG_NAME_STOP;
+        }
+        if ws || byte == b'>' {
+            flags |= FLAG_VALUE_STOP;
+        }
+        if ws || byte == b'/' || byte == b'>' {
+            flags |= FLAG_TAG_NAME_STOP;
+        }
+        table[b] = flags;
+        b += 1;
+    }
+    table
+}
+
+const FLAG_WS: u8 = 1;
+const FLAG_NAME_STOP: u8 = 1 << 1;
+const FLAG_VALUE_STOP: u8 = 1 << 2;
+const FLAG_TAG_NAME_STOP: u8 = 1 << 3;
+
+static CLASS: [u8; 256] = class_table();
+
+#[inline]
+fn is_ws(b: u8) -> bool {
+    CLASS[b as usize] & FLAG_WS != 0
+}
+
+#[inline]
+fn is_name_stop(b: u8) -> bool {
+    CLASS[b as usize] & FLAG_NAME_STOP != 0
+}
+
+#[inline]
+fn is_value_stop(b: u8) -> bool {
+    CLASS[b as usize] & FLAG_VALUE_STOP != 0
 }
 
 fn is_name_delimiter(b: u8) -> bool {
@@ -237,8 +287,8 @@ mod tests {
     use super::*;
     use crate::MarkupIndex;
 
-    fn tok(input: &str) -> (Tokenized, MarkupIndex) {
-        let index = crate::build_markup_index(input.as_bytes()).unwrap();
+    fn tok(input: &str) -> (Tokens, MarkupIndex) {
+        let index = crate::markup::scan(input.as_bytes()).unwrap();
         let t = tokenize(input.as_bytes(), &index);
         (t, index)
     }
@@ -246,13 +296,10 @@ mod tests {
     #[test]
     fn simple_tags() {
         let input = r#"<div class="a b" id=x disabled data-q='v'>hi</div>"#;
-        let (t, index) = tok(input);
+        let (t, _) = tok(input);
         assert_eq!(t.tags.len(), 2);
         assert_eq!(t.tags[0].kind, TagKind::Start);
         assert_eq!(t.tags[1].kind, TagKind::End);
-        let texts: Vec<_> = TextRuns::new(input.as_bytes(), &index).collect();
-        assert_eq!(texts.len(), 1);
-        assert_eq!(texts[0].span, 42..44);
     }
 
     #[test]
@@ -265,11 +312,11 @@ mod tests {
     #[test]
     fn duplicate_attributes_are_kept_structurally() {
         let (t, _) = tok(r#"<a href="first" HREF="second" href="third">x</a>"#);
-        assert_eq!(t.tags[0].attrs, 0..3);
+        assert_eq!(t.tags[0].attr_range, 0..3);
         let keys: Vec<_> = (0..3)
             .map(|a| {
-                let start = t.attr_key_start[a] as usize;
-                let len = t.attr_key_len[a] as usize;
+                let start = t.attr_name_start[a] as usize;
+                let len = t.attr_name_len[a] as usize;
                 &"<a href=\"first\" HREF=\"second\" href=\"third\">x</a>"[start..start + len]
             })
             .collect();
@@ -280,14 +327,5 @@ mod tests {
     fn end_tag_has_no_attributes() {
         let (t, _) = tok("</div foo=bar>");
         assert_eq!(t.tags[0].kind, TagKind::End);
-    }
-
-    #[test]
-    fn raw_text_flag() {
-        let input = "<script>a &amp; <b></script><p>x</p>";
-        let (_, index) = tok(input);
-        let texts: Vec<_> = TextRuns::new(input.as_bytes(), &index).collect();
-        assert!(texts[0].raw);
-        assert!(!texts[1].raw);
     }
 }

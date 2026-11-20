@@ -1,24 +1,38 @@
 //! CSS selector compilation, set-at-a-time matching, and a parsel-shaped
-//! [`Selector`] facade over [`simdhtml::FlatDoc`].
+//! [`Selector`] facade over [`simdhtml::Document`].
 //!
-//! The low-level API compiles a CSS selector into an AST and evaluates it
-//! against an immutable document:
+//! [`Selector`] is the front door of the crate: it owns its document, so a
+//! caller never needs to name [`Document`] or import `simdhtml` at all.
 //!
-//! ```text
-//! parse_selector -> select(&FlatDoc<'_>, &CssSelector) -> MatchRecord
+//! ```no_run
+//! use simdsel::Selector;
+//!
+//! let sel = Selector::from_text("<div class=item><a href=/x>hi</a></div>").unwrap();
+//! for link in sel.css(".item a::attr(href)").unwrap().getall() {
+//!     println!("{link}");
+//! }
 //! ```
 //!
-//! The high-level [`Selector`] borrows a [`FlatDoc`] plus the current result
-//! set, so chained `.css()` calls stay tied to the caller-owned document.
-
-#![warn(missing_docs)]
+//! The low-level API stays separate and document-borrowing: compile a CSS
+//! selector into an AST and evaluate it against an immutable document, with the
+//! document's lifetime under the caller's control:
+//!
+//! ```text
+//! parse_selector -> select(&Document<'_>, &CssSelector) -> MatchRecord
+//! ```
+//!
+//! Use it when one document feeds many independent queries and the `Rc` in
+//! [`Selector`] is not wanted, or when the result is projected without building
+//! a result set at all (e.g. [`Count`]).
 
 mod bitset;
 mod error;
 mod matcher;
 mod parser;
+mod raw;
 mod record;
 mod selector;
+pub mod xpath;
 
 pub use bitset::BitSet;
 pub use error::Error;
@@ -32,12 +46,12 @@ pub use parser::{
     Selector as CssSelector, SelectorError, parse_selector,
 };
 pub use record::{MatchKind, MatchRecord};
-pub use selector::Selector;
+pub use selector::{Selector, record_attrib, record_text, select_query_within_cache};
 pub use simdhtml::{
-    AttrIter, AttrRef, DocFlags, FlatDoc, MarkupFlags, MarkupIndex, NO_NODE, NO_TAG, Node, NodeId,
-    NodeKind, ParseError, ParseMode, Quote, TagKind, TagToken, Warning, WarningKind,
-    build_markup_index, parse,
+    AttrQuote, Document, DocumentFlags, EncodingMode, NO_NODE, NO_TAG, Node, NodeId, NodeKind,
+    ParseError, ParseOptions, RepairMode, TagKind, TagToken, Warning, WarningKind,
 };
+pub use xpath::{NodeRef, RefKind, Value, XPath, XPathError};
 
 /// CSS AST types under a distinct module, avoiding a name clash with the
 /// high-level [`Selector`].

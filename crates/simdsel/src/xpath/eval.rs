@@ -1,0 +1,656 @@
+//! XPath 1.0 evaluation over the preorder node tape.
+//!
+//! The evaluator is set-at-a-time: every step maps a node-set to a new
+//! node-set, predicates are evaluated per candidate with `position()`/`last()`
+//! in scope, and each step result is sorted into document order and
+//! deduplicated before the next step (which is what the data model requires and
+//! what keeps `//a//b` from returning duplicates).
+
+use super::XPathError;
+use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
+use super::value::{NodeRef, RefKind, Value};
+use crate::raw::{attr_name, attr_range};
+
+/// Last id of the text run that starts at `id`, or `None` when the run is a
+/// single node.
+///
+/// Adjacent text siblings are one text node in the XPath data model.  They are
+/// consecutive ids with the same parent (preorder), so the run is found by
+/// walking forward while that holds.
+pub(super) fn text_run(doc: &Document<'_>, id: NodeId) -> Option<NodeId> {
+    let parent = doc.node(id).parent();
+    let mut last = id;
+    while let Some(next) = (last + 1 < doc.node_tape.len() as NodeId).then_some(last + 1) {
+        let node = doc.node(next);
+        if !node.is_text() || node.parent() != parent {
+            break;
+        }
+        last = next;
+    }
+    (last != id).then_some(last)
+}
+
+/// Is this text node outside the root element?
+///
+/// XPath 1.0's root node has no text children: text before or after the root
+/// element is not part of the data model, even though the tape keeps it.
+fn outside_root(doc: &Document<'_>, id: NodeId) -> bool {
+    doc.node(id).parent() == 0
+}
+
+/// Is this text node the continuation of a run whose first node is its
+/// preceding sibling?
+fn text_continuation(doc: &Document<'_>, id: NodeId) -> bool {
+    if id == 0 {
+        return false;
+    }
+    let previous = doc.node(id - 1);
+    previous.is_text() && previous.parent() == doc.node(id).parent()
+}
+use simdhtml::{Document, NodeId, NodeKind};
+
+/// Evaluation context: the context node plus its position and set size, which
+/// `position()` and `last()` read.
+#[derive(Clone, Copy)]
+struct Ctx {
+    node: NodeRef,
+    position: usize,
+    size: usize,
+}
+
+/// Evaluates a compiled expression against `doc`.
+pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathError> {
+    let mut evaluator = Evaluator {
+        doc,
+        visits: 0,
+        // 256 visits per node is far above what a realistic query needs, while
+        // still bounding `//a//b`-style products on pathological documents.
+        budget: (doc.node_tape.len() as u64 + 1) * 256,
+    };
+    let ctx = Ctx {
+        node: NodeRef::document(),
+        position: 1,
+        size: 1,
+    };
+    evaluator.eval(expr, &ctx)
+}
+
+struct Evaluator<'d, 'a> {
+    doc: &'d Document<'a>,
+    visits: u64,
+    budget: u64,
+}
+
+impl Evaluator<'_, '_> {
+    fn eval(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Value, XPathError> {
+        match expr {
+            Expr::Path(path) => Ok(Value::Nodes(self.path(path, ctx)?)),
+            Expr::Filter {
+                primary,
+                predicates,
+            } => {
+                let value = self.eval(primary, ctx)?;
+                let Value::Nodes(nodes) = value else {
+                    return Err(XPathError::Eval(
+                        "a predicate can only filter a node-set".to_owned(),
+                    ));
+                };
+                Ok(Value::Nodes(self.filter(nodes, predicates)?))
+            }
+            Expr::Union(left, right) => {
+                let mut nodes = self.nodes(left, ctx)?;
+                nodes.extend(self.nodes(right, ctx)?);
+                Ok(Value::Nodes(sorted(nodes)))
+            }
+            Expr::Binary(op, left, right) => self.binary(*op, left, right, ctx),
+            Expr::Negate(operand) => {
+                let value = self.eval(operand, ctx)?;
+                Ok(Value::Number(-value.to_number(self.doc)))
+            }
+            Expr::Literal(text) => Ok(Value::Str(text.clone())),
+            Expr::Number(value) => Ok(Value::Number(*value)),
+            Expr::Call(func, args) => self.call(*func, args, ctx),
+        }
+    }
+
+    fn nodes(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathError> {
+        match self.eval(expr, ctx)? {
+            Value::Nodes(nodes) => Ok(nodes),
+            _ => Err(XPathError::Eval("expected a node-set".to_owned())),
+        }
+    }
+
+    fn path(&mut self, path: &Path, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathError> {
+        let mut set = match &path.base {
+            Some(base) => self.nodes(base, ctx)?,
+            None if path.absolute => vec![NodeRef::document()],
+            None => vec![ctx.node],
+        };
+        let mut index = 0;
+        while index < path.steps.len() {
+            let mut step = &path.steps[index];
+            let mut axis = step.axis;
+            // `//x` is `descendant-or-self::node()/child::x`, and that pair is
+            // exactly `descendant::x` when the child step has no predicates
+            // (positions would otherwise differ).  Fusing it avoids
+            // materialising every node in the document only to walk it again as
+            // a child list.
+            if step.axis == Axis::DescendantOrSelf
+                && matches!(step.test, NodeTest::Node)
+                && step.predicates.is_empty()
+                && index + 1 < path.steps.len()
+                && path.steps[index + 1].axis == Axis::Child
+                && path.steps[index + 1].predicates.is_empty()
+            {
+                index += 1;
+                step = &path.steps[index];
+                axis = Axis::Descendant;
+            }
+            let mut next = Vec::new();
+            for node in &set {
+                let candidates = self.axis(axis, *node)?;
+                let mut candidates = self.test(step, candidates);
+                if !step.predicates.is_empty() {
+                    candidates = self.filter(candidates, &step.predicates)?;
+                }
+                next.extend(candidates);
+            }
+            set = sorted(next);
+            index += 1;
+        }
+        Ok(set)
+    }
+
+    /// Applies predicates left to right with per-axis position semantics.
+    fn filter(
+        &mut self,
+        mut nodes: Vec<NodeRef>,
+        predicates: &[Expr],
+    ) -> Result<Vec<NodeRef>, XPathError> {
+        for predicate in predicates {
+            let size = nodes.len();
+            let mut kept = Vec::with_capacity(size);
+            for (index, node) in nodes.iter().enumerate() {
+                let ctx = Ctx {
+                    node: *node,
+                    position: index + 1,
+                    size,
+                };
+                let value = self.eval(predicate, &ctx)?;
+                let keep = match value {
+                    // A predicate that evaluates to a number is the shorthand
+                    // for `position() = number`.
+                    Value::Number(n) => n == (index + 1) as f64,
+                    other => other.to_boolean(),
+                };
+                if keep {
+                    kept.push(*node);
+                }
+            }
+            nodes = kept;
+        }
+        Ok(nodes)
+    }
+
+    /// Nodes on `axis`, in axis order (reverse document order for `ancestor`
+    /// and `preceding-sibling`, as the specification requires for positions).
+    fn axis(&mut self, axis: Axis, node: NodeRef) -> Result<Vec<NodeRef>, XPathError> {
+        let out = match axis {
+            Axis::Self_ => vec![node],
+            Axis::Child => self.children(node),
+            Axis::Descendant => self.descendants(node),
+            Axis::DescendantOrSelf => {
+                let mut out = vec![node];
+                out.extend(self.descendants(node));
+                out
+            }
+            Axis::Parent => match node.kind() {
+                RefKind::Attribute => vec![NodeRef::element(node.node_id())],
+                RefKind::Document => Vec::new(),
+                _ => {
+                    let parent = self.doc.node(node.node_id()).parent();
+                    vec![self.ref_of(parent)]
+                }
+            },
+            Axis::Ancestor => {
+                let mut out = Vec::new();
+                let mut current = match node.kind() {
+                    RefKind::Attribute => Some(node.node_id()),
+                    RefKind::Document => None,
+                    _ => Some(self.doc.node(node.node_id()).parent()),
+                };
+                while let Some(id) = current {
+                    out.push(self.ref_of(id));
+                    if self.doc.node(id).kind() == NodeKind::Document {
+                        break;
+                    }
+                    current = Some(self.doc.node(id).parent());
+                }
+                out
+            }
+            Axis::Attribute => {
+                if node.kind() != RefKind::Element {
+                    Vec::new()
+                } else {
+                    attr_range(self.doc, node.node_id())
+                        .map(|attr| NodeRef::attribute(node.node_id(), attr))
+                        .collect()
+                }
+            }
+            Axis::FollowingSibling => {
+                if node.kind() == RefKind::Attribute {
+                    Vec::new()
+                } else {
+                    let mut out = Vec::new();
+                    let mut sibling = self.doc.node(node.node_id()).next_sibling();
+                    while sibling != simdhtml::NO_NODE {
+                        out.push(self.ref_of(sibling));
+                        sibling = self.doc.node(sibling).next_sibling();
+                    }
+                    out
+                }
+            }
+            Axis::PrecedingSibling => {
+                if node.kind() == RefKind::Attribute {
+                    Vec::new()
+                } else {
+                    let parent = self.doc.node(node.node_id()).parent();
+                    let mut out = Vec::new();
+                    let mut child = self.doc.node(parent).first_child();
+                    while child != simdhtml::NO_NODE && child != node.node_id() {
+                        out.push(self.ref_of(child));
+                        child = self.doc.node(child).next_sibling();
+                    }
+                    out.reverse();
+                    out
+                }
+            }
+        };
+        self.visits += out.len() as u64;
+        if self.visits > self.budget {
+            return Err(XPathError::TooComplex);
+        }
+        Ok(out)
+    }
+
+    fn children(&self, node: NodeRef) -> Vec<NodeRef> {
+        if !matches!(node.kind(), RefKind::Element | RefKind::Document) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let mut child = self.doc.node(node.node_id()).first_child();
+        while child != simdhtml::NO_NODE {
+            out.push(self.ref_of(child));
+            child = self.doc.node(child).next_sibling();
+        }
+        out
+    }
+
+    /// Descendants of an element or the document, in document order.
+    ///
+    /// The tape is preorder with `subtree_end`, so this is one contiguous id
+    /// range — no recursion, no pointer chasing.
+    fn descendants(&self, node: NodeRef) -> Vec<NodeRef> {
+        if !matches!(node.kind(), RefKind::Element | RefKind::Document) {
+            return Vec::new();
+        }
+        let start = node.node_id() + 1;
+        let end = self.doc.node(node.node_id()).subtree_end();
+        (start..end).map(|id| self.ref_of(id)).collect()
+    }
+
+    fn ref_of(&self, id: NodeId) -> NodeRef {
+        match self.doc.node(id).kind() {
+            NodeKind::Document => NodeRef::document(),
+            NodeKind::Element => NodeRef::element(id),
+            NodeKind::Text => NodeRef::text(id),
+            // The XPath data model has comment nodes; they are not part of the
+            // supported subset yet, so they are mapped to text-shaped references
+            // that `node()` never matches.
+            NodeKind::Comment => NodeRef::text(id),
+        }
+    }
+
+    /// Filters axis candidates by the step's node test.
+    fn test(&self, step: &Step, candidates: Vec<NodeRef>) -> Vec<NodeRef> {
+        let attribute_axis = step.axis == Axis::Attribute;
+        match &step.test {
+            NodeTest::Node => candidates
+                .into_iter()
+                .filter(|node| {
+                    node.kind() != RefKind::Text
+                        || (!outside_root(self.doc, node.node_id())
+                            && !text_continuation(self.doc, node.node_id()))
+                })
+                .collect(),
+            NodeTest::Text => candidates
+                .into_iter()
+                .filter(|node| {
+                    node.kind() == RefKind::Text
+                        && !outside_root(self.doc, node.node_id())
+                        && !text_continuation(self.doc, node.node_id())
+                })
+                .collect(),
+            NodeTest::Any => {
+                let mut seen: Vec<&str> = Vec::new();
+                candidates
+                    .into_iter()
+                    .filter(|node| {
+                        if attribute_axis {
+                            // HTML keeps the first of duplicate attributes.
+                            node.kind() == RefKind::Attribute && {
+                                let name = std::str::from_utf8(attr_name(
+                                    self.doc,
+                                    node.attr_index().unwrap(),
+                                ))
+                                .expect("Document input is valid UTF-8");
+                                let first =
+                                    !seen.iter().any(|other| other.eq_ignore_ascii_case(name));
+                                if first {
+                                    seen.push(name);
+                                }
+                                first
+                            }
+                        } else {
+                            node.kind() == RefKind::Element
+                        }
+                    })
+                    .collect()
+            }
+            NodeTest::Name(name) => {
+                let mut matched_attribute = false;
+                candidates
+                    .into_iter()
+                    .filter(|node| {
+                        if attribute_axis {
+                            let hit = !matched_attribute
+                                && node.kind() == RefKind::Attribute
+                                && name_eq(attr_name(self.doc, node.attr_index().unwrap()), name);
+                            matched_attribute |= hit;
+                            hit
+                        } else {
+                            node.kind() == RefKind::Element
+                                && name_eq(node.name(self.doc).as_bytes(), name)
+                        }
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn binary(
+        &mut self,
+        op: BinOp,
+        left: &Expr,
+        right: &Expr,
+        ctx: &Ctx,
+    ) -> Result<Value, XPathError> {
+        match op {
+            BinOp::Or => {
+                let left = self.eval(left, ctx)?.to_boolean();
+                if left {
+                    return Ok(Value::Bool(true));
+                }
+                Ok(Value::Bool(self.eval(right, ctx)?.to_boolean()))
+            }
+            BinOp::And => {
+                let left = self.eval(left, ctx)?.to_boolean();
+                if !left {
+                    return Ok(Value::Bool(false));
+                }
+                Ok(Value::Bool(self.eval(right, ctx)?.to_boolean()))
+            }
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                let left = self.eval(left, ctx)?;
+                let right = self.eval(right, ctx)?;
+                Ok(Value::Bool(self.compare(op, &left, &right)?))
+            }
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                let left = self.eval(left, ctx)?.to_number(self.doc);
+                let right = self.eval(right, ctx)?.to_number(self.doc);
+                Ok(Value::Number(match op {
+                    BinOp::Add => left + right,
+                    BinOp::Sub => left - right,
+                    BinOp::Mul => left * right,
+                    BinOp::Div => left / right,
+                    BinOp::Mod => left % right,
+                    _ => unreachable!("only arithmetic reaches here"),
+                }))
+            }
+        }
+    }
+
+    /// XPath 1.0 section 3.4 comparison rules, including the existential
+    /// semantics of `=`/`!=` on node-sets.
+    fn compare(&self, op: BinOp, left: &Value, right: &Value) -> Result<bool, XPathError> {
+        let equality = matches!(op, BinOp::Eq | BinOp::Ne);
+        match (left, right) {
+            (Value::Nodes(left), Value::Nodes(right)) if equality => Ok(left.iter().any(|a| {
+                right
+                    .iter()
+                    .any(|b| string_eq(&a.string_value(self.doc), &b.string_value(self.doc), op))
+            })),
+            (Value::Nodes(left), Value::Nodes(right)) => Ok(left.iter().any(|a| {
+                right
+                    .iter()
+                    .any(|b| numeric_cmp(op, self.number(a), self.number(b)))
+            })),
+            (Value::Nodes(nodes), other) if equality => Ok(self.compare_nodes_to(op, nodes, other)),
+            (other, Value::Nodes(nodes)) if equality => Ok(self.compare_nodes_to(op, nodes, other)),
+            (Value::Nodes(nodes), other) => {
+                let right = other.to_number(self.doc);
+                Ok(nodes
+                    .iter()
+                    .any(|node| numeric_cmp(op, self.number(node), right)))
+            }
+            (other, Value::Nodes(nodes)) => {
+                let left = other.to_number(self.doc);
+                Ok(nodes
+                    .iter()
+                    .any(|node| numeric_cmp(op, left, self.number(node))))
+            }
+            _ => Ok(self.compare_atoms(op, left, right)),
+        }
+    }
+
+    fn compare_nodes_to(&self, op: BinOp, nodes: &[NodeRef], other: &Value) -> bool {
+        match other {
+            Value::Bool(value) => cmp_bool(op, !nodes.is_empty(), *value),
+            Value::Number(value) => nodes
+                .iter()
+                .any(|node| numeric_cmp(op, self.number(node), *value)),
+            Value::Str(value) => nodes
+                .iter()
+                .any(|node| string_eq(&node.string_value(self.doc), value, op)),
+            Value::Nodes(_) => unreachable!("handled by the caller"),
+        }
+    }
+
+    fn compare_atoms(&self, op: BinOp, left: &Value, right: &Value) -> bool {
+        if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+            return numeric_cmp(op, left.to_number(self.doc), right.to_number(self.doc));
+        }
+        if matches!(left, Value::Bool(_)) || matches!(right, Value::Bool(_)) {
+            return cmp_bool(op, left.to_boolean(), right.to_boolean());
+        }
+        if matches!(left, Value::Number(_)) || matches!(right, Value::Number(_)) {
+            return numeric_cmp(op, left.to_number(self.doc), right.to_number(self.doc));
+        }
+        string_eq(&left.to_string(self.doc), &right.to_string(self.doc), op)
+    }
+
+    fn number(&self, node: &NodeRef) -> f64 {
+        super::value::parse_number(&node.string_value(self.doc))
+    }
+
+    fn call(&mut self, func: Func, args: &[Expr], ctx: &Ctx) -> Result<Value, XPathError> {
+        match func {
+            Func::Position => {
+                require_arity(func, args, 0)?;
+                Ok(Value::Number(ctx.position as f64))
+            }
+            Func::Last => {
+                require_arity(func, args, 0)?;
+                Ok(Value::Number(ctx.size as f64))
+            }
+            Func::Count => {
+                require_arity(func, args, 1)?;
+                Ok(Value::Number(self.nodes(&args[0], ctx)?.len() as f64))
+            }
+            Func::Not => {
+                require_arity(func, args, 1)?;
+                let value = self.eval(&args[0], ctx)?;
+                Ok(Value::Bool(!value.to_boolean()))
+            }
+            Func::True => {
+                require_arity(func, args, 0)?;
+                Ok(Value::Bool(true))
+            }
+            Func::False => {
+                require_arity(func, args, 0)?;
+                Ok(Value::Bool(false))
+            }
+            Func::Name | Func::LocalName => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                if args.is_empty() {
+                    return Ok(Value::Str(ctx.node.name(self.doc).to_owned()));
+                }
+                let nodes = self.nodes(&args[0], ctx)?;
+                Ok(Value::Str(match nodes.first() {
+                    Some(node) => node.name(self.doc).to_owned(),
+                    None => String::new(),
+                }))
+            }
+            Func::String => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                if args.is_empty() {
+                    return Ok(Value::Str(ctx.node.string_value(self.doc).into_owned()));
+                }
+                let value = self.eval(&args[0], ctx)?;
+                Ok(Value::Str(value.to_string(self.doc)))
+            }
+            Func::Number => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                if args.is_empty() {
+                    return Ok(Value::Number(self.number(&ctx.node)));
+                }
+                let value = self.eval(&args[0], ctx)?;
+                Ok(Value::Number(value.to_number(self.doc)))
+            }
+            Func::Boolean => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                if args.is_empty() {
+                    return Ok(Value::Bool(ctx.node.kind() != RefKind::Document));
+                }
+                let value = self.eval(&args[0], ctx)?;
+                Ok(Value::Bool(value.to_boolean()))
+            }
+            Func::Contains | Func::StartsWith => {
+                require_arity(func, args, 2)?;
+                let haystack = self.eval(&args[0], ctx)?.to_string(self.doc);
+                let needle = self.eval(&args[1], ctx)?.to_string(self.doc);
+                Ok(Value::Bool(if func == Func::Contains {
+                    haystack.contains(&needle)
+                } else {
+                    haystack.starts_with(&needle)
+                }))
+            }
+            Func::NormalizeSpace => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                let text = if args.is_empty() {
+                    ctx.node.string_value(self.doc).into_owned()
+                } else {
+                    self.eval(&args[0], ctx)?.to_string(self.doc)
+                };
+                Ok(Value::Str(normalize_space(&text)))
+            }
+            Func::Concat => {
+                if args.len() < 2 {
+                    return Err(arity_error(func, args.len()));
+                }
+                let mut out = String::new();
+                for arg in args {
+                    out.push_str(&self.eval(arg, ctx)?.to_string(self.doc));
+                }
+                Ok(Value::Str(out))
+            }
+        }
+    }
+}
+
+fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPathError> {
+    if args.len() == expected {
+        Ok(())
+    } else {
+        Err(arity_error(func, args.len()))
+    }
+}
+
+fn arity_error(func: Func, got: usize) -> XPathError {
+    XPathError::Eval(format!("{func:?} called with {got} arguments"))
+}
+
+/// Sorts into document order and removes duplicates.
+fn sorted(mut nodes: Vec<NodeRef>) -> Vec<NodeRef> {
+    nodes.sort_unstable_by_key(|node| node.order_key());
+    nodes.dedup();
+    nodes
+}
+
+/// ASCII-case-insensitive name comparison, since HTML tag and attribute names
+/// are case-insensitive but the DOM keeps the author's spelling.
+fn name_eq(candidate: &[u8], name: &str) -> bool {
+    candidate.len() == name.len() && candidate.eq_ignore_ascii_case(name.as_bytes())
+}
+
+fn string_eq(left: &str, right: &str, op: BinOp) -> bool {
+    (left == right) == (op == BinOp::Eq)
+}
+
+fn cmp_bool(op: BinOp, left: bool, right: bool) -> bool {
+    match op {
+        BinOp::Eq => left == right,
+        BinOp::Ne => left != right,
+        _ => false,
+    }
+}
+
+fn numeric_cmp(op: BinOp, left: f64, right: f64) -> bool {
+    match op {
+        BinOp::Eq => left == right,
+        BinOp::Ne => left != right,
+        BinOp::Lt => left < right,
+        BinOp::Le => left <= right,
+        BinOp::Gt => left > right,
+        BinOp::Ge => left >= right,
+        _ => false,
+    }
+}
+
+/// XPath `normalize-space()`: trim and collapse runs of XML whitespace.
+fn normalize_space(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pending_space = false;
+    for ch in text.chars() {
+        if matches!(ch, ' ' | '\t' | '\n' | '\r') {
+            pending_space = !out.is_empty();
+        } else {
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            out.push(ch);
+        }
+    }
+    out
+}
