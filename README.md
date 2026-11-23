@@ -15,13 +15,59 @@ The following figures show how fast simdhtml extracts data from HTML. The task i
 [![Structured data extraction: SWDE, per-site field selectors](./figures/structured-data-extraction.svg)](./figures/structured-data-extraction.svg)
 
 We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
-`simdsel (spec mode)` row: the WHATWG tree, about 40% of the no-repair speed.
+`simdsel (spec mode)`.
 
-The tree is the browser's, not libxml2's: `mode="spec"` inserts `<tbody>`,
-foster-parents table content and runs the adoption agency, so selectors copied
-from devtools (`table > tbody > tr`) work. `parsel` compatibility is API-level
-(`css()`/`xpath()`/`get()`/`re()`/`attrib`, `::text`/`::attr()`); see
-[`../与parsel不一致.md`](../与parsel不一致.md) for the deliberate differences.
+## Usage
+
+### Python
+
+```python
+from simdsel import Selector
+
+html = """<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
+<div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>"""
+
+sel = Selector(text=html)
+
+print(sel.css(".item h2::text").getall())       # ['First & best', 'Second']
+print(sel.css(".item h2::text").get())          # 'First & best'
+print(sel.css(".item a::attr(href)").getall())  # ['/one', '/two']
+print(sel.xpath("//div[@data-id='2']/h2/text()").get())  # 'Second'
+
+for item in sel.css(".item"):
+    print(item.attrib["data-id"], item.css("h2::text").get())
+```
+
+### Rust
+
+```rust
+use simdsel::{Selector, Value, XPath};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let html = r#"<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
+<div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>"#;
+
+    let root = Selector::from_text(html)?;      // or from_vec(body) for owned bytes
+
+    let titles = root.css(".item h2::text")?;
+    println!("{:?}", titles.getall());          // ["First & best", "Second"]
+    println!("{:?}", titles.get());             // Some("First & best")
+
+    let links = root.css(".item a::attr(href)")?;
+    println!("{:?}", links.getall());           // ["/one", "/two"]
+
+    for record in root.css(".item")?.records() {
+        println!("{:?}", simdsel::record_attrib(root.doc(), record));
+    }
+
+    if let Value::Str(id) = XPath::new("string(//div[2]/@data-id)")?.eval(root.doc())? {
+        println!("id={id}");                    // id=2
+    }
+
+    Ok(())
+}
+```
+
 
 ## Development
 
@@ -48,12 +94,3 @@ or network is needed.
 ./x bundle --cc-docs 100 --swde-docs 100
 ./x bundle --format gz
 ```
-
-```bash
-rm BUNDLE.env
-X_FORCE_SOURCE=1 RUSTFLAGS='-C target-cpu=native' ./x bench
-```
-
-The Common Crawl WARC is decoded by the Rust [`warc`](https://crates.io/crates/warc)
-crate (`bench/src/bin/cc-export.rs`); Python engines (parsel, selectolax, lxml)
-are called from Rust through PyO3, so one Criterion run reports every engine.
