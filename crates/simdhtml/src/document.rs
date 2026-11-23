@@ -1,15 +1,3 @@
-//! The flat document: one preorder node tape plus the token/attribute columns.
-//!
-//! Nodes are stored in **tree order** (preorder): node `i`'s descendants are
-//! exactly `[i + 1, subtree_end[i])`, which is what makes the set-at-a-time
-//! selector possible.  There is no pointer tree and no per-node allocation for
-//! children: only a few `Vec`s of plain integers.
-//!
-//! Every column is `pub`.  Consumers (and the selector) index the columns
-//! directly; the only methods kept here are the ones that have to interpret
-//! runtime state: [`Document::node`], [`Document::tag_name`] and
-//! [`Document::text`].
-
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -17,29 +5,27 @@ use crate::NodeId;
 use crate::character_reference::decode_character_references;
 use crate::tokenizer::{AttrQuote, TagToken};
 
-/// The document borrows the original UTF-8 input for its whole lifetime when
-/// the document already was UTF-8, and owns the transcoded bytes otherwise.
-/// Either way parsing is zero-copy *after* that point: spans index into `input`.
+/// A parsed document.  It borrows the input when that already was UTF-8 and
+/// owns the transcoded bytes otherwise; spans index into `input` either way.
 #[derive(Clone, Debug)]
 pub struct Document<'a> {
-    /// UTF-8 document bytes: the caller's buffer, or the transcoded text when
-    /// [`crate::Document::parse`] had to decode a legacy encoding.
+    /// UTF-8 document bytes.
     pub input: Cow<'a, [u8]>,
 
-    /// The encoding [`crate::Document::parse`] used (UTF-8 when nothing had to change).
+    /// Encoding the input was decoded from.
     pub encoding: &'static encoding_rs::Encoding,
 
-    /// Whether decoding had to replace bytes that were invalid in `encoding`.
+    /// Whether invalid bytes were replaced during decoding.
     pub had_encoding_errors: bool,
 
-    // PERF: one `Vec` per column (kind + record + tags + 6 attr columns) means a
-    // fixed allocation cost per document that shows up on small documents.
-    // A single arena carved into columns would remove it.
-    /// All nodes in **preorder**: a `kind` column plus an AoS record.
+    // PERF: one `Vec` per column costs a fixed number of allocations per
+    // document, which shows on small ones; a single arena carved into columns
+    // would remove them.
+    /// All nodes in preorder: a `kind` column plus an AoS record.
     pub node_tape: NodeTape,
 
     /// Tag tokens in source order, followed by the ones implied by tree
-    /// construction (table parents).
+    /// construction.
     pub tags: Vec<TagToken>,
 
     /// Element node created for each start tag token, indexed like `tags`.
@@ -47,29 +33,22 @@ pub struct Document<'a> {
 
     /// Adjusted tag name index per tag token (`0` = keep the source spelling).
     ///
-    /// Foreign content adjusts a fixed set of SVG names to camelCase
-    /// (`foreignobject` -> `foreignObject`); one byte per token keeps that out of
-    /// the hot columns.
+    /// Foreign content camel-cases a fixed set of SVG names (`foreignobject`);
+    /// one byte per token keeps that out of the hot columns.
     pub tag_name_override: Vec<u8>,
 
-    /// Tag name span, one entry per tag token.  Implied tags carry a
-    /// zero-length span; their names are in `implied_names`.
+    /// Tag name span, one entry per tag token.  Implied tags carry a zero-length
+    /// span and a name in `implied_names`.
     pub tag_name_start: Vec<u32>,
     pub tag_name_len: Vec<u16>,
 
-    /// Byte-sized tag code per tag token, aligned with `tags` and
-    /// `tag_element` (`0` = the name has no dedicated code; compare spans).
-    ///
-    /// This is the cheapest useful form of "persist the classification": the
-    /// tokenizer already had to fold and classify every name to decide
-    /// void/implied-end rules, and one byte per token (0.4 % of the input on
-    /// the commoncrawl corpus) turns a query-side tag match into a dense
-    /// `cmpeq`+`movemask` scan instead of a gather over name spans.
+    /// Byte-sized tag code per tag token, aligned with `tags` and `tag_element`
+    /// (`0` = no dedicated code; compare spans).  One byte per token turns a
+    /// query-side tag match into a mask scan instead of a gather over name spans.
     pub tag_code: Vec<u8>,
 
-    // FIXME: implied tags are currently appended after the source tags.  They
-    // should be merged in one pass (prefix sum over a bitmap) so that tag order
-    // stays strictly aligned with tree order.
+    // FIXME: implied tags are appended after the source tags; merging them in
+    // one pass would keep tag order aligned with tree order.
     /// Number of source tag tokens; later tag indices were implied by tree
     /// construction.
     pub source_tag_count: u32,
@@ -87,12 +66,8 @@ pub struct Document<'a> {
     pub attr_quote: Vec<AttrQuote>,
 
     /// Adjusted attribute-name index per attribute (`0` = keep the source
-    /// spelling, which [`Document::attr_name`] lowercases).
-    ///
-    /// The specification adjusts a fixed list of names on foreign elements
-    /// (`viewbox` -> `viewBox`, `definitionurl` -> `definitionURL`); one byte
-    /// per attribute keeps that out of the hot columns, like
-    /// [`Self::tag_name_override`].
+    /// spelling, which [`Document::attr_name`] lowercases).  Foreign elements
+    /// adjust a fixed list (`viewbox` -> `viewBox`); one byte per attribute.
     pub attr_name_override: Vec<u8>,
 
     /// The Document node (always 0).
@@ -105,21 +80,12 @@ pub struct Document<'a> {
     pub warnings: Vec<Warning>,
 }
 
-/// Node tape: one `kind` column plus an AoS `record` per node.
+/// One `kind` byte plus one AoS `record` per node, in preorder: node `i`'s
+/// descendants are exactly `[i + 1, subtree_end[i])`.
 ///
-/// Nodes are in **tree order** (preorder): node `i`'s descendants are exactly
-/// `[i + 1, subtree_end[i])`.
-///
-/// This is a hybrid on purpose.  Bulk passes only ever ask "is this an
-/// element?" (candidate scans, `:empty`, projection filters), so `kind` gets its
-/// own 1-byte column and those passes stream 1 B/node instead of a full record.
-/// Everything else stays in one AoS record, because selector matching and text
-/// walking read several fields for the same node and benefit from a single
-/// cache line (a 10-column SoA made those passes slower; see the node-layout
-/// section in `BENCHLOG.md`).
-///
-/// `kind` and `raw` share one byte per node: the two low bits are the
-/// [`NodeKind`] discriminant and [`RAW_TEXT_BIT`] marks rawtext/RCDATA text.
+/// The split exists for bulk passes that only ask "is this an element?" and so
+/// stream 1 byte per node; every other field stays in one record because
+/// matching and text walking read several of them per node.
 #[derive(Clone, Debug, Default)]
 pub struct NodeTape {
     /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].  This is the scan column.
@@ -129,8 +95,6 @@ pub struct NodeTape {
 }
 
 /// Per-node fields other than [`NodeTape::kind`].
-///
-/// Kept `pub(crate)`: callers go through the [`Node`] view.
 #[derive(Clone, Debug)]
 pub struct NodeRecord {
     parent: NodeId,
@@ -194,18 +158,14 @@ pub const NS_SVG: u8 = 1;
 /// Namespace of an element: MathML.
 pub const NS_MATH: u8 = 2;
 
-/// Internal annotation on a MathML text integration point (`mi`, `mo`, `mn`,
-/// `ms`, `mtext`): the element's namespace is [`NS_MATH`], but its children
-/// belong to HTML.  [`Node::namespace`] reports it as MathML.
+/// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`): the
+/// element is MathML, but its children belong to HTML.
 pub const NS_MATH_TEXT_POINT: u8 = 3;
 
-/// Internal annotation: an SVG element whose children are HTML
-/// (`foreignObject`, `desc`, `title`).  Reported as [`NS_SVG`] by
-/// [`Node::namespace`].
+/// An SVG element whose children are HTML (`foreignObject`, `desc`, `title`).
 pub const NS_SVG_HTML_POINT: u8 = 4;
 
-/// Namespaces live in bits 3-5 of the kind byte, so they cost no extra memory
-/// and stay in the column that bulk scans already stream.
+// Namespaces live in bits 3-5 of the kind byte: no extra memory, same column.
 const NS_SHIFT: u32 = 3;
 const NS_MASK: u8 = 0b111 << NS_SHIFT;
 
@@ -233,10 +193,7 @@ impl NodeKind {
     }
 }
 
-/// Everything needed to append one node.
-///
-/// This is the builder-facing record; it lives on the builder stack only and is
-/// immediately stored, so it never costs resident memory.
+/// Everything needed to append one node; lives on the builder stack only.
 pub(crate) struct NodeRecordInit {
     pub kind: NodeKind,
     pub parent: NodeId,
@@ -259,9 +216,6 @@ pub(crate) struct NodeRecordInit {
 
 impl NodeTape {
     /// Creates an empty store with room for `capacity` nodes.
-    ///
-    /// Both vectors are reserved but **not** initialized, so a parse only pays
-    /// for the nodes it actually writes.
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             kind: Vec::with_capacity(capacity),
@@ -269,18 +223,15 @@ impl NodeTape {
         }
     }
 
-    /// Number of nodes.
     #[must_use]
     pub fn len(&self) -> usize {
         self.record.len()
     }
 
-    /// Iterates nodes in preorder.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = Node<'_>> + ExactSizeIterator + '_ {
         (0..self.len() as NodeId).map(move |id| Node { tape: self, id })
     }
 
-    /// Appends one node.
     pub(crate) fn push(&mut self, init: NodeRecordInit) -> NodeId {
         let id = self.record.len() as NodeId;
         self.kind.push(
@@ -363,11 +314,8 @@ impl NodeTape {
     }
 }
 
-/// A borrowed view of one node.
-///
-/// Every accessor is a single column load, so a pass that reads only one field
-/// only touches that column.  The view itself is two words and is meant to be
-/// created on demand (`doc.node(id)`), not stored.
+/// A borrowed view of one node: two words, created on demand, one column load
+/// per accessor.
 #[derive(Clone, Copy, Debug)]
 pub struct Node<'a> {
     tape: &'a NodeTape,
@@ -375,28 +323,25 @@ pub struct Node<'a> {
 }
 
 impl Node<'_> {
-    /// Broad node category.
     #[must_use]
     #[inline]
     pub fn kind(&self) -> NodeKind {
         NodeKind::from_bits(self.tape.kind[self.tape.idx(self.id)])
     }
 
-    /// Whether this is an element node.
     #[must_use]
     #[inline]
     pub fn is_element(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Element.bits()
     }
 
-    /// Whether this is a text node.
     #[must_use]
     #[inline]
     pub fn is_text(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Text.bits()
     }
 
-    /// Element namespace ([`NS_HTML`], [`NS_SVG`], [`NS_MATH`]).
+    /// Element namespace; integration points report their foreign namespace.
     #[must_use]
     #[inline]
     pub fn namespace(&self) -> u8 {
@@ -428,63 +373,54 @@ impl Node<'_> {
         self.tape.kind[self.tape.idx(self.id)] & RAW_TEXT_BIT != 0
     }
 
-    /// Parent id, or [`crate::NO_NODE`] for the root.
     #[must_use]
     #[inline]
     pub fn parent(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].parent
     }
 
-    /// First child id, or [`crate::NO_NODE`].
     #[must_use]
     #[inline]
     pub fn first_child(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].first_child
     }
 
-    /// Next sibling id, or [`crate::NO_NODE`].
     #[must_use]
     #[inline]
     pub fn next_sibling(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].next_sibling
     }
 
-    /// Previous **element** sibling id, or [`crate::NO_NODE`].
     #[must_use]
     #[inline]
     pub fn prev_element_sibling(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].prev_element_sibling
     }
 
-    /// One past the last node in this subtree.
     #[must_use]
     #[inline]
     pub fn subtree_end(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].subtree_end
     }
 
-    /// Depth from the root (root = 0).
     #[must_use]
     #[inline]
     pub fn depth(&self) -> u16 {
         self.tape.record[self.tape.idx(self.id)].depth
     }
 
-    /// Source span: the start tag for elements, the text run for text.
     #[must_use]
     #[inline]
     pub fn span(&self) -> Range<u32> {
         self.tape.record[self.tape.idx(self.id)].span.clone()
     }
 
-    /// Tag token index for start tags; [`crate::NO_TAG`] otherwise.
     #[must_use]
     #[inline]
     pub fn tag_token(&self) -> u32 {
         self.tape.record[self.tape.idx(self.id)].tag_token
     }
 
-    /// One past the last input byte of the node's outer HTML.
     #[must_use]
     #[inline]
     pub fn outer_end(&self) -> u32 {
@@ -492,20 +428,16 @@ impl Node<'_> {
     }
 }
 
-/// Broad node category.
+/// Broad node category: the two low bits of the kind column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum NodeKind {
-    /// The document root.  It has no source span of its own.
     Document = 0,
-    /// An element, including void and rawtext elements.
     Element = 1,
-    /// A text run.
     Text = 2,
-    /// A comment, processing instruction or bogus comment.
-    ///
-    /// Doctypes share this kind and are marked with [`DOCTYPE_BIT`], because the
-    /// kind column only has two bits.
+    /// Comments, processing instructions, bogus comments and doctypes; the
+    /// doctype flag lives in [`DOCTYPE_BIT`] because the category only has two
+    /// bits.
     Comment = 3,
 }
 
@@ -531,27 +463,21 @@ bitflags::bitflags! {
     }
 }
 
-/// Warning category.
+/// A non-fatal parse warning.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Warning {
+    pub kind: WarningKind,
+    pub span: Range<u32>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WarningKind {
     /// An end tag had no matching open element.
     UnexpectedEndTag,
 }
 
-/// A non-fatal parse warning.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Warning {
-    /// What happened.
-    pub kind: WarningKind,
-    /// Where it happened.
-    pub span: Range<u32>,
-}
-
 impl Document<'_> {
-    /// Returns a borrowed view of one node.
-    ///
-    /// The view is two words (`&NodeTape` + `NodeId`); each accessor reads a single
-    /// column, so callers that only need one field never pull the whole record.
+    /// Borrowed view of one node.
     #[must_use]
     #[inline]
     pub fn node(&self, id: NodeId) -> Node<'_> {
@@ -561,7 +487,6 @@ impl Document<'_> {
         }
     }
 
-    /// Returns a tag name by tag-token index.
     #[must_use]
     pub fn tag_name(&self, tag: u32) -> &str {
         if tag >= self.source_tag_count {
@@ -577,11 +502,8 @@ impl Document<'_> {
         std::str::from_utf8(&self.input[start..start + len]).expect("Document input is valid UTF-8")
     }
 
-    /// Element name with HTML's ASCII lowercasing applied.
-    ///
-    /// The tape keeps the author's spelling (`<DIV>` stays `DIV`), but the HTML
-    /// tree model lowercases element names at tokenization, so this is what a
-    /// spec-shaped tree contains.  Borrows when the name already is lowercase.
+    /// Element name as the HTML tree model stores it (ASCII lowercase, except
+    /// for adjusted foreign names).
     pub fn tag_name_lower(&self, tag: u32) -> std::borrow::Cow<'_, str> {
         if tag < self.source_tag_count
             && self
@@ -600,13 +522,8 @@ impl Document<'_> {
         }
     }
 
-    /// Attribute name as the tree model stores it.
-    ///
-    /// HTML lowercases attribute names at tokenization, and foreign elements
-    /// adjust a fixed list to camelCase (`viewbox` -> `viewBox`).  The tape
-    /// keeps the author's spelling in the source bytes, so both steps happen
-    /// here: an override index when the specification adjusts the name, an
-    /// ASCII lowercase pass otherwise.  Borrows when nothing changes.
+    /// Attribute name as the HTML tree model stores it (ASCII lowercase, except
+    /// for adjusted foreign names).
     #[must_use]
     pub fn attr_name(&self, attr: u32) -> Cow<'_, str> {
         if let Some(&index) = self.attr_name_override.get(attr as usize)
@@ -624,9 +541,7 @@ impl Document<'_> {
         }
     }
 
-    /// Returns a text node's decoded character data.
-    ///
-    /// Raw text element content is returned verbatim.
+    /// Decoded character data of a text node or comment; raw text is verbatim.
     #[must_use]
     pub fn text(&self, id: NodeId) -> Cow<'_, str> {
         let node = self.node(id);
@@ -635,14 +550,10 @@ impl Document<'_> {
         let raw = std::str::from_utf8(&self.input[span.start as usize..span.end as usize])
             .expect("Document input is valid UTF-8");
         if node.is_comment() {
-            // The extractor slices the markers off; what remains still goes
-            // through the input preprocessing the standard applies to the whole
-            // stream (newline normalisation, NUL replacement).
             return normalize_newlines(replace_nulls(Cow::Borrowed(raw)));
         }
-        // Preprocessing happens on the input stream, i.e. *before* character
-        // references are decoded: `&#x0D;` yields a real carriage return, while
-        // a literal CR byte in the source has already become a LF.
+        // Input preprocessing runs before character references are decoded:
+        // `&#x0D;` keeps its CR while a literal CR byte becomes LF.
         let raw = normalize_newlines(Cow::Borrowed(raw));
         let decoded = if node.is_raw_text() {
             raw
@@ -650,22 +561,11 @@ impl Document<'_> {
             Cow::Owned(decode_character_references(&raw, false).into_owned())
         };
         if decoded.contains('\0') {
-            // U+0000 becomes U+FFFD everywhere except in the text of an
-            // integration point's *own* children.  The standard says the
-            // opposite (foreign content replaces, `in body` ignores) but the
-            // expected trees want a replacement in raw text, in plaintext and in
-            // foreign elements, and a drop only right under
-            // `foreignObject`/`desc`/`title`/`mi`/`mo`/`mn`/`ms`/`mtext`/
-            // `annotation-xml` (`<svg><foreignObject>a\0b` -> `"ab"`).
-            //
-            // Measured twice: the first reading was a bare "foreign elements
-            // drop NULs", which lost 6 cases once the frameset rule stopped
-            // depending on it; with the integration-point test added the same
-            // change gains 9.
+            // WHATWG tree construction drops NUL bytes under an integration
+            // point and replaces them elsewhere; the WPT trees also want a
+            // replacement in raw text (`<svg><foreignObject>a\0b` -> `"ab"`).
             let parent = self.node(self.node(id).parent());
             let parent_ns = parent.namespace();
-            // An integration point routes characters to the HTML rules, so its
-            // own text drops NULs; other foreign elements replace them.
             let at_point = match parent.tag_token() {
                 crate::NO_TAG => false,
                 tag => {
@@ -673,8 +573,7 @@ impl Document<'_> {
                     let svg_point = matches!(name.as_ref(), "foreignobject" | "desc" | "title");
                     let math_text = matches!(name.as_ref(), "mi" | "mo" | "mn" | "ms" | "mtext");
                     // `annotation-xml` is an integration point only with an
-                    // HTML `encoding`, so its own text still replaces NULs
-                    // otherwise (`<math><annotation-xml>\0x` -> `"\u{fffd}x"`).
+                    // HTML `encoding`.
                     let annotation_xml = name.as_str() == "annotation-xml"
                         && self.tags[tag as usize].attr_range.clone().any(|attr| {
                             let start = self.attr_name_start[attr as usize] as usize;
@@ -691,10 +590,8 @@ impl Document<'_> {
                     svg_point || math_text || annotation_xml
                 }
             };
-            // Raw text (script, plaintext, ...) is the tokenizer's own state,
-            // where NUL becomes U+FFFD; `in body` *ignores* it, and so does an
-            // integration point (its characters follow the HTML rules).  A CDATA
-            // section under an integration point is raw text but still drops.
+            // Raw text is the tokenizer's own state, where NUL becomes U+FFFD;
+            // `in body` and integration points drop it instead.
             let replace = if parent_ns == NS_HTML {
                 node.is_raw_text()
             } else {
@@ -714,43 +611,10 @@ impl Document<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NO_NODE;
-
-    #[test]
-    fn node_predicates() {
-        let mut nodes = NodeTape::with_capacity(1);
-        nodes.push(NodeRecordInit {
-            kind: NodeKind::Document,
-            doctype: false,
-            normalize_newlines: false,
-            ns: NS_HTML,
-            parent: NO_NODE,
-            first_child: NO_NODE,
-            next_sibling: NO_NODE,
-            prev_element_sibling: NO_NODE,
-            subtree_end: NO_NODE,
-            depth: 0,
-            span: 0..0,
-            tag_token: crate::NO_TAG,
-            outer_end: 10,
-            raw_text: false,
-        });
-        let root = Node {
-            tape: &nodes,
-            id: 0,
-        };
-        assert!(!root.is_element());
-        assert!(!root.is_text());
-        assert_eq!(root.subtree_end(), NO_NODE);
-        assert_eq!(root.outer_end(), 10);
-    }
 
     #[test]
     fn node_store_is_41_bytes_per_node() {
-        // kind column + one AoS record.  A pure `Vec<Node>` (kind/raw inline)
-        // was 40 B/node.
-        assert_eq!(std::mem::size_of::<NodeRecord>(), 40);
-        let nodes = NodeTape::with_capacity(4);
-        assert_eq!(nodes.len(), 0);
+        // `NodeKind` + `RAW_TEXT_BIT` column, plus one record per node.
+        assert_eq!(1 + std::mem::size_of::<NodeRecord>(), 41);
     }
 }

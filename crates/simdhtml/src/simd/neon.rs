@@ -1,32 +1,20 @@
-//! aarch64 NEON kernels: byte classification over four 16-byte lanes.
-//!
-//! NEON is mandatory on aarch64, so this file has no runtime detection: the
-//! dispatch in [`super`] selects it unconditionally on `target_arch =
-//! "aarch64"`.  A `BLOCK_SIZE` block is four 16-byte loads; each delimiter class
-//! costs four `cmeq` plus four 16-bit lane masks that are shifted into place.
-//!
-//! `prefix_xor` stays on the scalar shift chain, not PMULL.  simdjson's arm64
-//! backend measured the carry-less multiply as slower because every call needs
-//! a GPR -> FP move and an FP -> GPR move around it; see
-//! `Refs/simdjson/include/simdjson/arm64/bitmask.h`.
-
 use super::{BLOCK_SIZE, NEED_ALL, NEED_GT, NEED_LT, NEED_QUOTES, StructuralMasks};
 
-/// NEON implementation of [`super::classify`].
+/// NEON [`super::classify`].
 #[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     // SAFETY: NEON is part of the base aarch64 ISA.
     unsafe { classify_neon(block) }
 }
 
-/// NEON implementation of [`super::probe_lt`].
+/// NEON [`super::probe_lt`].
 #[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     // SAFETY: NEON is part of the base aarch64 ISA.
     unsafe { probe_lt_neon(block) }
 }
 
-/// Inline-only entry point for the scanner's per-ISA block loop (all masks).
+/// Inline-only entry point for the scanner's block loop (all masks).
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {

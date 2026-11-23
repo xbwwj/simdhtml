@@ -1,40 +1,3 @@
-//! 高层查询门面 API
-//! parsel-shaped high-level selector facade.
-//!
-//! [`Selector`] *owns* its [`Document`], like parsel's `Selector` owns its
-//! text: the caller parses once and keeps querying, without threading a
-//! document reference through every call.
-//!
-//! ```no_run
-//! use simdsel::Selector;
-//!
-//! let sel = Selector::from_text("<div class=item><a href=/x>hi</a></div>").unwrap();
-//! assert_eq!(sel.css(".item a::attr(href)").unwrap().get(), Some("/x".into()));
-//! ```
-//!
-//! Ownership follows the caller's buffer, and the zero-copy choice is per
-//! entry point rather than a global policy:
-//!
-//! | caller has | constructor | document holds | cost |
-//! | --- | --- | --- | --- |
-//! | `Vec<u8>` (a response body) | [`Selector::from_vec`] | the buffer | none |
-//! | `String` (decoded text) | [`Selector::from_string`] | the buffer | none |
-//! | `&[u8]` / `&str` | [`Selector::from_bytes`] / [`Selector::from_text`] | a borrow | none |
-//! | a parsed [`Document`] | [`Selector::new`] | the document | none |
-//!
-//! The owned constructors yield a `Selector<'static>`: no lifetime to thread
-//! through callers.  The borrowed ones keep the lifetime of their input, which
-//! is what a same-scope parse-select-throw-away loop wants.
-//!
-//! A `Selector` can represent either a document root (no records) or a result
-//! set. Chained `css` calls evaluate inside the current roots.  The document is
-//! held through an `Rc` so that deriving a result selector (or [`Selector::split`])
-//! shares it instead of cloning the whole node tape.
-//!
-//! This is the crate's front door: `simdhtml` stays the parser, and its types
-//! ([`Document`], [`ParseOptions`], ...) are re-exported here so a caller only
-//! needs `simdsel`.
-
 use std::borrow::Cow;
 use std::rc::Rc;
 
@@ -47,31 +10,20 @@ use crate::{
     select_within_cache,
 };
 
-/// An owned document or a result set, like parsel's
-/// `Selector`/`SelectorList`.
+/// An owned document or a result set, like parsel's `Selector`/`SelectorList`.
 #[derive(Clone, Debug)]
 pub struct Selector<'a> {
     doc: Rc<Document<'a>>,
     roots: Vec<NodeId>,
     records: Vec<MatchRecord>,
-    /// Derived query data (tag/attr masks, bare-compound masks, child index)
-    /// shared by every query derived from this selector.
-    ///
-    /// Everything in it is a function of the (immutable) document, not of
-    /// `roots`, so it stays valid as queries narrow the result set: it is built
-    /// on demand by the first query that needs each piece and reused by the
-    /// rest.  `Rc` because a selector is single-threaded by design.
+    /// Derived query data (masks, child index) shared by every query from this
+    /// selector.  A function of the document, not of `roots`, so it stays valid
+    /// as queries narrow; built on demand.
     cache: Rc<QueryCache>,
 }
 
 impl<'a> Selector<'a> {
     /// Wraps an already parsed document and selects from its root.
-    ///
-    /// This is the ownership-taking constructor: the document becomes the
-    /// selector's, so a caller that already parsed (or that needs an owned
-    /// document - see [`Document::parse_owned`]) does not throw it away.  The
-    /// borrowed-input constructors ([`Self::from_bytes`], [`Self::from_text`])
-    /// are one-liners over this one.
     ///
     /// ```no_run
     /// use simdsel::{Document, Selector};
@@ -91,42 +43,30 @@ impl<'a> Selector<'a> {
         }
     }
 
-    /// Parses `input` (default [`ParseOptions`]) and selects from its root.
-    ///
-    /// The input is bytes, like parsel's `body=`: the encoding is sniffed per
-    /// the HTML specification.  Use [`Self::from_text`] when the caller already
-    /// has a `&str`, and [`Selector::from_vec`] when the buffer is owned and the
-    /// selector should outlive it.
+    /// Parses `input` as bytes (parsel's `body=`) and selects from its root.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Parse`] if the input is too large or the encoding
-    /// could not be decoded.
+    /// [`Error::Parse`] if the input is too large or cannot be decoded.
     pub fn from_bytes(input: &'a [u8]) -> Result<Self, Error> {
         Ok(Self::new(Document::parse(input)?))
     }
 
-    /// [`Self::from_bytes`] with explicit [`ParseOptions`]: repair mode and
-    /// charset handling.
+    /// [`Self::from_bytes`] with explicit [`ParseOptions`].
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Parse`] if parsing failed.
+    /// [`Error::Parse`] if parsing failed.
     pub fn from_bytes_with(input: &'a [u8], options: ParseOptions) -> Result<Self, Error> {
         Ok(Self::new(Document::parse_with(input, options)?))
     }
 
-    /// Parses already decoded `text` and selects from its root.
-    ///
-    /// The bytes are taken as UTF-8 as they are: neither the BOM nor
-    /// `<meta charset>` sniffing runs, because a `&str` is already text (a
-    /// declared legacy charset would otherwise re-read valid UTF-8 as
-    /// mojibake).  This is parsel's `text=` argument, sans the re-encoding.
-    /// Use [`Selector::from_string`] when the text is owned.
+    /// Parses already decoded `text` (parsel's `text=`) and selects from its
+    /// root.  No BOM or `<meta charset>` sniffing: a `&str` is already text.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Parse`] if the input is too large.
+    /// [`Error::Parse`] if the input is too large.
     pub fn from_text(text: &'a str) -> Result<Self, Error> {
         Self::from_bytes_with(
             text.as_bytes(),
@@ -134,9 +74,8 @@ impl<'a> Selector<'a> {
         )
     }
 
-    /// Splits a result set into one single-result selector per record.
-    ///
-    /// The derived selectors share the document and the query cache.
+    /// Splits a result set into one single-result selector per record; the
+    /// derived selectors share the document and the query cache.
     #[must_use]
     pub fn split(&self) -> Vec<Self> {
         self.records
@@ -180,14 +119,9 @@ impl<'a> Selector<'a> {
         self.records.is_empty()
     }
 
-    /// Compiled-selector intern table.
-    ///
-    /// `css*` takes selector *text*, like parsel, so the same query arrives as a
-    /// string on every call.  Parsing it costs ~11% of a warm query (perf on a
-    /// 3258-node document), and a crawl loop repeats a handful of selectors over
-    /// and over, so the compiled form is interned per thread.  The table is
-    /// bounded: a crawler that generates queries dynamically clears it rather
-    /// than growing without limit.
+    /// Per-thread compiled-selector intern table: `css*` takes selector text on
+    /// every call, and parsing it costs ~11% of a warm query.  Bounded, so a
+    /// query-generating crawler clears it instead of growing it.
     fn compiled(query: &str) -> Result<Rc<CssSelector>, Error> {
         use std::cell::RefCell;
         use std::collections::HashMap;
@@ -195,7 +129,7 @@ impl<'a> Selector<'a> {
         thread_local! {
             static CACHE: RefCell<HashMap<Box<str>, Rc<CssSelector>>> = RefCell::new(HashMap::new());
         }
-        /// Selectors are small; a few hundred is plenty and bounds memory.
+        // A few hundred selectors bound the memory.
         const MAX_ENTRIES: usize = 256;
 
         CACHE.with(|cache| {
@@ -216,8 +150,8 @@ impl<'a> Selector<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Selector`] for an invalid selector and [`Error::Match`]
-    /// for evaluation limits.
+    /// [`Error::Selector`] for an invalid selector, [`Error::Match`] for
+    /// evaluation limits.
     pub fn css(&self, query: &str) -> Result<Self, Error> {
         let parsed = Self::compiled(query)?;
         let records = select_within_cache(&self.doc, &parsed, &self.roots, &self.cache)?;
@@ -230,15 +164,13 @@ impl<'a> Selector<'a> {
         })
     }
 
-    /// Evaluates CSS and projects the result with a [`Projection`].
-    ///
-    /// This is the GAT-based output mode: `Count` avoids materializing
-    /// records; `Texts` borrows `Cow<str>` from the document input.
+    /// Evaluates CSS and projects the result: `Count` avoids materializing
+    /// records, `Texts` borrows from the document input.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Selector`] for an invalid selector and [`Error::Match`]
-    /// for evaluation limits.
+    /// [`Error::Selector`] for an invalid selector, [`Error::Match`] for
+    /// evaluation limits.
     pub fn css_as<'b, P: Projection>(&'b self, query: &str) -> Result<P::Output<'b>, Error> {
         let parsed = Self::compiled(query)?;
         Ok(select_as_within_cache::<P>(
@@ -249,21 +181,18 @@ impl<'a> Selector<'a> {
         )?)
     }
 
-    /// Counts CSS matches without materializing result records.
+    /// Counts CSS matches without materializing records.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Selector`] for an invalid selector and [`Error::Match`]
-    /// for evaluation limits.
+    /// [`Error::Selector`] for an invalid selector, [`Error::Match`] for
+    /// evaluation limits.
     pub fn css_count(&self, query: &str) -> Result<usize, Error> {
         self.css_as::<Count>(query)
     }
 
-    /// First result's extracted string.
-    ///
-    /// Element results are the original source slice, not a parsel/lxml
-    /// re-serialization: quotes, entities, optional end tags and attribute
-    /// spelling are preserved. Text/attribute results are entity-decoded.
+    /// First result's extracted string.  Element results are the original source
+    /// slice, not a re-serialization; text and attribute results are decoded.
     #[must_use]
     pub fn get(&self) -> Option<Cow<'_, str>> {
         self.records
@@ -305,13 +234,8 @@ impl<'a> Selector<'a> {
 }
 
 impl Selector<'static> {
-    /// Parses an owned buffer and selects from its root.
-    ///
-    /// This is the *zero-copy owned* entry point: the bytes move into the
-    /// document instead of being borrowed or copied, and the selector carries no
-    /// lifetime, so it can be returned from the function that fetched the body
-    /// and stored next to its results.  Use [`Selector::from_bytes`] to borrow a
-    /// buffer that outlives the selector instead.
+    /// Parses an owned buffer and selects from its root: the bytes move into the
+    /// document and the selector carries no lifetime.
     ///
     /// ```no_run
     /// use simdsel::Selector;
@@ -323,31 +247,26 @@ impl Selector<'static> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Parse`] if the input is too large or the encoding could
-    /// not be decoded.
+    /// [`Error::Parse`] if the input is too large or cannot be decoded.
     pub fn from_vec(input: Vec<u8>) -> Result<Self, Error> {
         Ok(Self::new(Document::parse_owned(input)?))
     }
 
-    /// [`Self::from_vec`] with explicit [`ParseOptions`]: repair mode and charset
-    /// handling.
+    /// [`Self::from_vec`] with explicit [`ParseOptions`].
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Parse`] if parsing failed.
+    /// [`Error::Parse`] if parsing failed.
     pub fn from_vec_with(input: Vec<u8>, options: ParseOptions) -> Result<Self, Error> {
         Ok(Self::new(Document::parse_owned_with(input, options)?))
     }
 
-    /// Parses an owned, already decoded HTML string and selects from its root.
-    ///
-    /// Like [`Selector::from_text`], the text is taken as UTF-8 as it is: no BOM
-    /// or `<meta charset>` sniffing, because a `String` is already text.  Like
-    /// [`Self::from_vec`], it neither borrows nor copies.
+    /// [`Selector::from_text`] for an owned string: it neither borrows nor
+    /// copies, and no charset sniffing runs.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Parse`] if the input is too large.
+    /// [`Error::Parse`] if the input is too large.
     pub fn from_string(text: String) -> Result<Self, Error> {
         Self::from_vec_with(
             text.into_bytes(),
@@ -363,15 +282,13 @@ impl<'a> From<Document<'a>> for Selector<'a> {
 }
 
 /// Compiles `query` (through the per-thread intern table) and evaluates it
-/// inside `roots`, reusing the chain-local [`QueryCache`].
-///
-/// This is the borrowed-parts entry point used by language bindings: it avoids
-/// reconstructing a [`Selector`] just to run one query.
+/// inside `roots`, reusing the chain-local [`QueryCache`].  Used by language
+/// bindings to run one query without rebuilding a [`Selector`].
 ///
 /// # Errors
 ///
-/// Returns [`Error::Selector`] for an invalid selector and [`Error::Match`]
-/// for evaluation limits.
+/// [`Error::Selector`] for an invalid selector, [`Error::Match`] for evaluation
+/// limits.
 pub fn select_query_within_cache(
     doc: &Document<'_>,
     roots: &[NodeId],
@@ -382,10 +299,8 @@ pub fn select_query_within_cache(
     Ok(select_within_cache(doc, &parsed, roots, cache)?)
 }
 
-/// Text content represented by one match record.
-///
-/// Element records use the concatenated text of the subtree; text records use
-/// the decoded text node; attribute records have no text projection.
+/// Text content of one match record: subtree text for elements, the decoded
+/// node for text records, nothing for attributes.
 #[must_use]
 pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Cow<'a, str>> {
     match record.kind {
@@ -395,10 +310,8 @@ pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Co
     }
 }
 
-/// Attributes of one element match record.
-///
-/// Returns `None` for text/attribute records. Duplicate attribute names are
-/// reported once, matching HTML's first-attribute-wins rule.
+/// Attributes of one element match record, deduplicated first-wins.  `None` for
+/// text and attribute records.
 #[must_use]
 pub fn record_attrib(doc: &Document<'_>, record: &MatchRecord) -> Option<Vec<(String, String)>> {
     if record.kind != MatchKind::Element {

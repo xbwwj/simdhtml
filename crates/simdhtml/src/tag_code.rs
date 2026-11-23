@@ -1,15 +1,3 @@
-//! Tag vocabulary: recognize a tag name as a small integer code.
-//!
-//! The rules that *use* these codes (void elements, implied end tags, table
-//! parents) live with the tree builder.
-//!
-//! This is deliberately *not* a global tag interner: the tokenizer stores one
-//! small integer per tag token, and unknown names collapse to [`TagCode::Other`]
-//! (which keeps its raw name span for equality checks).  Tree construction's
-//! implied-end and table-wrapper rules only care about a fixed set of names,
-//! so a byte-sized code turns those rules into integer switches instead of
-//! repeated case-insensitive byte-string comparisons.
-
 /// The tag names tree construction has to distinguish.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -83,13 +71,9 @@ pub(crate) enum TagCode {
     Track,
     Wbr,
 
-    // Inline / formatting elements.
-    //
-    // These used to collapse to `Other`, which made every end-tag scan and every
-    // `:not()`/name comparison fall back to a byte-string compare (perf put the
-    // tree builder's name comparison at 4.9% of parse), and kept the query side
-    // from using its dense tag match for the most common selector target of
-    // all, `a[...]`.
+    // Inline / formatting elements.  These have codes so that end-tag scans and
+    // `:not()`/name comparisons stay integer compares instead of byte-string
+    // compares; `a[...]` is the most common selector target.
     A,
     B,
     I,
@@ -127,24 +111,20 @@ pub(crate) enum TagCode {
 
 const MAX_NAME: usize = 16;
 
-/// Classifies a raw tag name into its byte-sized code (`0` = no dedicated code).
-///
-/// This is how the query side gets the dense code to compare against
-/// [`crate::Document::tag_code`] instead of gathering and folding name spans.
+/// Classifies a raw tag name into its byte-sized code (`0` = no dedicated code),
+/// which is what [`crate::Document::tag_code`] stores.
 #[must_use]
 pub fn code_of(name: &[u8]) -> u8 {
     TagCode::of(name) as u8
 }
 
 impl TagCode {
-    /// Classifies a raw tag name (ASCII case-insensitive).
     #[must_use]
     pub(crate) fn of(name: &[u8]) -> Self {
         if name.len() > MAX_NAME {
             return Self::Other;
         }
-        // The overwhelmingly common case is already lowercase; only pay for a
-        // copy when an uppercase byte is actually present.
+        // Almost all names are already lowercase: only copy when needed.
         if name.iter().any(u8::is_ascii_uppercase) {
             let mut buf = [0u8; MAX_NAME];
             for (dst, &src) in buf.iter_mut().zip(name) {

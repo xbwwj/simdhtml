@@ -1,31 +1,8 @@
-//! Token *data* extraction: comments, doctypes and processing instructions.
-//!
-//! The markup scan answers only "which bytes form a comment / doctype / PI region"; the
-//! tokenizer states decide what the *data* of that token is.  Those states are
-//! pure byte-level questions with no tree semantics, so they live here and are
-//! shared by the DOM and the test harness instead of being re-derived with
-//! `strip_prefix` guesses.
-//!
-//! The states implemented below are the ones in the standard's tokenizer that
-//! can change a token's data:
-//!
-//! * comment start / comment start dash (the abrupt-closing `<!-->` and
-//!   `<!--->` forms have empty data),
-//! * comment end dash / comment end / comment end bang (`--!>` ends a comment),
-//! * the "less than" pair (`<!--` inside a comment is *data*, not a nested
-//!   comment; the outer `-->` closes it),
-//! * bogus comment (`<!X>` and `<?X>`: data is everything after `<!` / `<?`),
-//! * DOCTYPE name / public / system identifiers.
-
 use core::ops::Range;
 
-/// The data bytes of a comment token, as a range into the input.
-///
-/// `span` covers the whole region including its delimiters (`<!-- ... -->`,
-/// `<! ... >`, `<? ... >`).  For comments the data is contiguous: every state
-/// either appends the bytes it consumed or ends the token, so the result is a
-/// sub-range rather than a rewritten buffer.  Callers that need NUL replacement
-/// or newline normalisation apply it to the slice.
+/// Data of a comment token, as a range into `span` (which includes the
+/// delimiters).  Every comment state appends or ends, so the data is always a
+/// sub-range, never a rewritten buffer.
 pub fn comment_data(input: &[u8], span: Range<u32>) -> Range<u32> {
     let start = span.start as usize;
     let end = (span.end as usize).min(input.len());
@@ -57,10 +34,8 @@ pub fn comment_data(input: &[u8], span: Range<u32>) -> Range<u32> {
         // the data stops before it.
         rem.len() - 1
     } else {
-        // Unclosed comment: data runs to the end of the region (and thus to the
-        // end of input), except that the comment-end-dash/comment-end states
-        // hold the trailing `-`s.  `<!--x-` ends in the dash state (one `-`
-        // dropped) and `<!--x--` in the end state (two dropped).
+        // Unclosed comment: the trailing `-`s still held by the
+        // comment-end-dash / comment-end states are dropped.
         let mut len = rem.len();
         if rem.ends_with(b"--") {
             len -= 2;
@@ -73,15 +48,12 @@ pub fn comment_data(input: &[u8], span: Range<u32>) -> Range<u32> {
     data_start..data_start + data_len as u32
 }
 
-/// The data bytes of a processing instruction token.
-///
-/// The standard tokenizes `<?...>` as a bogus comment whose data is everything
-/// after `<?`, so the tree's PI text is `?` followed by that data (the
-/// expected-tree format writes `<?data>`).
+/// Data of a processing instruction token.  The standard tokenizes `<?...>` as a
+/// bogus comment, so the tree's PI text starts with `?` (the expected-tree
+/// format writes `<?data>`).
 pub fn pi_data(input: &[u8], span: Range<u32>) -> Range<u32> {
-    // The expected trees write a PI as `<?data>`, and a source `<?data?>` has
-    // the `?` of `?>` inside its bogus-comment data.  Strip it so both sides
-    // agree on the data, per the "tests are the standard" decision.
+    // A source `<?data?>` has the `?` of `?>` inside its bogus-comment data;
+    // strip it to match the expected trees.
     let data = comment_data(input, span);
     let mut end = data.end;
     if end > data.start && input[end as usize - 1] == b'?' {
@@ -105,13 +77,9 @@ pub enum PiForm {
     Drop,
 }
 
-/// Classifies the processing-instruction-shaped region in `span`.
-///
-/// Follows the tokenizer's `processing instruction open`, `target`,
-/// `after target`, `data` and `questionable` states.  The distinction matters
-/// twice: an EOF inside the target emits nothing, and `xml`/`xml-stylesheet`
-/// targets (and a target that does not start with a letter or `_`) are turned
-/// into bogus comments instead of instructions.
+/// Classifies the processing-instruction-shaped region in `span`: an EOF inside
+/// the target emits nothing, and `xml`/`xml-stylesheet` targets (or a target not
+/// starting with a letter or `_`) become bogus comments.
 pub fn pi_form(input: &[u8], span: Range<u32>) -> PiForm {
     let start = span.start as usize;
     let end = (span.end as usize).min(input.len());
@@ -194,13 +162,9 @@ pub struct DoctypeParts {
     pub force_quirks: bool,
 }
 
-/// Parses the DOCTYPE token in `span` (including `<!DOCTYPE` and `>`).
-///
-/// Follows the tokenizer's `DOCTYPE`, `before DOCTYPE name`, `DOCTYPE name`,
-/// `after DOCTYPE name`, `after DOCTYPE public/system keyword` and quoted
-/// identifier states.  Everything malformed sets force-quirks and stops, which
-/// is exactly the behaviour the standard specifies: a stray unquoted token is
-/// never part of an identifier.
+/// Parses the DOCTYPE token in `span` (including `<!DOCTYPE` and `>`).  Anything
+/// malformed sets force-quirks and stops, as the standard specifies: a stray
+/// unquoted token is never part of an identifier.
 pub fn doctype_parts(input: &[u8], span: Range<u32>) -> DoctypeParts {
     let start = span.start as usize;
     let end = (span.end as usize).min(input.len());
@@ -258,9 +222,8 @@ pub fn doctype_parts(input: &[u8], span: Range<u32>) -> DoctypeParts {
                 out.system = Some((start + second.start) as u32..(start + second.end) as u32);
                 i = next;
             }
-            // `PUBLIC "x"` with a single identifier: the public identifier is
-            // `x` and the system identifier is missing (the expected trees print
-            // the missing one as `""`).
+            // `PUBLIC "x"` with a single identifier: public id set, system
+            // missing.
             None => {
                 out.public = Some((start + first.start) as u32..(start + first.end) as u32);
             }
@@ -344,20 +307,17 @@ const QUIRKS_PUBLIC_PREFIXES: [&str; 55] = [
     "-//WebTechs//DTD Mozilla HTML//",
 ];
 
-/// Public identifier prefixes that put the document in quirks mode only when
-/// the system identifier is missing or empty.  (The limited-quirks list is not
-/// needed: no tree-construction rule distinguishes it from no-quirks.)
+/// Public identifier prefixes that only apply without a system identifier.
+/// (Limited-quirks is not tracked: no tree-construction rule tells it apart
+/// from no-quirks.)
 const QUIRKS_PUBLIC_PREFIXES_NO_SYSTEM: [&str; 2] = [
     "-//W3C//DTD HTML 4.01 Frameset//",
     "-//W3C//DTD HTML 4.01 Transitional//",
 ];
 
-/// Whether the DOCTYPE token in `span` puts the document in **quirks** mode.
-///
-/// Only the full-quirks conditions matter to tree construction: `in body`'s
-/// `table` start tag closes a paragraph "if the Document is not set to quirks
-/// mode", and limited-quirks behaves like no-quirks there.  The lists are the
-/// standard's, compared ASCII case-insensitively.
+/// Whether the DOCTYPE token in `span` puts the document in quirks mode.  Only
+/// full-quirks matters: `in body`'s `table` rule treats limited-quirks like
+/// no-quirks.
 pub fn doctype_is_quirks(input: &[u8], span: Range<u32>) -> bool {
     let parts = doctype_parts(input, span);
     if parts.force_quirks {
@@ -404,8 +364,8 @@ pub fn doctype_is_quirks(input: &[u8], span: Range<u32>) -> bool {
     false
 }
 
-/// Reads a quoted identifier starting at `i`, returning its inner range and the
-/// index just past the closing quote.
+/// Reads a quoted identifier at `i`: its inner range and the index past the
+/// closing quote.
 fn quoted(body: &[u8], mut i: usize) -> Option<(Range<usize>, usize)> {
     let quote = *body.get(i)?;
     if quote != b'"' && quote != b'\'' {

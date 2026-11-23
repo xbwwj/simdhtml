@@ -1,5 +1,3 @@
-//! CSS selector AST and parser for the v1 subset.
-
 use std::fmt;
 
 /// A comma-separated selector list.
@@ -9,8 +7,7 @@ pub struct Selector {
     pub complexes: Vec<Complex>,
 }
 
-/// A complex selector: compounds joined by combinators, plus an optional
-/// trailing pseudo-element.
+/// Compounds joined by combinators, plus an optional trailing pseudo-element.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Complex {
     /// Compounds from left to right.
@@ -24,16 +21,12 @@ pub struct Complex {
 /// A compound selector, evaluated as one bitset predicate.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Compound {
-    /// Type selector; `None` means any element (`*` or omitted).
+    /// `None` means any element (`*` or omitted).
     pub tag: Option<String>,
-    /// Whether the source had an explicit `*`.
     pub universal: bool,
-    /// A universal selector the parser inserted because a pseudo-element had no
-    /// compound of its own (`A ::text`, `A > ::attr(x)`, `::text`).
-    ///
-    /// A descendant combinator followed by one of these is
-    /// `descendant-or-self`, because that is how the pseudo-element attaches
-    /// (`parsel`/cssselect and every CSS-with-`::text` implementation agree).
+    /// A universal the parser inserted because a pseudo-element had no compound
+    /// of its own (`A ::text`).  After a descendant combinator it is
+    /// `descendant-or-self`, which is how parsel attaches the pseudo-element.
     pub implied_universal: bool,
     /// `#id`.
     pub id: Option<String>,

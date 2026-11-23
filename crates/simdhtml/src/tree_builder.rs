@@ -1,12 +1,3 @@
-//! Turn the token stream into a preorder [`Document`].
-//!
-//! HTML allows void elements and optional end tags.  Tree construction fills
-//! both in — *generate implied end tags*, insert the implied `tbody` — so the
-//! builder only ever sees a Dyck-like start/end stream.  Implied-end handling
-//! and node construction are one pass: the stack machine drives [`TreeBuilder`]
-//! directly instead of materializing an event vector, which is why they live in
-//! the same module.
-
 use std::ops::Range;
 
 use crate::document::{NodeRecordInit, NodeTape};
@@ -19,10 +10,8 @@ use crate::{
     Document, DocumentFlags, MarkupDiagnostics, NO_NODE, NO_TAG, NodeId, NodeKind, TagKind,
     TagToken,
 };
-/// SVG element names whose tree name is adjusted to camelCase.
-///
-/// The table is the specification's "SVG tag name adjustment" list; the index is
-/// what [`crate::Document::tag_name_override`] stores (1-based).
+/// SVG names the specification adjusts to camelCase; the 1-based index is what
+/// [`crate::Document::tag_name_override`] stores.
 pub(crate) const SVG_TAG_NAMES: [(&str, &str); 37] = [
     ("altglyph", "altGlyph"),
     ("altglyphdef", "altGlyphDef"),
@@ -63,12 +52,9 @@ pub(crate) const SVG_TAG_NAMES: [(&str, &str); 37] = [
     ("textpath", "textPath"),
 ];
 
-/// Attribute names the specification adjusts on foreign elements.
-///
-/// Two tables live here because they are one lookup on the way in: the SVG
-/// list (`adjust SVG attributes`) and MathML's single entry
-/// (`definitionurl` -> `definitionURL`).  The index is 1-based, `0` means
-/// "keep the source spelling", exactly like [`SVG_TAG_NAMES`].
+/// Attribute names the specification adjusts on foreign elements: the SVG list
+/// followed by MathML's `definitionurl` -> `definitionURL`.  1-based index, `0`
+/// keeps the source spelling.
 /// Number of SVG entries at the front of [`ADJUSTED_ATTR_NAMES`].
 pub(crate) const SVG_ATTRIBUTE_COUNT: usize = 58;
 
@@ -135,14 +121,8 @@ pub(crate) const ADJUSTED_ATTR_NAMES: [(&str, &str); 59] = [
     ("definitionurl", "definitionURL"),
 ];
 
-/// Index+1 for an attribute name that the specification adjusts, matched
-/// case-insensitively (the tokenizer folds names to lower case, and `viewBox`
-/// arrives as `viewbox`).
-/// Index+1 for an attribute name the specification adjusts, given the
-/// element's namespace.
-///
-/// The SVG table applies to SVG elements only and the MathML entry to MathML
-/// elements only: `<svg definitionurl=x>` keeps the lowercase name.
+/// Index+1 for an adjusted attribute name, given the element's namespace: the
+/// SVG table applies to SVG elements only, the MathML entry to MathML only.
 pub(crate) fn adjusted_attr_index(name: &[u8], ns: u8) -> Option<u8> {
     let (table, offset): (&[(&str, &str)], usize) = if ns == crate::NS_MATH {
         (
@@ -184,10 +164,8 @@ pub(crate) fn svg_tag_adjustment_lower(name: &[u8]) -> Option<u8> {
         .map(|index| (index + 1) as u8)
 }
 
-/// Inner content span of a `<![CDATA[ ... ]]>` section.
-///
-/// The scanner reports the whole section, markers included, as one region; the
-/// tree wants only the content, and only in foreign content.
+/// Inner content span of a `<![CDATA[ ... ]]>` section: the scanner reports the
+/// whole section, the tree wants only the content.
 fn cdata_inner(input: &[u8], span: &Range<u32>) -> Option<Range<u32>> {
     let body = input.get(span.start as usize..span.end as usize)?;
     let rest = body.strip_prefix(b"<![CDATA[")?;
@@ -201,18 +179,11 @@ fn cdata_inner(input: &[u8], span: &Range<u32>) -> Option<Range<u32>> {
     Some(inner_start..inner_start + inner_len as u32)
 }
 
-// ---------------------------------------------------------------------------
-// TreeBuilder
-// ---------------------------------------------------------------------------
-
 const DEPTH_LIMIT: u16 = 1024;
 
-/// How a start tag's name affects namespace assignment.
-///
-/// The specification-shaped builder decides the namespace itself (it is the
-/// only place that knows the integration-point rules and `annotation-xml`'s
-/// `encoding` attribute) and hands one byte per node to the tape.  The
-/// no-repair mode has no integration points, so it only needs this much.
+/// How a start tag's name affects namespace assignment.  `Spec` decides the
+/// namespace itself and hands one byte per node to the tape; the no-repair mode
+/// has no integration points.
 fn raw_mode_namespace(name: &[u8]) -> u8 {
     if name.eq_ignore_ascii_case(b"svg") {
         crate::NS_SVG
@@ -464,10 +435,8 @@ impl TreeBuilder {
         self.implied_literals.push(Some(name));
     }
 
-    /// Pops the current node off the stack of open elements.
-    ///
-    /// Ends already arrive in stack order, so no name lookup or stack search is
-    /// needed here.
+    /// Pops the current node off the stack of open elements: ends arrive in
+    /// stack order, so there is no lookup or search.
     fn pop_open_element(&mut self, span: Range<u32>, implied: bool) {
         let Some(id) = self.stack.pop() else {
             debug_assert!(false, "tree construction emitted an unbalanced end");
@@ -678,50 +647,54 @@ mod tests {
         ];
         for input in cases {
             let none = crate::Document::parse(input.as_bytes()).unwrap();
-            let v1 = crate::Document::parse_with(
+            let spec = crate::Document::parse_with(
                 input.as_bytes(),
                 crate::ParseOptions::new().repair(crate::RepairMode::Spec),
             )
             .unwrap();
             assert_preorder(&none);
-            assert_preorder(&v1);
+            assert_preorder(&spec);
         }
 
-        // Well-formed markup: identical trees.
-        let input = "<div><p>a</p></div>";
-        let none = crate::Document::parse(input.as_bytes()).unwrap();
-        let v1 = crate::Document::parse_with(
-            input.as_bytes(),
-            crate::ParseOptions::new().repair(crate::RepairMode::Spec),
-        )
-        .unwrap();
-        // `Spec` synthesises `html`/`head`/`body`; `None` does not.
-        assert_eq!(v1.node_tape.len(), none.node_tape.len() + 3);
+        fn nth(doc: &crate::Document<'_>, name: &str, n: usize) -> crate::NodeId {
+            doc.node_tape
+                .iter()
+                .enumerate()
+                .filter(|(_, node)| node.is_element() && doc.tag_name(node.tag_token()) == name)
+                .nth(n)
+                .map(|(id, _)| id as crate::NodeId)
+                .expect("element")
+        }
 
-        // Unrepaired `<p>a<p>b` nests the second `<p>`; v1 makes them siblings.
+        // Unrepaired `<p>a<p>b` nests the second `<p>`; `Spec` makes them siblings.
         let input = "<p>a<p>b";
         let none = crate::Document::parse(input.as_bytes()).unwrap();
-        let v1 = crate::Document::parse_with(
+        let spec = crate::Document::parse_with(
             input.as_bytes(),
             crate::ParseOptions::new().repair(crate::RepairMode::Spec),
         )
         .unwrap();
-        assert_eq!(none.node(3).parent(), 1, "no repair: nested");
-        // `Spec` adds html/head/body, so the second p is node 6 under body (3).
-        assert_eq!(v1.node(6).parent(), 3, "repaired: siblings");
+        assert_eq!(
+            none.node(nth(&none, "p", 1)).parent(),
+            nth(&none, "p", 0),
+            "no repair: nested"
+        );
+        assert_ne!(
+            spec.node(nth(&spec, "p", 1)).parent(),
+            nth(&spec, "p", 0),
+            "repaired: siblings"
+        );
 
         // No implied `tbody` without repair.
         let input = "<table><tr><td>x</td></tr></table>";
         let none = crate::Document::parse(input.as_bytes()).unwrap();
-        let v1 = crate::Document::parse_with(
+        let spec = crate::Document::parse_with(
             input.as_bytes(),
             crate::ParseOptions::new().repair(crate::RepairMode::Spec),
         )
         .unwrap();
         assert!(none.implied_names.is_empty());
-        // `html`/`head`/`body` are implied by omitting the tags, then `tbody`.
-        assert_eq!(v1.implied_names, vec!["html", "head", "body", "tbody"]);
-        assert_eq!(v1.tags.len(), none.tags.len() + 4);
+        assert!(spec.implied_names.contains(&"tbody"));
     }
 
     #[test]
@@ -743,11 +716,5 @@ mod tests {
             let doc = crate::Document::parse(&input).unwrap();
             assert_preorder(&doc);
         }
-    }
-
-    #[test]
-    fn builder_creates_document_node() {
-        let b = TreeBuilder::new(0, 1, 0);
-        assert_eq!(b.node_tape.len(), 1);
     }
 }

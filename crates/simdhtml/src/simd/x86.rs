@@ -1,10 +1,3 @@
-//! x86_64 kernels: AVX2 byte classification and PCLMULQDQ `prefix_xor`.
-//!
-//! Everything here mirrors `super::fallback` one-to-one.  The `unsafe`
-//! `#[target_feature]` functions are only reachable through the safe wrappers
-//! below, which are installed in the dispatch table by `super::detect` after
-//! the corresponding `is_x86_feature_detected!` check.
-
 use super::{BLOCK_SIZE, StructuralMasks};
 
 /// AVX2 implementation of [`super::classify`].
@@ -28,16 +21,10 @@ pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     unsafe { probe_lt_inline(block) }
 }
 
-/// Probe for the text/rawtext states, which only look at `<`.
-///
-/// Returns `None` when the block has no `<`: then the state cannot change and
-/// no other byte matters, so the whole block costs one `cmpeq`+`movemask` per
-/// 32 bytes instead of four masks.  Otherwise all masks are returned, because
-/// the `<` may open a tag whose `>` and quotes live in the same block.
-///
-/// The mask selection is a compile-time constant here on purpose: a runtime
-/// `need` argument turned each mask into a branch and measured *slower* than
-/// classifying everything (see BENCHLOG step2).
+/// Probe for the text/rawtext states, which only look at `<`: `None` when the
+/// block has none, all masks otherwise (a `<` may open a tag whose `>` and
+/// quotes are in the same block).  The mask set is a compile-time constant: a
+/// runtime `need` argument measured slower than classifying everything.
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {

@@ -1,10 +1,3 @@
-//! Raw-column readers over [`Document`].
-//!
-//! `simdhtml` deliberately exposes its columns instead of accessor wrappers, so
-//! the two-line span reads live here, in the consumer, rather than in the
-//! parser. Nothing in this module touches the fast paths for tag/attribute
-//! key masks; those index the columns directly.
-
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -17,12 +10,9 @@ pub(crate) fn attr_name<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
     &doc.input[start..end]
 }
 
-/// Raw attribute value bytes (character references **not** decoded).
-///
-/// Predicates that only compare or split on whitespace do not need the decoded
-/// value, and decoding was the single largest cost in `a[href]` (25% of the
-/// query in `perf`).  Callers that must compare against decoded text check for
-/// `&` first and fall back to [`attr_value`].
+/// Raw attribute value bytes (references not decoded): predicates that only
+/// compare or split on whitespace need no decoding.  Callers comparing against
+/// decoded text check for `&` first and fall back to [`attr_value`].
 #[inline]
 pub(crate) fn attr_value_raw<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
     let start = doc.attr_value_start[attr as usize] as usize;
@@ -47,7 +37,7 @@ fn decode_span<'a>(doc: &'a Document<'_>, span: Range<usize>) -> Cow<'a, str> {
     simdhtml::replace_nulls(decode_character_references(raw, true))
 }
 
-/// Attribute index range owned by an element, empty for non-elements.
+/// Attribute index range owned by an element; empty for non-elements.
 pub(crate) fn attr_range(doc: &Document<'_>, node: NodeId) -> Range<u32> {
     let tag = doc.node(node).tag_token();
     if tag == NO_TAG {
@@ -56,15 +46,10 @@ pub(crate) fn attr_range(doc: &Document<'_>, node: NodeId) -> Range<u32> {
     doc.tags[tag as usize].attr_range.clone()
 }
 
-/// ASCII-case-insensitive equality where `name` is a known-good lowercase
-/// identifier.
-///
-/// Comparing up to 8 bytes as one word costs a few cycles, while the generic
-/// `eq_ignore_ascii_case` on slices lowers to a byte loop that dominates
-/// `find_attr` (45-75 ns per candidate, measured).  OR-ing both sides with
-/// `0x20` folds case; the only other bytes it collapses are `[@[\]^_` and
-/// `{` followed by the same range, none of which a selector name contains, so a
-/// document attribute named `[ref` cannot be confused with `href`.
+/// ASCII-case-insensitive equality against a known lowercase identifier, one
+/// 8-byte word at a time (the generic slice version is a byte loop and dominates
+/// `find_attr`).  Folding with `0x20` also collapses `[@[\]^_`-`{`, which a
+/// selector name never contains.
 #[inline]
 fn name_eq(candidate: &[u8], name: &[u8]) -> bool {
     if candidate.len() != name.len() {

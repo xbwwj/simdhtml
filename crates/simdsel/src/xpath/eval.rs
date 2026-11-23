@@ -1,22 +1,11 @@
-//! XPath 1.0 evaluation over the preorder node tape.
-//!
-//! The evaluator is set-at-a-time: every step maps a node-set to a new
-//! node-set, predicates are evaluated per candidate with `position()`/`last()`
-//! in scope, and each step result is sorted into document order and
-//! deduplicated before the next step (which is what the data model requires and
-//! what keeps `//a//b` from returning duplicates).
-
 use super::XPathError;
 use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
 use super::value::{NodeRef, RefKind, Value};
 use crate::raw::{attr_name, attr_range};
 
-/// Last id of the text run that starts at `id`, or `None` when the run is a
-/// single node.
-///
-/// Adjacent text siblings are one text node in the XPath data model.  They are
-/// consecutive ids with the same parent (preorder), so the run is found by
-/// walking forward while that holds.
+/// Last id of the text run starting at `id`, or `None` for a single node.
+/// Adjacent text siblings are one node in the XPath data model and are
+/// consecutive ids with the same parent.
 pub(super) fn text_run(doc: &Document<'_>, id: NodeId) -> Option<NodeId> {
     let parent = doc.node(id).parent();
     let mut last = id;
@@ -30,10 +19,8 @@ pub(super) fn text_run(doc: &Document<'_>, id: NodeId) -> Option<NodeId> {
     (last != id).then_some(last)
 }
 
-/// Is this text node outside the root element?
-///
-/// XPath 1.0's root node has no text children: text before or after the root
-/// element is not part of the data model, even though the tape keeps it.
+/// Whether this text node is outside the root element: XPath's root node has no
+/// text children, though the tape keeps that text.
 fn outside_root(doc: &Document<'_>, id: NodeId) -> bool {
     doc.node(id).parent() == 0
 }
@@ -73,8 +60,7 @@ pub(super) fn evaluate_at(
     let mut evaluator = Evaluator {
         doc,
         visits: 0,
-        // 256 visits per node is far above what a realistic query needs, while
-        // still bounding `//a//b`-style products on pathological documents.
+        // 256 visits per node bounds `//a//b`-style products.
         budget: (doc.node_tape.len() as u64 + 1) * 256,
     };
     let ctx = Ctx {
@@ -140,11 +126,9 @@ impl Evaluator<'_, '_> {
         while index < path.steps.len() {
             let mut step = &path.steps[index];
             let mut axis = step.axis;
-            // `//x` is `descendant-or-self::node()/child::x`, and that pair is
-            // exactly `descendant::x` when the child step has no predicates
-            // (positions would otherwise differ).  Fusing it avoids
-            // materialising every node in the document only to walk it again as
-            // a child list.
+            // `//x` is `descendant-or-self::node()/child::x`, which is exactly
+            // `descendant::x` when the child step has no predicates; fusing
+            // avoids materialising every node twice.
             if step.axis == Axis::DescendantOrSelf
                 && matches!(step.test, NodeTest::Node)
                 && step.predicates.is_empty()

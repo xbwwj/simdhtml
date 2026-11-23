@@ -1,13 +1,3 @@
-//! Text intervals derived from the tag spans in [`MarkupIndex`].
-//!
-//! A text run is the complement of the tag spans and the non-text regions
-//! (comments, doctypes, processing instructions).  Rawtext *content* stays a
-//! text run; its start/end tags are ordinary tag spans.
-//!
-//! Both the producer ([`build_text_runs`]) and the lazy consumer
-//! ([`TextRuns`]) live here, because the consumer's only job is to re-attach
-//! the `raw_text` flag by looking at [`MarkupIndex::opaque_regions`].
-
 use std::ops::Range;
 
 use super::MarkupIndex;
@@ -17,16 +7,13 @@ use super::region::OpaqueRegion;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TextRun {
     pub span: Range<u32>,
-    /// Content of a raw text element: character references are **not** decoded.
+    /// Content of a raw text element: character references are not decoded.
     pub raw_text: bool,
 }
 
-/// Iterator over the tag spans implied by `tag_open` / `tag_close`.
-///
-/// The two arrays are paired up in source order.  A start without a close (an
-/// unterminated tag at EOF) runs to the end of the input, and a close without
-/// a start is kept as a one-byte span; both cases are left for the tokenizer to
-/// judge.
+/// Iterator over the tag spans implied by `tag_open` / `tag_close`, paired in
+/// source order.  A start without a close runs to EOF; a close without a start
+/// becomes a one-byte span.  Both are left for the tokenizer to judge.
 struct TagSpans<'a> {
     starts: &'a [u32],
     ends: &'a [u32],
@@ -60,16 +47,9 @@ impl Iterator for TagSpans<'_> {
     }
 }
 
-/// Computes maximal text intervals as the complement of tag spans and
-/// non-text raw ranges.
-///
-/// Rawtext content is intentionally kept as a text run; comments, doctypes and
-/// processing instructions are not text.
-///
-/// Both inputs are in ascending source order, so this is one streaming merge —
-/// no intermediate span vector, no sort.  On a large document the merge itself
-/// is a small part of the scan, but on the tens of thousands of small documents
-/// a crawl sees, the saved allocation and copy are not.
+/// Computes maximal text intervals as the complement of tag spans and non-text
+/// opaque regions.  Both inputs are in source order, so this is one streaming
+/// merge: no span vector, no sort.
 pub(super) fn build_text_runs(
     input_len: usize,
     starts: &[u32],
@@ -91,11 +71,9 @@ pub(super) fn build_text_runs(
     let mut next_tag = tags.next();
 
     loop {
-        // Rawtext regions are text, not excluded markup.  CDATA sections are
-        // *excluded*: whether they become a text node depends on tree
-        // construction (text in foreign content, a bogus comment in HTML), and
-        // keeping them out of the runs is what stops both paths from inserting
-        // the same bytes.
+        // CDATA is excluded here: whether it becomes a text node depends on tree
+        // construction, and keeping it out of the runs stops both paths from
+        // inserting the same bytes.
         while ri < raw_spans.len()
             && (raw_spans[ri].kind.is_text() || raw_spans[ri].span.is_empty())
         {

@@ -1,18 +1,6 @@
-//! Opaque regions: comments, DOCTYPE, CDATA and raw text element content.
-//!
-//! A region is a byte range that the tag scanner must not interpret as markup,
-//! plus the tokenizer state that produced it.  The ranges themselves are
-//! found by the markup state machine ([`super::scan`]), which visits only
-//! candidate bytes; this module owns the vocabulary it needs to name them:
-//! the raw text element names and the two region kinds that decide whether a
-//! text run decodes character references.
-
 use std::ops::Range;
 
 /// What the tokenizer would be looking at inside this region.
-///
-/// These are the WHATWG tokenizer states other than the data state: comments,
-/// DOCTYPE, CDATA, and the contents of raw text / escapable raw text elements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RegionKind {
     /// `<!-- ... -->` and the bogus comment forms `<?...>` / `<!...>`.
@@ -21,21 +9,19 @@ pub enum RegionKind {
     Doctype,
     /// `<![CDATA[ ... ]]>`.
     Cdata,
-    /// Contents of a raw text element (script, style, xmp, iframe, noembed,
-    /// noframes, plaintext): character data with **no** character references.
+    /// Content of a raw text element (script, style, xmp, ...): no character
+    /// references.
     RawText,
-    /// Contents of an escapable raw text element (title, textarea): character
-    /// data where character references *are* decoded.
+    /// Content of an escapable raw text element (title, textarea): character
+    /// references are decoded.
     EscapableRawText,
 }
 
 impl RegionKind {
-    /// Whether the region's bytes become a text node.
     pub fn is_text(self) -> bool {
         matches!(self, Self::RawText | Self::EscapableRawText)
     }
 
-    /// Whether character references inside the region are decoded.
     pub fn decodes_character_references(self) -> bool {
         self != Self::RawText
     }
@@ -44,9 +30,7 @@ impl RegionKind {
 /// A masked byte range plus its semantic kind.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpaqueRegion {
-    /// Byte range, end-exclusive.
     pub span: Range<u32>,
-    /// Whether the range is text or non-text markup.
     pub kind: RegionKind,
 }
 
@@ -59,7 +43,7 @@ pub(super) enum StartTagKind {
     RawText(RegionKind),
     /// `<plaintext>`: raw text that runs to EOF, with no end tag.
     Plaintext,
-    /// Valid HTML outside the v1 fast path (SVG, MathML, `<template>`).
+    /// Valid HTML outside the fast path (SVG, MathML, `<template>`).
     Fallback,
 }
 
@@ -85,19 +69,16 @@ const fn pat8(name: &[u8; 8]) -> u64 {
     u64::from_le_bytes(*name) | 0x2020_2020_2020_2020
 }
 
-/// Classifies a start tag name for the region scanner.
-///
-/// Every interesting name has length 3..=9, so the length dispatches first and
-/// each candidate is one case-folded 8-byte word compare: no slice walks, no
-/// call into `eq_ignore_ascii_case`, no branch per name byte.
+/// Classifies a start tag name: the length dispatches first, then one
+/// case-folded 8-byte word compare per candidate (names of interest are 3..=9
+/// bytes).
 #[inline]
 pub(super) fn start_tag_kind(input: &[u8], at: usize, len: usize) -> StartTagKind {
     use RegionKind::{EscapableRawText, RawText};
     use StartTagKind::{Fallback, Ordinary, Plaintext};
 
-    // Only lengths 3..=9 can name a region.  Measured: a first-letter prefilter
-    // before this check made the scan ~3-10% slower on both tag-heavy and
-    // realistic corpora, so the length check alone is kept.
+    // Only lengths 3..=9 can name a region; a first-letter prefilter measured
+    // slower than this check.
     if !(3..=9).contains(&len) {
         return Ordinary;
     }

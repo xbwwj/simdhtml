@@ -1,31 +1,7 @@
-//! Specification-driven tree construction (R0): the insertion-mode machine.
-//!
-//! This is the replacement for the V1 heuristic planner, written as a
-//! translation of the WHATWG "tree construction" algorithm
-//! (`Refs/corpus-whatwg-sections/html/sections/tree-construction__*.txt`)
-//! instead of as a set of rules inferred from failures:
-//!
-//! * tokens are processed by an insertion mode (`Mode`), and a handler may ask
-//!   for the token to be **reprocessed** in the new mode, exactly like the
-//!   specification's "reprocess the token";
-//! * the result is a *mutable tree*, so reparenting rules (foster parenting,
-//!   adoption agency, template contents) can be expressed later without
-//!   changing the pipeline;
-//! * `emit` walks the finished tree in preorder and drives the existing
-//!   [`TreeBuilder`], so the no-backfill preorder invariant stays where it
-//!   belongs (materialisation) while this stage is free to reorder.
-//!
-//! R0 covers the modes needed to reproduce V1's behaviour (`initial` through
-//! `after head`, `in body` with the spec's scope predicates, `text`, and
-//! `after body`).  Table modes, templates, adoption agency and foreign-content
-//! dispatch are the following steps; the skeleton (mode enum, dispatch loop,
-//! open-element stack, scope searches) is already shaped for them.
-
 use super::*;
 use crate::{Warning, WarningKind};
 
-/// Insertion modes.  The subset R0 implements, plus the names the following
-/// steps will fill in, so that the dispatch table is already the spec's.
+/// Insertion modes, named as in the specification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Mode {
     Initial,
@@ -91,20 +67,16 @@ pub(super) struct Node {
     kind: Kind,
     name: Option<Name>,
     parent: u32,
-    /// Intrusive child list.  A `Vec<u32>` per node cost one allocation per
-    /// node, which was ~20 % of tree construction on real pages; four links
-    /// per node make append, insert-before, detach and "move all children"
-    /// all O(1) and allocation-free.
+    /// Intrusive child list: four links per node make append, insert-before,
+    /// detach and "move all children" O(1) and allocation-free (a `Vec<u32>` per
+    /// node cost one allocation per node).
     first_child: u32,
     last_child: u32,
     next_sibling: u32,
     prev_sibling: u32,
-    /// Namespace of an element, decided here and handed to the tape.
-    ///
-    /// The tape used to recompute it from the tag name and the parent's
-    /// namespace, which duplicated the integration-point rules and could not
-    /// see `annotation-xml`'s `encoding` attribute; one byte per node keeps the
-    /// two in sync by construction.
+    /// Namespace of an element, decided here and handed to the tape: rebuilding
+    /// it on the tape would duplicate the integration-point rules and cannot see
+    /// `annotation-xml`'s `encoding` attribute.
     ns: u8,
     span: Range<u32>,
     /// Source offset just past the element's end tag (or the point where it
@@ -118,9 +90,8 @@ pub(super) struct Node {
 ///
 /// The scanner ends a raw region at the first `</script`, but script data has
 /// escape states: `<!--` enters "escaped", `<script` inside that enters
-/// "double-escaped" where `</script` is *text*, and `-->` leaves them.  This is
-/// a repair-step rescan of the region the scanner reported - the scanner itself
-/// only has to answer "this span is raw text".
+/// "double-escaped" where `</script` is text, and `-->` leaves them.  This is a
+/// rescan of the region the scanner reported.
 fn script_data_end(input: &[u8], start: usize) -> usize {
     #[derive(Clone, Copy, PartialEq)]
     enum State {
@@ -2085,10 +2056,7 @@ impl SpecTree<'_> {
                 b"template" => {
                     self.insert_element(Name::Token(tag), span);
                     self.afe.push(Afe::Marker);
-                    // "Set the frameset-ok flag to not ok".  Measured: three
-                    // expected trees want the flag left alone for a template in
-                    // the head, two want it cleared inside the body, and the two
-                    // readings trade exactly even - so the standard wins.
+                    // "Set the frameset-ok flag to not ok".
                     self.frameset_ok = false;
                     self.template_modes.push(Mode::InTemplate);
                     self.mode = Mode::InTemplate;
@@ -2896,9 +2864,8 @@ impl SpecTree<'_> {
     /// parenting."
     ///
     /// Everything goes through `in_body`: foster parenting only changes where
-    /// the element is *inserted*, and `insert_element` already implements that.
-    /// A separate insert path here used to skip the namespace bookkeeping, so
-    /// fostered `<svg>`/`<math>` subtrees were built in the HTML namespace.
+    /// the element is inserted, and `insert_element` handles that (including the
+    /// namespace bookkeeping).
     fn foster_and_reprocess(&mut self, ti: usize) -> Step {
         self.foster_next_insert = true;
         let step = self.in_body(ti);

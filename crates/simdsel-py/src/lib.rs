@@ -1,18 +1,4 @@
-//! PyO3 bindings for simdsel.
-//!
-//! The surface follows `parsel.Selector` closely: same constructor keywords,
-//! `css()`/`xpath()` returning a `SelectorList`, `get()/getall()/re()/attrib`,
-//! `SelectorList` behaving like the list parsel returns, and `drop()` raising
-//! instead of silently doing nothing.
-//!
-//! Documented deviations (see `与parsel不一致-css-xpath.md`):
-//!
-//! * the tree is the WHATWG one (`mode=`), not libxml2's;
-//! * `Selector.root` / `root=` need an lxml node, so they raise;
-//! * chained `css()`/`xpath()` search descendants only (no `descendant-or-self`),
-//!   and a selector whose item is a string/text/attribute yields nothing;
-//! * document nodes never appear in XPath results (lxml has no document node);
-//! * `type="xml"` and `type="json"` raise `NotImplementedError`.
+//! PyO3 binding for simdsel: a parsel-shaped `Selector`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;

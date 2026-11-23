@@ -1,13 +1,6 @@
-//! Portable reference implementations of every kernel.
-//!
-//! This is the `fallback` of the crate: one file, one implementation of each
-//! kernel in [`super`], mirroring the function set of [`super::x86`].  Tests in
-//! the ISA modules compare against these, so every optimized kernel has a
-//! readable definition of the semantics it must reproduce.
-
 use super::{BLOCK_SIZE, StructuralMasks};
 
-/// Scalar reference implementation for [`super::classify`].
+/// Scalar reference for [`super::classify`].
 #[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     let mut m = StructuralMasks::default();
@@ -24,14 +17,14 @@ pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     m
 }
 
-/// Scalar reference for the AVX2 `probe_lt` in [`super::x86`].
+/// Scalar reference for [`super::x86::probe_lt`].
 #[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     let m = classify(block);
     if m.lt == 0 { None } else { Some(m) }
 }
 
-/// Portable five-step implementation of [`super::prefix_xor`].
+/// Portable [`super::prefix_xor`], five shift steps.
 #[must_use]
 pub fn prefix_xor(mut x: u64) -> u64 {
     x ^= x << 1;

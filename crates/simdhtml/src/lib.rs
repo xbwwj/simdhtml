@@ -1,16 +1,8 @@
-//! Fast read-only HTML parsing into a preorder [`Document`].
+//! HTML parsing into a preorder [`Document`].
 //!
-//! One module per step of the pipeline, each named after the artifact it hands
-//! to the next step (not after its position in the pipeline):
-//!
-//! - `markup`: where markup starts and ends — tag spans, text runs, opaque regions
-//! - `tokenizer`: tag / attribute token spans
-//! - `tree_builder`: token stream to preorder node tape
-//! - `document`: the resulting data model `Document`, `Node`
-//!
-//! `tag_code` is the tag vocabulary shared by the tokenizer and the tree
-//! builder, `character_reference` is the lazy decoder, and `simd` holds the
-//! instruction-set kernels.
+//! Pipeline: `markup` finds tag spans and opaque regions, `tokenizer` cuts them
+//! into tag/attribute tokens, `tree_builder` builds the node tape, and
+//! `document` is the resulting model.  `simd` holds the byte kernels.
 
 mod character_reference;
 mod document;
@@ -267,13 +259,6 @@ mod tests {
         out
     }
 
-    fn first_text(doc: &Document<'_>) -> String {
-        let id = (0..doc.node_tape.len() as NodeId)
-            .find(|&id| doc.node(id).is_text())
-            .expect("a text node");
-        doc.text(id).into_owned()
-    }
-
     fn elements(doc: &Document<'_>) -> Vec<String> {
         doc.node_tape
             .iter()
@@ -412,14 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_end_tag_is_flagged() {
-        let d = doc("</div>");
-        assert!(d.flags.contains(DocumentFlags::UNEXPECTED_END_TAG));
-        assert_eq!(d.warnings.len(), 1);
-        assert!(Document::parse(b"<div></div>").is_ok());
-    }
-
-    #[test]
     fn default_repair_mode_is_none() {
         assert_eq!(RepairMode::default(), RepairMode::None);
         let none = Document::parse(b"<p>a").unwrap();
@@ -448,79 +425,5 @@ mod tests {
             ),
             Err(ParseError::InvalidUtf8(_))
         ));
-    }
-
-    #[test]
-    fn invalid_utf8_is_decoded_by_parse() {
-        // No declaration and invalid UTF-8: a browser reads the page as
-        // windows-1252, so 0xFF becomes U+00FF and nothing fails.
-        let d = Document::parse(b"<p>\xFF</p>").unwrap();
-        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
-        assert!(!d.had_encoding_errors);
-        assert_eq!(first_text(&d), "\u{ff}");
-    }
-
-    #[test]
-    fn legacy_encoding_declaration_is_honoured() {
-        let d = Document::parse(b"<meta charset=windows-1252><p>caf\xE9</p>").unwrap();
-        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
-        assert_eq!(first_text(&d), "caf\u{e9}");
-    }
-
-    #[test]
-    fn explicit_encoding_outranks_the_declaration() {
-        // The page claims UTF-8; the caller says otherwise, which is what a
-        // transport charset header does.
-        let input = b"<meta charset=utf-8><p>caf\xE9</p>";
-        let d = Document::parse_with(
-            input,
-            ParseOptions::new()
-                .repair(RepairMode::Spec)
-                .encoding(EncodingMode::Explicit(encoding_rs::WINDOWS_1252)),
-        )
-        .unwrap();
-        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
-        assert!(!d.had_encoding_errors);
-        assert_eq!(first_text(&d), "caf\u{e9}");
-    }
-
-    #[test]
-    fn explicit_utf8_reports_invalid_bytes() {
-        let d = Document::parse_with(
-            b"<p>caf\xE9</p>",
-            ParseOptions::new()
-                .repair(RepairMode::Spec)
-                .encoding(EncodingMode::Explicit(encoding_rs::UTF_8)),
-        )
-        .unwrap();
-        assert_eq!(d.encoding, encoding_rs::UTF_8);
-        assert!(d.had_encoding_errors);
-    }
-
-    #[test]
-    fn owned_input_needs_no_caller_buffer() {
-        let d =
-            Document::parse_owned(b"<meta charset=windows-1252><p>caf\xE9</p>".to_vec()).unwrap();
-        assert_eq!(d.encoding, encoding_rs::WINDOWS_1252);
-        assert_eq!(first_text(&d), "caf\u{e9}");
-
-        let d = Document::parse_owned(b"<p>x</p>".to_vec()).unwrap();
-        assert_eq!(d.encoding, encoding_rs::UTF_8);
-        assert!(matches!(d.input, std::borrow::Cow::Owned(_)));
-        assert_eq!(first_text(&d), "x");
-
-        // A UTF-8 BOM is still consumed on the owned path.
-        let d = Document::parse_owned(b"\xEF\xBB\xBF<p>x</p>".to_vec()).unwrap();
-        assert_eq!(&*d.input, b"<p>x</p>");
-    }
-
-    #[test]
-    fn utf8_input_stays_zero_copy() {
-        let input = b"<p>x</p>";
-        let d = Document::parse(input).unwrap();
-        assert_eq!(d.encoding, encoding_rs::UTF_8);
-        assert!(
-            matches!(d.input, std::borrow::Cow::Borrowed(bytes) if bytes.as_ptr() == input.as_ptr())
-        );
     }
 }

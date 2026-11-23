@@ -1,6 +1,3 @@
-//! The XPath value model: node-sets, and the string/number/boolean coercions
-//! of XPath 1.0 section 4.
-
 use std::borrow::Cow;
 
 use simdhtml::{Document, NO_TAG, NodeId};
@@ -20,11 +17,8 @@ pub enum RefKind {
     Attribute,
 }
 
-/// A node in an XPath node-set.
-///
-/// Elements and text nodes are identified by their preorder [`NodeId`];
-/// attributes by their owning element plus the flat attribute index, which is
-/// what the DOM stores.
+/// A node in an XPath node-set: elements and text by preorder [`NodeId`],
+/// attributes by owning element plus flat attribute index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeRef {
     kind: RefKind,
@@ -72,11 +66,8 @@ impl NodeRef {
         (self.kind == RefKind::Attribute).then_some(self.attr)
     }
 
-    /// Document-order key.
-    ///
-    /// Elements and text nodes use their preorder id; attributes sort directly
-    /// after their owning element and before its children, which is where the
-    /// XPath data model puts them.
+    /// Document-order key: preorder id, with attributes sorting right after
+    /// their element.
     pub(crate) fn order_key(self) -> (NodeId, u32) {
         match self.kind {
             RefKind::Attribute => (self.id, self.attr + 1),
@@ -84,9 +75,8 @@ impl NodeRef {
         }
     }
 
-    /// XPath ``string()`` of the node.
-    ///
-    /// Text nodes are merged across adjacent siblings: the XPath data model has
+    /// XPath `string()` of the node.  Adjacent text siblings are merged: the
+    /// XPath data model has
     /// one text node per maximal run, while the parser's tape may split a run
     /// wherever the markup scan ended one (a comment between two runs is not
     /// adjacent, so this only merges true siblings).

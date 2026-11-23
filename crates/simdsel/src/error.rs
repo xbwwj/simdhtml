@@ -1,5 +1,3 @@
-//! Public error type for the high-level facade.
-
 use simdhtml::ParseError;
 use thiserror::Error;
 

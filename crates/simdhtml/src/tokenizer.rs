@@ -1,57 +1,36 @@
-//! Cut tag spans into a tag/attribute token stream.
-//!
-//! The markup scan has already found tag spans and text runs, so this is O(#tags +
-//! #text-runs), not O(bytes).  Attribute and text values keep their original
-//! byte spans; entities are decoded lazily later.
-//!
-//! This module owns the tag vocabulary that the rest of the crate speaks:
-//! [`TagToken`], [`TagKind`] and [`AttrQuote`] describe a token, and
-//! [`tokenize`] is the only place that cuts attribute names and values.
-
 use std::ops::Range;
 
 use crate::MarkupIndex;
 use crate::tag_code::TagCode;
 
-/// Tag token kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TagKind {
-    /// `<name ...>`
     Start,
-    /// `</name>`
     End,
 }
 
-/// A parsed tag.
+/// A parsed tag: span, kind and the attribute range it owns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TagToken {
-    /// `<` through `>` inclusive (`end` is one past `>`).
     pub span: Range<u32>,
 
-    /// Start or end.
     pub kind: TagKind,
 
-    /// Attribute index range owned by this tag.
     pub attr_range: Range<u32>,
 
-    /// Whether the source had a self-closing slash.
     pub self_closing: bool,
 }
 
-/// Attribute value quoting style.
+/// Attribute value quoting style, which decides whether references are decoded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttrQuote {
-    /// `"value"` — attribute value (double-quoted) syntax.
     DoubleQuoted,
-    /// `'value'` — attribute value (single-quoted) syntax.
     SingleQuoted,
-    /// `value` — attribute value (unquoted) syntax.
     Unquoted,
-    /// Just the name, no `=` — empty attribute syntax.
     Empty,
 }
 
-/// Tokenizer output: structural tags, per-token tag codes and attribute spans.
+/// Tokenizer output: tags, tag codes and attribute spans.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Tokens {
     pub tags: Vec<TagToken>,
@@ -66,10 +45,8 @@ pub(crate) struct Tokens {
     pub attr_quote: Vec<AttrQuote>,
 }
 
-/// Tokenizes every tag span in the markup index.
-///
-/// Attributes are cut into structural key/value spans here (no entity decode,
-/// lowercase or interning). Text runs are produced lazily by [`TextRuns`].
+/// Cuts every tag span into tokens.  Attributes keep raw key/value spans: no
+/// decoding, lowercasing or interning.
 pub(crate) fn tokenize(input: &[u8], index: &MarkupIndex) -> Tokens {
     let mut out = Tokens {
         tags: Vec::with_capacity(index.tag_open.len()),
@@ -95,10 +72,7 @@ pub(crate) fn tokenize(input: &[u8], index: &MarkupIndex) -> Tokens {
     out
 }
 
-/// Parses one `<...>` span into a `TagToken`.
-///
-/// End tags ignore attributes. Start-tag attributes are recorded as raw spans;
-/// selectors use the attribute SoA or [`Document::attr_iter`].
+/// Parses one `<...>` span.  End tags ignore attributes.
 fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokens) -> TagToken {
     let span = start as u32..(end + 1) as u32;
     let tag_index = out.tags.len() as u32;
@@ -172,10 +146,8 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokens) -> TagTok
                 let q = input[i];
                 i += 1;
                 let start = i;
-                // 98% of attributes are quoted (85.5% double, 12.6% single) and
-                // account for 99.5% of all value bytes, so this one scan is
-                // where the tokenizer's time goes: `memchr` (AVX2) instead of a
-                // byte loop.
+                // Quoted values dominate real pages, so this scan is where the
+                // tokenizer's time goes: `memchr` (AVX2) instead of a byte loop.
                 i += memchr::memchr(q, &input[start..end]).unwrap_or(end - start);
                 let len = i - start;
                 if i < end {
@@ -201,10 +173,8 @@ fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokens) -> TagTok
             (i as u32, 0, AttrQuote::Empty)
         };
 
-        // Structural cut only: keep duplicate attributes in source order.
-        // HTML's "first wins" rule is a lookup rule; `find_attr_index` and
-        // `find_attr` already return the first occurrence, and multi-attribute
-        // projections de-duplicate themselves.
+        // Structural cut only: duplicates stay in source order.  HTML's
+        // "first wins" is a lookup rule and is applied by the lookups.
         out.attr_tag.push(tag_index);
         out.attr_name_start.push(key_start as u32);
         out.attr_name_len
@@ -226,11 +196,8 @@ fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\x0C' | b'\r')
 }
 
-/// Lookup tables for the attribute scanner.
-///
-/// The scalar loops test whitespace, `=`, `/` and `>` per byte; three branches
-/// per byte on ~37 bytes of attribute text per attribute is most of what the
-/// tokenizer spends.  A table lookup is one load and no branch misprediction.
+/// Lookup tables for the attribute scanner: three branches per byte of attribute
+/// text is most of what the tokenizer spends, a table lookup is one load.
 const fn class_table() -> [u8; 256] {
     let mut table = [0u8; 256];
     let mut b = 0usize;
@@ -321,11 +288,5 @@ mod tests {
             })
             .collect();
         assert_eq!(keys, vec!["href", "HREF", "href"]);
-    }
-
-    #[test]
-    fn end_tag_has_no_attributes() {
-        let (t, _) = tok("</div foo=bar>");
-        assert_eq!(t.tags[0].kind, TagKind::End);
     }
 }

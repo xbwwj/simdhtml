@@ -1,16 +1,10 @@
-//! HTML character-reference decoding.
-//!
-//! Decoding is lazy: the scan leaves `&` as ordinary character data, and the
-//! tokenizer keeps attribute/text spans raw.  This module is called when `::text`,
-//! `::attr()` or `.text` actually needs characters.
-
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use entities::ENTITIES;
 
-/// Maximum length of a named entity in the HTML table.
+/// Longest named entity in the HTML table.
 const MAX_NAMED_ENTITY_LEN: usize = 35;
 
 fn entity_map() -> &'static HashMap<&'static str, &'static str> {
@@ -23,11 +17,9 @@ fn entity_map() -> &'static HashMap<&'static str, &'static str> {
     })
 }
 
-/// Decodes HTML character references in `input`.
-///
-/// `in_attribute` enables the HTML rule that a named reference without a
-/// trailing `;` is not decoded when followed by an alphanumeric character or
-/// `=`.  Unknown or malformed references are left as literal text.
+/// Decodes HTML character references.  `in_attribute` applies the HTML rule that
+/// a named reference without `;` is not decoded when followed by an
+/// alphanumeric or `=`; unknown or malformed references stay literal.
 #[must_use]
 pub fn decode_character_references(input: &str, in_attribute: bool) -> Cow<'_, str> {
     if !input.as_bytes().contains(&b'&') {

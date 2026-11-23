@@ -1,10 +1,3 @@
-//! Set-at-a-time selector evaluation.
-//!
-//! Every compound becomes a bitset.  Descendant, child, adjacent and general
-//! sibling combinators are bitset transforms (`ancestors`, `parents`,
-//! `prev_element_sibling`, `earlier_element_siblings`), so the main path has
-//! no per-element parent/prev backtracking.
-
 use std::borrow::Cow;
 use std::cell::{OnceCell, RefCell};
 use std::ops::Range;
@@ -30,22 +23,18 @@ pub enum MatchError {
     DepthLimit,
 }
 
-/// A typed projection of a selector result.
-///
-/// This is the GAT-based output mode for the query path: the same match mask
-/// can be materialized as records, strings, text, or just a count.  The
-/// lifetime parameter lets borrowed results (`Cow<str>`) point into the
-/// document input without an extra copy.
+/// A typed projection of a selector result: the same match mask materialized as
+/// records, strings, text or a count.  The lifetime lets borrowed results point
+/// into the document input.
 pub trait Projection {
-    /// Projection result.  `'a` is the document borrow lifetime.
     type Output<'a>;
 
     /// Projects an already-computed match mask.
     ///
     /// # Errors
     ///
-    /// Returns [`MatchError::DepthLimit`] if pseudo-element projection needs
-    /// to recurse past the limit.
+    /// [`MatchError::DepthLimit`] if pseudo-element projection recurses past the
+    /// limit.
     fn finish<'a>(
         doc: &'a Document<'_>,
         selector: &Selector,
@@ -71,7 +60,7 @@ impl Projection for Records {
     }
 }
 
-/// Count-only projection; avoids allocating records.
+/// Count-only projection: no records allocated.
 pub struct Count;
 
 impl Projection for Count {
@@ -151,10 +140,8 @@ pub fn select(doc: &Document<'_>, selector: &Selector) -> Result<Vec<MatchRecord
     ctx.select(selector, None)
 }
 
-/// Selects elements matching `selector` inside the subtrees of `roots`.
-///
-/// This is what chained `Selector.css()` uses: the selected elements become
-/// the search roots and only their descendants are considered.
+/// Selects matching elements inside the subtrees of `roots`: what chained
+/// `Selector.css()` uses.
 ///
 /// # Errors
 ///
@@ -199,11 +186,8 @@ pub fn select_as_within_cache<'a, P: Projection>(
     P::finish(doc, selector, mask)
 }
 
-/// Counts matches without materializing `MatchRecord`s.
-///
-/// This is the count projection used by the benchmark and by callers that only
-/// need existence/count.  For pseudo-elements it falls back to record
-/// projection so `::text` / `::attr()` counts stay correct.
+/// Counts matches without materializing records.  Pseudo-elements fall back to
+/// record projection so `::text` / `::attr()` counts stay correct.
 ///
 /// # Errors
 ///
@@ -307,23 +291,10 @@ struct ChildIndex {
     element_index: Vec<u32>,
 }
 
-/// Document-derived query cache.
-///
-/// It owns only data derived from the *document* (`BitSet`s per tag, attribute
-/// and bare compound, plus a child index); it never borrows or owns the
-/// document, and every entry is valid only for the document it was built from.
-///
-/// Two lifetimes are in play:
-///
-/// - the one-shot API ([`select`], [`select_count`], ...) creates a throwaway
-///   cache per call, because a single query cannot amortise a full-document
-///   mask scan;
-/// - the [`crate::Selector`] facade creates one per selector chain and shares it
-///   with everything derived from that selector (`css`, `split`, `Clone`), so a
-///   crawl loop pays for each document-wide mask once.
-///
-/// Sharing a cache between two documents would be wrong by construction, which
-/// is why the facade ties it to a `Selector` that owns exactly one document.
+/// Document-derived query cache: tag/attribute/compound masks and a child index.
+/// It never borrows or owns the document, so it is only valid for the document
+/// it was built from.  The one-shot API creates a throwaway one per call;
+/// [`crate::Selector`] shares one across a selector chain.
 #[derive(Debug, Default)]
 pub struct QueryCache {
     child_index: OnceCell<ChildIndex>,
@@ -363,14 +334,9 @@ impl QueryCache {
         self.bare_compounds.borrow_mut().insert(compound, mask);
     }
 
-    /// Children of every node, in one pass over the preorder tape.
-    ///
-    /// `children[p]` ranges are built by counting children per parent, then
-    /// filling in node order: because the tape is preorder, a parent's children
-    /// appear in increasing id order, so a cursor per parent is enough.  The
-    /// previous version walked `first_child`/`next_sibling` for every node,
-    /// i.e. it read the same records again and followed two links per child;
-    /// this reads `parent()` once and writes sequentially.
+    /// Children of every node, in one pass over the preorder tape: count per
+    /// parent, then fill in node order, so each parent's children arrive in
+    /// increasing id order.
     fn child_index(&self, doc: &Document<'_>, n: usize) -> &ChildIndex {
         self.child_index.get_or_init(|| {
             let node = |id: u32| doc.node(id);
@@ -609,18 +575,13 @@ impl<'a> Eval<'a> {
         Ok(out)
     }
 
-    /// Evaluates a complex selector left-to-right.
-    ///
-    /// Left-to-right propagation keeps the final bitset equal to the rightmost
-    /// compound matches; it is equivalent to right-to-left filtering but avoids
-    /// per-element ancestor walks.
+    /// Evaluates a complex selector left-to-right: the final bitset equals the
+    /// rightmost compound's matches, without per-element ancestor walks.
     fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet, MatchError> {
         if depth > MAX_DEPTH {
             return Err(MatchError::DepthLimit);
         }
-        // No combinator: the compound mask *is* the answer.  Collecting it into
-        // a `Vec` only to rebuild the same bitset was an allocation and a copy
-        // per query, on the shape almost every selector has.
+        // No combinator: the compound mask is the answer.
         if complex.combinators.is_empty() {
             return self.compound_mask(&complex.compounds[0], depth);
         }
@@ -646,10 +607,8 @@ impl<'a> Eval<'a> {
         Ok(mask)
     }
 
-    /// Expands a node set into preorder windows for the next combinator.
-    ///
-    /// No global descendant/child bitmap is built: the windows come directly
-    /// from `subtree_end`, `first_child`/`next_sibling` and sibling links.
+    /// Expands a node set into preorder windows for the next combinator, straight
+    /// from `subtree_end` and the child links (no global bitmaps).
     fn relation_windows(
         &self,
         set: &[NodeId],
@@ -763,11 +722,8 @@ impl<'a> Eval<'a> {
         mask
     }
 
-    /// Elements carrying an attribute key.
-    ///
-    /// This is the query-side attribute index: `class` / `id` / `[data-x]`
-    /// selectors first get the set of elements that actually have that key,
-    /// instead of re-cutting every start tag's attribute span per candidate.
+    /// Elements carrying an attribute key: the query-side attribute index, so a
+    /// `[data-x]` selector does not re-cut every start tag per candidate.
     fn attr_mask(&self, name: &str) -> BitSet {
         if let Some(mask) = self.cache.get_attr_mask(name) {
             return mask;
@@ -789,15 +745,9 @@ impl<'a> Eval<'a> {
         mask
     }
 
-    /// Attribute-key candidate superset for a compound, or `None`.
-    ///
-    /// `class` used to be excluded here on the grounds that almost every
-    /// element carries a class attribute, so the key-mask pass could cost more
-    /// than the element scan it replaces.  The pass is now a SIMD scan
-    /// (`key_mask_avx2`) that costs ~2 us on a 140 KiB page, while testing one
-    /// candidate costs ~10 ns: on the corpus 45% of elements have a class, so
-    /// the mask pays for itself and `div.x` / `.x` start from |class| elements
-    /// instead of all of them.
+    /// Attribute-key candidate superset for a compound, or `None`.  `class` is
+    /// included: the SIMD key mask (~2 us on a 140 KiB page) beats testing every
+    /// candidate (~10 ns each) once 45% of elements carry the key.
     fn attr_candidates(&self, compound: &Compound) -> Option<BitSet> {
         if compound.tag.is_some() {
             return None;
@@ -833,11 +783,8 @@ impl<'a> Eval<'a> {
         candidates
     }
 
-    /// Evaluates one compound into a bitset.
-    ///
-    /// A type selector uses the lazy tag index; an attribute key uses the
-    /// query-side attribute index.  Pseudos are applied as set filters
-    /// afterwards.
+    /// Evaluates one compound into a bitset: type selectors use the lazy tag
+    /// index, attribute keys the query-side index, pseudos filter afterwards.
     fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet, MatchError> {
         if depth > MAX_DEPTH {
             return Err(MatchError::DepthLimit);
@@ -1117,8 +1064,8 @@ impl<'a> Eval<'a> {
         })
     }
 
-    /// Candidate count below which walking each candidate's sibling list is
-    /// tried before the full child index.
+    /// Candidate count below which the per-candidate sibling walk is tried
+    /// before building the child index.
     const SPARSE_CANDIDATES: u32 = 64;
 
     /// Position of `id` among its parent's element children, charging the walk
@@ -1169,13 +1116,10 @@ impl<'a> Eval<'a> {
         Some((at, total))
     }
 
-    /// Tries the per-candidate sibling walk for a small candidate set.
-    ///
-    /// Returns `false` when the walks exceed the step budget (the whole
-    /// document, once), in which case the caller falls back to the child index.
-    /// A budget is required: without it a page that is one huge list turns this
-    /// into O(candidates * siblings) — a 5 MiB trap page went from 1.8 ms to
-    /// 3.8 s.
+    /// Tries the per-candidate sibling walk; `false` when the step budget (one
+    /// document pass) runs out and the caller must build the child index.  The
+    /// budget is required: a page that is one huge list makes this
+    /// O(candidates * siblings).
     fn filter_sparse(
         &self,
         mask: &mut BitSet,
@@ -1438,18 +1382,11 @@ fn key_mask_scalar(
     }
 }
 
-/// Builds a node mask for a short, case-insensitive key (tag name or
-/// attribute name).
-///
-/// `starts`/`lens` are the SoA key spans and `resolve` maps a key index to the
-/// owning element node (`NO_NODE` for keys that do not own one, such as end
-/// tags).  Using the same kernel for tag and attribute keys keeps the SIMD
-/// path in one place.
-/// Sets every element whose tag code is `code`.
-///
-/// `Document::tag_code` is one byte per tag token, so this is a dense
-/// `cmpeq`+`movemask` scan (64/32/16 tags per iteration) instead of a gather
-/// over scattered name bytes: measured 0.22 vs 7.90 cycles per tag.
+/// Builds a node mask for a short, case-insensitive key (tag or attribute name).
+/// `starts`/`lens` are the key spans; `resolve` maps a key index to its element
+/// (`NO_NODE` for keys that own none, such as end tags).
+/// Sets every element whose tag code is `code`: one byte per tag token makes this
+/// a dense `cmpeq`+`movemask` scan (measured 0.22 vs 7.90 cycles per tag).
 fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -1789,8 +1726,8 @@ unsafe fn key_mask_avx2(
     }
 }
 
-/// Whether the selector begins with the implied universal a bare pseudo-element
-/// creates (`::text`), which has to match the scope root itself.
+/// Whether the selector starts with the implied universal of a bare
+/// pseudo-element (`::text`), which must match the scope root itself.
 fn selector_starts_with_implied_universal(selector: &Selector) -> bool {
     selector
         .complexes
@@ -1865,9 +1802,8 @@ fn matches_attr(doc: &Document<'_>, node: NodeId, pred: &AttrPred) -> bool {
     let Some(attr) = crate::raw::find_attr(doc, node, &pred.name) else {
         return false;
     };
-    // Presence needs no value at all, and a value without character references
-    // needs no decoding: both used to go through `find_attr_value`, which was
-    // the largest single cost in attribute selectors.
+    // Presence needs no value, and a value without references needs no decoding,
+    // so neither goes through `find_attr_value` (the hot path here).
     if pred.op == AttrOp::Exists {
         return true;
     }
@@ -2009,8 +1945,8 @@ mod tests {
             "<div class=box><span class=title>hello scope</span></div><div class=other>x</div>",
         );
         let sel = crate::parser::parse_selector(":scope > .title").unwrap();
-        // The parser now synthesises html/head/body, so the scope root is looked
-        // up by name instead of assumed to be node 1.
+        // The parser synthesises html/head/body, so the scope root is looked up
+        // by name.
         let root = d
             .node_tape
             .iter()
@@ -2067,9 +2003,8 @@ mod tests {
         assert_eq!(tags(&d, "article").len(), 600);
     }
 
-    /// A single huge list is the case that made an earlier, unbudgeted
-    /// per-candidate sibling walk quadratic (1.8 ms -> 3.8 s on a 5 MiB page).
-    /// The budget must fall back to the child index and stay correct.
+    /// A single huge list makes an unbudgeted per-candidate sibling walk
+    /// quadratic; the budget must fall back to the child index and stay correct.
     #[test]
     fn positional_pseudos_on_a_huge_list() {
         let mut html = String::from("<ul>");

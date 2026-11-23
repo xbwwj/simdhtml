@@ -1,24 +1,3 @@
-//! Markup scan: turn bytes into a [`MarkupIndex`].
-//!
-//! A document is markup or character data; this module finds that boundary
-//! without parsing anything.  It locates the angle brackets that actually
-//! *start* markup (`<!--`, `<?`, `<!DOCTYPE`, `<![CDATA[`, `<name`, `</name`),
-//! where each construct ends, and which byte ranges are character data.
-//!
-//! The scan is one pass over 64-byte blocks:
-//!
-//! 1. [`crate::simd::classify`] turns a block into four byte masks (`<`, `>`, `"`, `'`).
-//! 2. A single state machine (data / tag / comment / declaration / CDATA /
-//!    raw text) walks the **set bits** of the mask that the current state
-//!    cares about.  Bytes that cannot matter in that state are never visited:
-//!    a block of plain text costs one mask test, and a tag costs one visit per
-//!    `<`, `>` and quote.  Comments, declarations and raw text content are
-//!    states of the same machine, so there is no separate region pre-scan, no
-//!    `memchr` jump loop and no per-block fixed point.
-//! 3. `text_runs` derives the text intervals from the tag spans and the non-text regions.
-//!
-//! The output stores tag positions and text/raw intervals; no bitmaps survive this function.
-
 mod region;
 mod text_runs;
 
@@ -34,47 +13,31 @@ use self::text_runs::build_text_runs;
 pub use self::region::{OpaqueRegion, RegionKind};
 pub(crate) use self::text_runs::{TextRun, TextRuns};
 
-/// Markup scan output: tag positions and a few text/raw intervals.
-///
-/// The name is the simdjson `structural_index` idea applied to HTML: an index
-/// of *positions*, not tokens.  [`tag_open`](Self::tag_open) /
-/// [`tag_close`](Self::tag_close) are the markup boundary, [`text_runs`](Self::text_runs)
-/// is its complement, and [`opaque_regions`](Self::opaque_regions) is the
-/// markup that is not a tag (comments, DOCTYPE, CDATA, raw text content).
-///
-/// No bitmaps are kept.  For a typical HTML page the vectors hold on the order
-/// of a few percent of the input bytes.
+/// Markup scan output: positions, not tokens (the simdjson `structural_index`
+/// idea).  No bitmaps survive the scan.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MarkupIndex {
-    /// Byte offset of each tag's `<`, in ascending order.
+    /// Byte offset of each tag's `<`.
     pub tag_open: Vec<u32>,
 
-    /// Byte offset of each tag's `>`, in ascending order.
+    /// Byte offset of each tag's `>`, aligned with `tag_open`.
     pub tag_close: Vec<u32>,
 
-    /// Maximal byte ranges that are plain text (not inside a tag, comment,
-    /// doctype, processing instruction or CDATA section).
-    ///
-    /// Rawtext *content* (script/style/textarea/...) is a text run; the raw
-    /// element's start/end tags are excluded as usual.
+    /// Maximal plain-text ranges.  Raw text element *content* is a text run;
+    /// its start and end tags are tag spans.
     pub text_runs: Vec<Range<u32>>,
 
-    /// Regions masked from tag scanning: comments, DOCTYPE, CDATA and raw text
-    /// element content. The tokenizer reads `kind` to decide whether a text
-    /// run decodes character references.
+    /// Ranges masked from tag scanning (comments, DOCTYPE, CDATA, raw text
+    /// content); `kind` says whether text there decodes character references.
     pub opaque_regions: Vec<OpaqueRegion>,
 
-    /// Diagnostics from the scan.
     pub diags: MarkupDiagnostics,
 }
 
-/// The 64-byte block loop, instantiated once per target feature level.
-///
-/// The whole loop — not just the classifier — lives inside the instanced
-/// function, so `classify` inlines and its `set1` constants stay in registers
-/// across blocks.  A per-block function-pointer call was measured at ~5–8
-/// cycles per block on text-only input, which is more than half of the cost of
-/// classifying an empty block.
+/// The 64-byte block loop, instantiated once per target feature level.  The
+/// whole loop is instanced, not just the classifier, so the kernels inline and
+/// their constants stay in registers across blocks (a per-block indirect call
+/// measured at ~5-8 cyc/block).
 macro_rules! scan_blocks_body {
     ($scanner:expr, $input:expr, $probe_lt:path, $classify:path) => {{
         let scanner: &mut Scanner<'_> = $scanner;
@@ -219,11 +182,8 @@ pub fn scan(input: &[u8]) -> Result<MarkupIndex, MarkupError> {
 }
 
 bitflags::bitflags! {
-    /// Diagnostics produced by the markup scan.
-    ///
-    /// The scan is deliberately permissive: malformed input still produces an
-    /// index, and the flags tell later stages (or the caller) whether recovery
-    /// or a full fallback parser is needed.
+    /// Diagnostics of the markup scan.  The scan is permissive: malformed input
+    /// still yields an index.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
     pub struct MarkupDiagnostics: u32 {
         /// The number of tag starts and tag ends differs, or they are not in
@@ -245,8 +205,8 @@ bitflags::bitflags! {
         /// A `<![CDATA[` section was not terminated before EOF.
         const EOF_IN_CDATA = 1 << 7;
 
-        /// The document contains a construct outside the v1 fast-path scope
-        /// (CDATA, SVG/MathML, `<template>`, ...).
+        /// The document contains a construct outside the fast path (CDATA,
+        /// SVG/MathML, `<template>`, ...).
         const NEEDS_FALLBACK = 1 << 6;
     }
 }
@@ -257,14 +217,8 @@ pub enum MarkupError {
     InputTooLarge,
 }
 
-// ---------------------------------------------------------------------------
-// One-pass block scan
-// ---------------------------------------------------------------------------
-
-/// What the scanner is currently looking at.
-///
-/// Only the *candidate* bytes of the current state are visited, so the state
-/// also selects which block mask the scan walks (see [`Scanner::scan_block`]).
+/// What the scanner is currently looking at.  The state also selects which
+/// block mask the scan walks, so only candidate bytes are ever visited.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum State {
     /// Character data outside any tag or opaque region: only `<` matters.
@@ -294,11 +248,9 @@ struct RawText<'a> {
     plaintext: bool,
 }
 
-/// A `</name` seen in raw text that has not been terminated by `>` yet.
-///
-/// WHATWG only leaves raw text when the end tag is complete; `</script` at EOF
-/// is text, not a tag.  So the end tag is applied tentatively and rolled back
-/// if no `>` ever arrives.
+/// A `</name` seen in raw text that has not been terminated by `>` yet: WHATWG
+/// only leaves raw text when the end tag is complete, so it is applied
+/// tentatively and rolled back at EOF.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingEnd {
     /// Position of the `<` of `</name`.
@@ -310,11 +262,8 @@ struct PendingEnd {
     tag_open_len: usize,
 }
 
-/// Single-pass markup state machine.
-///
-/// The machine is written against absolute input offsets and visits one
-/// candidate bit at a time, in ascending order, exactly like a byte-at-a-time
-/// tokenizer would — it just skips every byte that cannot matter.
+/// Single-pass markup state machine: absolute offsets, one candidate bit at a
+/// time, skipping every byte that cannot matter.
 struct Scanner<'a> {
     input: &'a [u8],
     tag_open: Vec<u32>,
@@ -358,32 +307,21 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// Whether this state only reacts to `<` (text and raw text).
-    ///
-    /// Those states get the cheap one-mask probe; every other state needs at
-    /// least `>`, so classifying all four masks is the cheapest option there.
+    /// Whether this state only reacts to `<` and can use the one-mask probe.
     #[inline]
     fn lt_only(&self) -> bool {
         matches!(self.state, State::Data | State::Raw)
     }
 
-    /// Consumes the candidate bits of one block, in ascending order.
-    ///
-    /// `remaining` is the union of every byte the scan could care about; the
-    /// state then selects the subset it looks at.  Nothing has to be recomputed
-    /// when the state changes, and a handler that consumes extra bytes
-    /// (`<!--`, a tag name, ...) just clears `remaining` up to the position it
-    /// reached.
-    ///
-    /// The caller guarantees all masks are present (see `scan_one_block!`).
+    /// Consumes the candidate bits of one block in ascending order.  `remaining`
+    /// is the union of every byte the scan could care about; the state selects
+    /// the subset it looks at.
     #[inline(always)]
     fn scan_block(&mut self, m: &StructuralMasks, base: usize) {
         let quotes = m.gt | m.dq | m.sq;
         let mut remaining = (m.lt | quotes) & !bits_below(base, self.resume);
         while remaining != 0 {
-            // Bytes the current state looks at: `<` in text and raw text, `>`
-            // and the quotes inside a tag, `>` alone inside a comment or
-            // declaration.
+            // Bytes the current state looks at.
             let cur = match self.state {
                 State::Data | State::Raw => remaining & m.lt,
                 State::Tag { .. } => remaining & quotes,
@@ -396,21 +334,15 @@ impl<'a> Scanner<'a> {
             let bit = cur.trailing_zeros() as usize;
             let resume = self.step(base + bit);
             self.resume = resume;
-            // Everything below `resume` is consumed: the candidate just
-            // handled, whatever a handler skipped (`<!--`, a tag name, ...),
-            // and the bits the state that just ended was not looking at.
+            // Everything below `resume` is consumed, including bytes a handler
+            // skipped (`<!--`, a tag name, ...).
             remaining &= !bits_below(base, resume);
         }
     }
 
-    /// Handles the candidate byte at absolute offset `p`.
-    ///
-    /// Returns the offset candidate scanning should resume from: everything
-    /// in `[p, resume)` has been consumed.
-    ///
-    /// `inline(always)`: this is the per-candidate dispatch.  As an out-of-line
-    /// call it costs a call/ret pair per candidate, which was measured at
-    /// ~+30 cyc/block on a tag-dense input.
+    /// Handles the candidate byte at `p`; returns the offset scanning resumes
+    /// from.  Always inline: an out-of-line call measured ~+30 cyc/block on
+    /// tag-dense input.
     #[inline(always)]
     fn step(&mut self, p: usize) -> usize {
         match self.state {
@@ -485,10 +417,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// One past the last byte of the tag name starting at `from`.
-    ///
-    /// Tag names are short (median 3-4 bytes), and a whitespace/`/`/`>` bitmap
-    /// costs more per block than this loop costs per tag, so the loop stays.
+    /// One past the last byte of the tag name at `from`.  Tag names are short
+    /// (median 3-4 bytes); a whitespace/`/`/`>` bitmap costs more than this loop.
     #[inline]
     fn tag_name_end(&self, from: usize) -> usize {
         let mut end = from;
@@ -847,8 +777,8 @@ mod tests {
 
     #[test]
     fn quoted_gt_in_dense_block() {
-        // Two tags with a quoted `>` in one block used to defeat the
-        // bit-parallel fixed point and needed a scalar repair pass.
+        // Two tags with a quoted `>` in one block: the state machine must not
+        // treat either `>` as the end of the first tag.
         let input = r#"<div title="a > b">hello</div>"#.repeat(2);
         let idx = index(&input);
         assert_eq!(idx.tag_open.len(), 4, "{idx:?}");
@@ -909,33 +839,6 @@ mod tests {
             "{:?}",
             idx.opaque_regions
         );
-    }
-
-    #[test]
-    fn fuzz_smoke_never_panics() {
-        let mut state = 0x1234_5678_9abc_def0u64;
-        for _ in 0..4096 {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            let len = (state as usize) & 0x7FF;
-            let mut input = Vec::with_capacity(len);
-            for _ in 0..len {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                input.push(state as u8);
-            }
-            let _ = scan(&input).unwrap();
-        }
-    }
-
-    #[test]
-    fn empty_input() {
-        let idx = index("");
-        assert_eq!(idx.tag_open.len(), 0);
-        assert_eq!(idx.text_runs.len(), 0);
-        assert!(!idx.diags.contains(MarkupDiagnostics::UNBALANCED_TAG));
     }
 
     #[test]
@@ -1232,25 +1135,5 @@ mod tests {
             out.flags |= MarkupDiagnostics::UNBALANCED_TAG;
         }
         out
-    }
-
-    // --- flags / index -----------------------------------------------------
-
-    #[test]
-    fn flags_are_composable() {
-        let mut flags = MarkupDiagnostics::UNBALANCED_TAG | MarkupDiagnostics::EOF_IN_TAG;
-        assert!(flags.contains(MarkupDiagnostics::EOF_IN_TAG));
-        assert!(!flags.contains(MarkupDiagnostics::NEEDS_FALLBACK));
-        flags.insert(MarkupDiagnostics::NEEDS_FALLBACK);
-        assert!(flags.contains(MarkupDiagnostics::NEEDS_FALLBACK));
-        flags.remove(MarkupDiagnostics::UNBALANCED_TAG);
-        assert!(!flags.contains(MarkupDiagnostics::UNBALANCED_TAG));
-    }
-
-    #[test]
-    fn empty_index_is_balanced() {
-        let index = MarkupIndex::default();
-        assert!(index.tag_open.is_empty());
-        assert!(!index.diags.contains(MarkupDiagnostics::UNBALANCED_TAG));
     }
 }

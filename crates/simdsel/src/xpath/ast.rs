@@ -1,9 +1,3 @@
-//! The compiled XPath AST.
-//!
-//! Abbreviations are expanded during parsing (`.` → `self::node()`,
-//! `//` → `descendant-or-self::node()`, `@x` → `attribute::x`), so the
-//! evaluator only ever sees the long form.
-
 /// An expression.
 #[derive(Clone, Debug)]
 pub(super) enum Expr {

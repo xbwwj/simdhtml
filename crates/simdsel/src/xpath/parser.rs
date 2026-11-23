@@ -1,5 +1,3 @@
-//! XPath 1.0 recursive-descent parser (grammar section 3.7), core subset.
-
 use super::XPathError;
 use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
 

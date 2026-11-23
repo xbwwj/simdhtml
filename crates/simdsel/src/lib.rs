@@ -1,29 +1,5 @@
-//! CSS selector compilation, set-at-a-time matching, and a parsel-shaped
-//! [`Selector`] facade over [`simdhtml::Document`].
-//!
-//! [`Selector`] is the front door of the crate: it owns its document, so a
-//! caller never needs to name [`Document`] or import `simdhtml` at all.
-//!
-//! ```no_run
-//! use simdsel::Selector;
-//!
-//! let sel = Selector::from_text("<div class=item><a href=/x>hi</a></div>").unwrap();
-//! for link in sel.css(".item a::attr(href)").unwrap().getall() {
-//!     println!("{link}");
-//! }
-//! ```
-//!
-//! The low-level API stays separate and document-borrowing: compile a CSS
-//! selector into an AST and evaluate it against an immutable document, with the
-//! document's lifetime under the caller's control:
-//!
-//! ```text
-//! parse_selector -> select(&Document<'_>, &CssSelector) -> MatchRecord
-//! ```
-//!
-//! Use it when one document feeds many independent queries and the `Rc` in
-//! [`Selector`] is not wanted, or when the result is projected without building
-//! a result set at all (e.g. [`Count`]).
+//! CSS selector compilation and set-at-a-time matching over [`simdhtml::Document`],
+//! with a parsel-shaped [`Selector`] facade.
 
 mod bitset;
 mod error;

@@ -1,32 +1,20 @@
-//! x86_64 AVX-512 kernels: 64-byte byte classification in one register.
-//!
-//! `vpcmpb` with AVX-512BW compares a whole `BLOCK_SIZE` block and writes the
-//! result directly to a 64-bit mask register, so a block is one unaligned load
-//! plus one compare per requested class.  The AVX2 path in [`super::x86`] needs
-//! two loads, two compares and two `movemask`s per class, then shifts and ORs
-//! the halves together; the same four masks cost roughly half the uops here.
-//!
-//! Only the byte classifier changes.  `prefix_xor` keeps using PCLMULQDQ (see
-//! [`super::x86::prefix_xor`]): AVX-512 adds nothing to a 64-bit carry-less
-//! multiply.
-
 use super::{BLOCK_SIZE, NEED_ALL, NEED_GT, NEED_LT, NEED_QUOTES, StructuralMasks};
 
-/// AVX-512 implementation of [`super::classify`].
+/// AVX-512 [`super::classify`].
 #[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     // SAFETY: installed in the dispatch table only after the AVX-512BW check.
     unsafe { classify_avx512(block) }
 }
 
-/// AVX-512 implementation of [`super::probe_lt`].
+/// AVX-512 [`super::probe_lt`].
 #[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     // SAFETY: installed in the dispatch table only after the AVX-512BW check.
     unsafe { probe_lt_avx512(block) }
 }
 
-/// Inline-only entry point for the scanner's per-ISA block loop (all masks).
+/// Inline-only entry point for the scanner's block loop (all masks).
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {

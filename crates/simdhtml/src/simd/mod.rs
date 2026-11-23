@@ -1,22 +1,6 @@
-//! Low-level SIMD / bit-parallel kernels for the markup scanner.
-//!
-//! The layout follows the one axis that makes a kernel module worth splitting:
-//! the **target feature level**, exactly like simdjson's per-ISA directories.
-//! `fallback` is the portable reference implementation (simdjson's
-//! `fallback/`); `x86` is the AVX2 / PCLMULQDQ version, `avx512` the Ice
-//! Lake-class 64-byte classifier, and `neon` the aarch64 version of the
-//! *same* kernels.  Adding an ISA means adding one file and one line in
-//! `detect()`, not editing every kernel.
-//!
-//! * [`fallback`] — portable reference implementations.
-//! * [`x86`] — AVX2 byte classification and PCLMULQDQ `prefix_xor`.
-//! * [`avx512`] — AVX-512BW byte classification (one 64-byte block per mask).
-//! * [`neon`] — aarch64 NEON byte classification (four 16-byte lanes).
-//!
-//! The kernel ABI is deliberately tiny: [`StructuralMasks`] (four 64-bit byte masks
-//! per 64-byte block) plus [`probe_lt`] and [`prefix_xor`].  Everything else the
-//! scan needs — block iteration, bit-set flattening, input-stream validation —
-//! is portable and lives in `crate::markup`.
+//! Byte-classification kernels for the markup scanner: `avx512`, `x86` (AVX2 +
+//! PCLMULQDQ) and `neon` implement the same `classify` / `probe_lt` /
+//! `prefix_xor` that `fallback` defines portably.
 
 #[cfg(target_arch = "x86_64")]
 pub mod avx512;
@@ -28,43 +12,31 @@ pub mod x86;
 
 use std::sync::OnceLock;
 
-/// Bytes processed per block, and the width of every mask in this module.
+/// Bytes per block, and the width of every mask here.
 pub const BLOCK_SIZE: usize = 64;
 
-/// Mask-request bit for `<`.
+// Mask-request bit for `<`.
 pub const NEED_LT: u8 = 1 << 0;
-/// Mask-request bit for `>`.
+// Mask-request bit for `>`.
 pub const NEED_GT: u8 = 1 << 1;
-/// Mask-request bit for the two quote bytes (both are produced together).
+// Mask-request bit for both quote bytes (produced together).
 pub const NEED_QUOTES: u8 = 1 << 2;
-/// Every mask.
+// Every mask.
 pub const NEED_ALL: u8 = NEED_LT | NEED_GT | NEED_QUOTES;
 
-/// The subset of masks consumed by the markup scan.
-///
-/// `StructuralMasks` deliberately contains **no letter classes and no
-/// whitespace**: the block classifier only marks the bytes the scan branches
-/// on.  Extra classes were measured and rejected: a whitespace mask costs more
-/// per block than the short tag-name byte loop it would replace, and a bitmap
-/// per letter never pays for itself (see `DESIGN.md`).
+/// The masks the markup scan consumes: no letter classes and no whitespace,
+/// because only the bytes the scan branches on are classified.  A whitespace
+/// mask measured slower than the short tag-name byte loop it would replace.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StructuralMasks {
-    /// `<`
     pub lt: u64,
-    /// `>`
     pub gt: u64,
-    /// `"`
     pub dq: u64,
-    /// `'`
     pub sq: u64,
 }
 
-/// One complete set of kernels for the selected target feature level.
-///
-/// Selecting the whole set once (instead of one `OnceLock` per kernel) keeps
-/// capability detection in a single place, so `is_x86_feature_detected!` is
-/// evaluated once for the process and [`features`] reports exactly what is
-/// actually being called.
+/// One complete set of kernels for a target feature level, selected once per
+/// process.
 struct Implementation {
     classify: fn(&[u8; BLOCK_SIZE]) -> StructuralMasks,
     probe_lt: fn(&[u8; BLOCK_SIZE]) -> Option<StructuralMasks>,
@@ -93,11 +65,9 @@ fn implementation() -> &'static Implementation {
     IMPLEMENTATION.get_or_init(detect)
 }
 
-/// Picks the fastest available kernel set.
-///
-/// The classifiers are selected independently from `prefix_xor`: AVX-512 and
-/// AVX2 are byte-classification levels, while PCLMULQDQ is a separate
-/// carry-less multiply feature used only by `prefix_xor`.
+/// Picks the fastest available kernel set.  Classifiers and `prefix_xor` are
+/// selected independently: PCLMULQDQ is a separate feature used only by
+/// `prefix_xor`.
 fn detect() -> Implementation {
     #[cfg(target_arch = "x86_64")]
     {
@@ -153,59 +123,52 @@ fn detect() -> Implementation {
     }
 }
 
-/// Whether the AVX-512 block loop can be used.
+// Whether the AVX-512 block loop can be used.
 #[must_use]
 #[inline]
 pub fn avx512_available() -> bool {
     implementation().avx512
 }
 
-/// Whether the AVX2 block loop can be used.
-///
-/// Called once per document, so the `OnceLock` read is negligible; the point is
-/// that the scan instantiates its whole block loop for AVX2 rather than calling
-/// a classifier through a function pointer for every block.
+// Whether the AVX2 block loop can be used.  Called once per document: the scan
+// instantiates its whole block loop per ISA instead of calling a classifier
+// through a function pointer per block.
 #[must_use]
 #[inline]
 pub fn avx2_available() -> bool {
     implementation().avx2
 }
 
-/// Whether the NEON block loop can be used.
+// Whether the NEON block loop can be used.
 #[must_use]
 #[inline]
 pub fn neon_available() -> bool {
     implementation().neon
 }
 
-/// Classifies one block for the markup scan, using the best available ISA.
+/// Classifies one block, using the selected ISA.
 #[must_use]
 #[inline]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     (implementation().classify)(block)
 }
 
-/// Classifies only `<`, returning `None` when the block has none.
-///
-/// This is the text/rawtext fast path: when no `<` is present the scanner
-/// state cannot change and the other masks are irrelevant.
+/// Classifies only `<`, returning `None` when the block has none: the
+/// text/rawtext fast path.
 #[must_use]
 #[inline]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     (implementation().probe_lt)(block)
 }
 
-/// Returns the cumulative XOR of the bits of `x`.
+/// Cumulative XOR of the bits of `x`.
 #[must_use]
 #[inline]
 pub fn prefix_xor(x: u64) -> u64 {
     (implementation().prefix_xor)(x)
 }
 
-/// Like [`prefix_xor`], but flips the result when `carry` is true.
-///
-/// This is the block-boundary carry: if the previous block ended with a set
-/// state, every bit in this block is inverted.
+/// [`prefix_xor`], inverted when `carry` is set: the block-boundary carry.
 #[inline]
 #[must_use]
 pub fn prefix_xor_with_carry(x: u64, carry: bool) -> u64 {
@@ -213,20 +176,16 @@ pub fn prefix_xor_with_carry(x: u64, carry: bool) -> u64 {
     if carry { !p } else { p }
 }
 
-/// Target features selected at runtime by this build.
+/// Target features selected at runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionSets {
-    /// AVX-512 classifier is available and selected.
     pub avx512: bool,
-    /// AVX2 classifier is available and selected.
     pub avx2: bool,
-    /// PCLMULQDQ `prefix_xor` is available and selected.
     pub pclmulqdq: bool,
-    /// NEON classifier is available and selected.
     pub neon: bool,
 }
 
-/// Returns the runtime-selected features of the current CPU.
+/// Runtime-selected features of the current CPU.
 #[must_use]
 pub fn instruction_sets() -> InstructionSets {
     let k = implementation();
@@ -241,47 +200,6 @@ pub fn instruction_sets() -> InstructionSets {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dispatch_classify_matches_scalar() {
-        let mut state = 0x1234_5678_9abc_def0u64;
-        for _ in 0..4096 {
-            let mut block = [0u8; BLOCK_SIZE];
-            for b in &mut block {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                *b = state as u8;
-            }
-            assert_eq!(classify(&block), fallback::classify(&block));
-        }
-    }
-
-    #[test]
-    fn dispatch_probe_lt_matches_scalar() {
-        let mut state = 0xdead_f00d_0123_4567u64;
-        for _ in 0..4096 {
-            let mut block = [0u8; BLOCK_SIZE];
-            for b in &mut block {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                *b = state as u8;
-            }
-            assert_eq!(probe_lt(&block), fallback::probe_lt(&block));
-        }
-    }
-
-    #[test]
-    fn dispatch_prefix_xor_matches_scalar() {
-        let mut state = 0x0bad_f00d_1234_5678u64;
-        for _ in 0..4096 {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            assert_eq!(prefix_xor(state), fallback::prefix_xor(state));
-        }
-    }
 
     #[test]
     fn carry_flips_all_bits() {

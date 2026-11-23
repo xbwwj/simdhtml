@@ -1,54 +1,29 @@
-//! Charset sniffing and decoding.
-//!
-//! Crawlers get bytes, not strings.  The HTML specification therefore starts
-//! with the *encoding sniffing algorithm*, and a parser that refuses anything
-//! but UTF-8 cannot read roughly half of the real web.  This module implements
-//! that first step and hands the rest of the pipeline UTF-8 bytes:
-//!
-//! 1. byte order mark,
-//! 2. `<meta charset>` / `<meta http-equiv=content-type>` in the first 1024
-//!    bytes,
-//! 3. otherwise UTF-8 if the bytes validate, else `windows-1252` (what a
-//!    browser falls back to for unlabelled legacy pages).
-//!
-//! Callers that already know the charset (a transport header, an explicit
-//! `encoding=` argument) skip straight to [`decode_with`].
-//!
-//! The UTF-8 case is zero-copy: the bytes borrow the caller's buffer, and the
-//! validation it needs is the same check [`crate::Document::parse`] used to do anyway, so
-//! supporting legacy encodings costs nothing on UTF-8 input.
-
 use std::borrow::Cow;
 
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252};
 use thiserror::Error;
 
-/// Bytes of the document the `charset` prescan looks at, per the HTML spec's
-/// "prescan a byte stream to determine its encoding".
+/// How far into the document the `charset` prescan looks ("prescan a byte
+/// stream to determine its encoding").
 const PRESCAN_LEN: usize = 1024;
 
-/// The result of [`decode`] or [`decode_with`].
+/// Result of [`decode`] or [`decode_with`].
 #[derive(Debug)]
 pub struct Decoded<'a> {
-    /// UTF-8 bytes: either the caller's buffer (no copy) or the transcoded text.
+    /// UTF-8 bytes: the caller's buffer (no copy) or the transcoded text.
     pub bytes: Cow<'a, [u8]>,
-    /// The encoding that was actually used.
     pub encoding: &'static Encoding,
-    /// Whether the input contained byte sequences invalid in `encoding`.
+    /// Whether the input held byte sequences invalid in `encoding`.
     pub errors: bool,
 }
 
-/// Decodes `input` to UTF-8.
-///
-/// A leading byte order mark is consumed: it is metadata, not text, and leaving
-/// it in would prepend U+FEFF to the document.
+/// Decodes `input` to UTF-8, sniffing the charset and consuming a leading byte
+/// order mark.
 #[must_use]
 pub fn decode(input: &[u8]) -> Decoded<'_> {
     if let Some((encoding, bom_len)) = Encoding::for_bom(input) {
         let body = &input[bom_len..];
-        // A UTF-8 BOM is common (SWDE writes one on every page): strip it and
-        // keep the zero-copy path rather than sending the bytes through the
-        // decoder.
+        // A UTF-8 BOM is common: strip it and keep the zero-copy path.
         if encoding == UTF_8
             && let Some(decoded) = borrow_utf8(body)
         {
@@ -74,10 +49,8 @@ pub fn decode(input: &[u8]) -> Decoded<'_> {
         };
     }
 
-    // No BOM, nothing but UTF-8 (or nothing) declared.  Validate once: valid
-    // UTF-8 is the common case and stays zero-copy; invalid bytes are decoded
-    // the way a browser would, with the declared UTF-8 if there was one and
-    // windows-1252 otherwise.
+    // Validate once: valid UTF-8 stays zero-copy, invalid bytes are decoded the
+    // way a browser would.
     if let Some(decoded) = borrow_utf8(input) {
         return decoded;
     }
@@ -91,18 +64,12 @@ pub fn decode(input: &[u8]) -> Decoded<'_> {
     }
 }
 
-/// Decodes `input` as `encoding`, skipping the sniffing step.
-///
-/// This is the *transport level* of the sniffing algorithm: the caller already
-/// knows the charset (an HTTP `Content-Type` header, or an explicit
-/// `encoding=` argument in a binding), so it outranks `<meta charset>`.  A byte
-/// order mark still wins, because the specification checks it first and it is
-/// the only signal that cannot be a lie of the same weight as a declaration.
+/// Decodes `input` as `encoding`, skipping the prescan.  This is the transport
+/// level of the algorithm: it outranks `<meta charset>`, but a byte order mark
+/// still wins.
 #[must_use]
 pub fn decode_with<'a>(input: &'a [u8], encoding: &'static Encoding) -> Decoded<'a> {
     if Encoding::for_bom(input).is_some() {
-        // BOM handling (including stripping it and the UTF-8 fast path) is
-        // already correct there, and the BOM outranks the label.
         return decode(input);
     }
 
@@ -112,8 +79,6 @@ pub fn decode_with<'a>(input: &'a [u8], encoding: &'static Encoding) -> Decoded<
         return decoded;
     }
 
-    // Whatever the declared encoding says, bytes it cannot represent become
-    // U+FFFD and are reported, exactly as in the sniffed path above.
     let (bytes, actual, errors) = transcode(input, encoding);
     Decoded {
         bytes,
@@ -122,28 +87,21 @@ pub fn decode_with<'a>(input: &'a [u8], encoding: &'static Encoding) -> Decoded<
     }
 }
 
-/// Decodes `input` to UTF-8, taking ownership of it.
-///
-/// This is [`decode`] for callers that do not have a buffer to borrow from (a
-/// fetched response body, a binding's converted argument).  The zero-copy case
-/// is kept: when the input already is UTF-8 the bytes are not copied, they are
-/// simply moved into the returned [`Decoded`].
+/// [`decode`] for an owned buffer: the bytes are moved, never copied, and a
+/// stripped BOM prefix is drained in place.
 #[must_use]
 pub fn decode_owned(input: Vec<u8>) -> Decoded<'static> {
     take_ownership(input, decode)
 }
 
-/// [`decode_with`] for an owned buffer; see [`decode_owned`].
+/// [`decode_with`] for an owned buffer.
 #[must_use]
 pub fn decode_with_owned(input: Vec<u8>, encoding: &'static Encoding) -> Decoded<'static> {
     take_ownership(input, |bytes| decode_with(bytes, encoding))
 }
 
-/// Runs a borrowing decode, then moves the buffer into the result.
-///
-/// A borrowing decode can only ever return a suffix of its input (the input
-/// itself, or that minus a stripped UTF-8 BOM), so the owned result is the same
-/// bytes with the skipped prefix removed.
+/// Runs a borrowing decode, then moves the buffer into the result.  A borrowing
+/// decode only ever returns a suffix (the input, or that minus a stripped BOM).
 fn take_ownership<F>(input: Vec<u8>, decode: F) -> Decoded<'static>
 where
     F: for<'a> FnOnce(&'a [u8]) -> Decoded<'a>,
@@ -179,19 +137,13 @@ where
     }
 }
 
-/// Looks up a charset label (`"utf-8"`, `"gbk"`, `"windows-1252"`, ...).
-///
-/// Labels are matched per the Encoding standard's label table, case-insensitively
-/// and with surrounding ASCII whitespace ignored.
+/// Looks up a charset label (`"gbk"`, `"windows-1252"`, ...).
 #[must_use]
 pub fn lookup(label: &str) -> Option<&'static Encoding> {
     Encoding::for_label(label.as_bytes())
 }
 
-/// The encoding a browser would try first, without looking at the whole input.
-///
-/// Unlike [`decode`] this does not validate the document, so it is cheap for
-/// large inputs, but it can report UTF-8 for bytes that are not.
+/// The encoding a browser would try first, without validating the document.
 #[must_use]
 pub fn sniff(input: &[u8]) -> &'static Encoding {
     if let Some((encoding, _)) = Encoding::for_bom(input) {
@@ -233,9 +185,8 @@ fn prescan_meta(input: &[u8]) -> Option<&'static Encoding> {
         let tag = &rest[..end];
         from = open + 1;
 
-        // Both `<meta charset=...>` and
-        // `<meta http-equiv="content-type" content="text/html; charset=...">`
-        // carry the label after a `charset` token.
+        // `<meta charset=...>` and `<meta http-equiv=... content="...; charset=...">`
+        // both carry the label after a `charset` token.
         let Some(at) = find_ignore_ascii_case(tag, b"charset", 0) else {
             continue;
         };
@@ -245,8 +196,8 @@ fn prescan_meta(input: &[u8]) -> Option<&'static Encoding> {
         let Some(encoding) = Encoding::for_label(label) else {
             continue;
         };
-        // The spec: a UTF-16 label in a <meta> means UTF-8, because the
-        // document is already being read as ASCII-compatible bytes.
+        // A UTF-16 label in a `<meta>` means UTF-8: the bytes are already
+        // ASCII-compatible.
         return Some(if encoding == UTF_16LE || encoding == UTF_16BE {
             UTF_8
         } else {
@@ -294,20 +245,7 @@ fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize) -> Option
     (from..=last).find(|&at| haystack[at..at + needle.len()].eq_ignore_ascii_case(needle))
 }
 
-// ---------------------------------------------------------------------------
-// Input stream validation
-// ---------------------------------------------------------------------------
-
-// The WHATWG parser validates the input stream before tokenization; a
-// decoding failure is the only thing the parser refuses outright.
-
-/// Detailed UTF-8 validation failure.
-///
-/// v1 delegates to [`simdutf8::compat`], which is a SIMD-accelerated,
-/// API-compatible replacement for `std::str::from_utf8`.  The wrapper keeps
-/// the error information we need for diagnostics and future encoding
-/// fallback, and gives us one place to swap in a fused lookup4 validator
-/// later.
+/// UTF-8 validation failure, as returned by [`validate_utf8`].
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub struct Utf8Error {
     valid_up_to: usize,
@@ -315,13 +253,11 @@ pub struct Utf8Error {
 }
 
 impl Utf8Error {
-    /// Byte index of the first invalid byte.
     #[must_use]
     pub const fn valid_up_to(&self) -> usize {
         self.valid_up_to
     }
 
-    /// Length of the invalid sequence, or `None` if the input ended mid-character.
     #[must_use]
     pub const fn error_len(&self) -> Option<usize> {
         self.error_len
