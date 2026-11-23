@@ -12,10 +12,10 @@ The following figures show how fast simdhtml extracts data from HTML. The task i
 
 [![Main content and link extraction: Common Crawl, parse + 18 CSS selectors](./figures/main-content-and-link-extraction.svg)](./figures/main-content-and-link-extraction.svg)
 
-[![Structured data extraction: SWDE, per-site field selectors](./figures/structured-data-extraction.svg)](./figures/structured-data-extraction.svg)
+[![Structured data extraction: SWDE, per-site class selectors](./figures/structured-data-extraction.svg)](./figures/structured-data-extraction.svg)
 
 We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
-`simdsel (spec mode)`.
+`simdsel (repair)` row.
 
 ## Usage
 

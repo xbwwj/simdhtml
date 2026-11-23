@@ -110,7 +110,6 @@ cmd_data_swde() {
     uv run python scripts/prepare_data.py
     uv sync --group bench
     uv run --group bench python scripts/make_swde_selectors.py
-    uv run --group bench python scripts/make_swde_gold_selectors.py
     uv run python scripts/prepare_data.py --manifests-only
 }
 

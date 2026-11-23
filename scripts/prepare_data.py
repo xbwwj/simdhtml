@@ -291,10 +291,11 @@ def prep_swde_manifest() -> None:
             continue
         site = path.parent.name
         vertical = path.parent.parent.name
-        site_base = site.split("(", 1)[0]
-        queries = WORKLOAD / "swde-gold" / f"{site_base}.sel"
-        if not queries.is_file():
-            queries = WORKLOAD / "swde" / f"{site}.sel"
+        # One per-site selector set, derived from the site's own template
+        # (`make_swde_selectors.py`): `tag.class`, i.e. the shape a crawler
+        # author writes.  Positional devtools paths were removed (BENCHLOG
+        # step115) - they measure the repair rules, not crawling.
+        queries = WORKLOAD / "swde" / f"{site}.sel"
         rows.append(
             {
                 "id": f"swde:{site}/{path.name}",
