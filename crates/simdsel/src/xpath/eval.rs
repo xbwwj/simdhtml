@@ -60,6 +60,16 @@ struct Ctx {
 
 /// Evaluates a compiled expression against `doc`.
 pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathError> {
+    evaluate_at(doc, expr, NodeRef::document())
+}
+
+/// Evaluates `expr` with `node` as the context node (relative paths, `.`,
+/// `string()`, `position()` all resolve against it).
+pub(super) fn evaluate_at(
+    doc: &Document<'_>,
+    expr: &Expr,
+    node: NodeRef,
+) -> Result<Value, XPathError> {
     let mut evaluator = Evaluator {
         doc,
         visits: 0,
@@ -68,7 +78,7 @@ pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathEr
         budget: (doc.node_tape.len() as u64 + 1) * 256,
     };
     let ctx = Ctx {
-        node: NodeRef::document(),
+        node,
         position: 1,
         size: 1,
     };
@@ -514,12 +524,15 @@ impl Evaluator<'_, '_> {
                 if args.len() > 1 {
                     return Err(arity_error(func, args.len()));
                 }
+                // HTML lowercases element and attribute names in the DOM, so
+                // `name()`/`local-name()` on the same markup is lowercase in
+                // browsers; the tape keeps the source spelling.
                 if args.is_empty() {
-                    return Ok(Value::Str(ctx.node.name(self.doc).to_owned()));
+                    return Ok(Value::Str(ctx.node.name(self.doc).to_ascii_lowercase()));
                 }
                 let nodes = self.nodes(&args[0], ctx)?;
                 Ok(Value::Str(match nodes.first() {
-                    Some(node) => node.name(self.doc).to_owned(),
+                    Some(node) => node.name(self.doc).to_ascii_lowercase(),
                     None => String::new(),
                 }))
             }
@@ -584,7 +597,139 @@ impl Evaluator<'_, '_> {
                 }
                 Ok(Value::Str(out))
             }
+            Func::Substring => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(arity_error(func, args.len()));
+                }
+                let text = self.eval(&args[0], ctx)?.to_string(self.doc);
+                let start = self.eval(&args[1], ctx)?.to_number(self.doc);
+                let length = match args.get(2) {
+                    Some(arg) => Some(self.eval(arg, ctx)?.to_number(self.doc)),
+                    None => None,
+                };
+                Ok(Value::Str(substring(&text, start, length)))
+            }
+            Func::SubstringBefore | Func::SubstringAfter => {
+                require_arity(func, args, 2)?;
+                let text = self.eval(&args[0], ctx)?.to_string(self.doc);
+                let needle = self.eval(&args[1], ctx)?.to_string(self.doc);
+                let found = text.find(&needle);
+                Ok(Value::Str(match (func, found) {
+                    (_, None) => String::new(),
+                    (Func::SubstringBefore, Some(index)) => text[..index].to_owned(),
+                    (_, Some(index)) => text[index + needle.len()..].to_owned(),
+                }))
+            }
+            Func::StringLength => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                let text = if args.is_empty() {
+                    ctx.node.string_value(self.doc).into_owned()
+                } else {
+                    self.eval(&args[0], ctx)?.to_string(self.doc)
+                };
+                Ok(Value::Number(text.chars().count() as f64))
+            }
+            Func::Translate => {
+                require_arity(func, args, 3)?;
+                let text = self.eval(&args[0], ctx)?.to_string(self.doc);
+                let from = self.eval(&args[1], ctx)?.to_string(self.doc);
+                let to = self.eval(&args[2], ctx)?.to_string(self.doc);
+                Ok(Value::Str(translate(&text, &from, &to)))
+            }
+            Func::Sum => {
+                require_arity(func, args, 1)?;
+                let nodes = self.nodes(&args[0], ctx)?;
+                let mut total = 0.0;
+                for node in nodes {
+                    total += super::value::parse_number(&node.string_value(self.doc));
+                }
+                Ok(Value::Number(total))
+            }
+            Func::Floor | Func::Ceiling | Func::Round => {
+                require_arity(func, args, 1)?;
+                let value = self.eval(&args[0], ctx)?.to_number(self.doc);
+                Ok(Value::Number(match func {
+                    Func::Floor => value.floor(),
+                    Func::Ceiling => value.ceil(),
+                    _ => xpath_round(value),
+                }))
+            }
+            Func::Id => {
+                require_arity(func, args, 1)?;
+                let tokens: Vec<String> = match self.eval(&args[0], ctx)? {
+                    Value::Nodes(nodes) => nodes
+                        .iter()
+                        .flat_map(|node| split_space(&node.string_value(self.doc)))
+                        .collect(),
+                    other => split_space(&other.to_string(self.doc)),
+                };
+                let mut out = Vec::new();
+                if !tokens.is_empty() {
+                    for id in 0..self.doc.node_tape.len() as u32 {
+                        if !self.doc.node(id).is_element() {
+                            continue;
+                        }
+                        let Some(attr) = crate::raw::find_attr(self.doc, id, "id") else {
+                            continue;
+                        };
+                        let value = crate::raw::attr_value(self.doc, attr);
+                        if tokens.iter().any(|token| token == value.trim()) {
+                            out.push(NodeRef::element(id));
+                        }
+                    }
+                }
+                Ok(Value::Nodes(sorted(out)))
+            }
+            Func::Lang => {
+                require_arity(func, args, 1)?;
+                let wanted = self
+                    .eval(&args[0], ctx)?
+                    .to_string(self.doc)
+                    .to_ascii_lowercase();
+                Ok(Value::Bool(self.lang_matches(ctx.node, &wanted)))
+            }
+            Func::NamespaceUri => {
+                if args.len() > 1 {
+                    return Err(arity_error(func, args.len()));
+                }
+                // The DOM keeps local names only, so no node is in a namespace.
+                if !args.is_empty() {
+                    let _ = self.eval(&args[0], ctx)?;
+                }
+                Ok(Value::Str(String::new()))
+            }
         }
+    }
+
+    /// `lang()`: the nearest ancestor-or-self `xml:lang` decides, per XPath 1.0
+    /// (HTML's `lang` attribute is a *different* attribute in the data model, and
+    /// libxml2 — hence parsel — behaves the same way).
+    fn lang_matches(&self, node: NodeRef, wanted: &str) -> bool {
+        let mut current = match node.kind() {
+            RefKind::Attribute => Some(node.node_id()),
+            RefKind::Document => None,
+            _ => Some(node.node_id()),
+        };
+        while let Some(id) = current {
+            let record = self.doc.node(id);
+            if record.is_element()
+                && let Some(attr) = crate::raw::find_attr(self.doc, id, "xml:lang")
+            {
+                let value = crate::raw::attr_value(self.doc, attr).to_ascii_lowercase();
+                return value == wanted
+                    || (value.len() > wanted.len()
+                        && value.starts_with(wanted)
+                        && value.as_bytes()[wanted.len()] == b'-');
+            }
+            if record.kind() == simdhtml::NodeKind::Document {
+                break;
+            }
+            let parent = record.parent();
+            current = (parent != simdhtml::NO_NODE).then_some(parent);
+        }
+        false
     }
 }
 
@@ -638,6 +783,67 @@ fn numeric_cmp(op: BinOp, left: f64, right: f64) -> bool {
 }
 
 /// XPath `normalize-space()`: trim and collapse runs of XML whitespace.
+/// XPath `round()`: the closest integer, ties toward positive infinity
+/// (`round(-2.5)` is `-2`, unlike Rust's `f64::round`).  NaN and the infinities
+/// pass through.
+fn xpath_round(value: f64) -> f64 {
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return value;
+    }
+    (value + 0.5).floor()
+}
+
+/// XPath `substring()`: characters at 1-based positions `p` with
+/// `p >= round(start)` and `p < round(start) + round(length)`.
+fn substring(text: &str, start: f64, length: Option<f64>) -> String {
+    let begin = xpath_round(start);
+    let end = match length {
+        Some(length) => {
+            let length = xpath_round(length);
+            if length.is_nan() {
+                return String::new();
+            }
+            begin + length
+        }
+        None => f64::INFINITY,
+    };
+    text.chars()
+        .enumerate()
+        .filter(|(index, _)| {
+            let position = (*index + 1) as f64;
+            position >= begin && position < end
+        })
+        .map(|(_, character)| character)
+        .collect()
+}
+
+/// XPath `translate()`: map characters through `from`→`to`, dropping characters
+/// whose position in `from` has no counterpart in `to`.
+fn translate(text: &str, from: &str, to: &str) -> String {
+    let from: Vec<char> = from.chars().collect();
+    let to: Vec<char> = to.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match from.iter().position(|candidate| *candidate == character) {
+            Some(index) => {
+                if let Some(mapped) = to.get(index) {
+                    out.push(*mapped);
+                }
+            }
+            None => out.push(character),
+        }
+    }
+    out
+}
+
+/// XPath's whitespace-separated token split (`id()` takes a list of ids).
+fn split_space(text: &str) -> Vec<String> {
+    text.split([' ', '\t', '\n', '\r'])
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 fn normalize_space(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending_space = false;

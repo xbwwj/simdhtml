@@ -43,7 +43,6 @@ scraper = { version = "0.27", default-features = false }
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
 # Embedding CPython in the bench binary: no extension-module, auto-initialize.
 pyo3-embed = { package = "pyo3", version = "0.30", features = ["auto-initialize"] }
-regex-lite = "0.1"
 
 # Error handling
 thiserror = "2.0.21"

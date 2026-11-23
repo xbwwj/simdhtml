@@ -37,19 +37,23 @@ impl NodeRef {
         Self { kind, id, attr }
     }
 
-    pub(crate) fn document() -> Self {
+    /// The document node (for callers that need a context node).
+    pub fn document() -> Self {
         Self::new(RefKind::Document, 0, 0)
     }
 
-    pub(crate) fn element(id: NodeId) -> Self {
+    /// An element reference.
+    pub fn element(id: NodeId) -> Self {
         Self::new(RefKind::Element, id, 0)
     }
 
-    pub(crate) fn text(id: NodeId) -> Self {
+    /// A text-node reference.
+    pub fn text(id: NodeId) -> Self {
         Self::new(RefKind::Text, id, 0)
     }
 
-    pub(crate) fn attribute(id: NodeId, attr: u32) -> Self {
+    /// An attribute-node reference (owned by element `id`, flat index `attr`).
+    pub fn attribute(id: NodeId, attr: u32) -> Self {
         Self::new(RefKind::Attribute, id, attr)
     }
 

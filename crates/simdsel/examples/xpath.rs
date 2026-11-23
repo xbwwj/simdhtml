@@ -1,7 +1,7 @@
 //! Dumps each document's tree plus XPath results as JSON, to test difference with
 //! `scripts/xpath_diff.py`.
 //!
-//! Usage: `cargo run --release --example xpath_dump -- <html-dir> <exprs-file> [limit]`
+//! Usage: `cargo run --release --example xpath -- <html-dir> <exprs-file> [limit]`
 
 use std::{
     env, fs,
@@ -227,7 +227,18 @@ fn main() {
                                 line.push('}');
                             }
                         }
-                        Value::Number(n) => line.push_str(&format!("{{\"number\":{n}}}")),
+                        Value::Number(n) => {
+                            // Python's `json` accepts `NaN`/`Infinity`; Rust's
+                            // `Display` writes `inf`, which is not JSON.
+                            let text = if n.is_nan() {
+                                "NaN".to_string()
+                            } else if n.is_infinite() {
+                                if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
+                            } else {
+                                format!("{n}")
+                            };
+                            line.push_str(&format!("{{\"number\":{text}}}"));
+                        }
                         Value::Str(s) => {
                             line.push_str("{\"string\":");
                             json_string(&mut line, &s);

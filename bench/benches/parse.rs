@@ -5,9 +5,9 @@
 //! cargo bench -p simdhtml-bench --bench parse -- --quick
 //! ```
 //!
-//! `RepairMode::None` is the default and therefore the headline number;
-//! `Practical` and `Spec` are measured on the same bytes so the cost of each
-//! repair strategy is visible.  Inputs come from `simdhtml-bench` (`commoncrawl` and
+//! `RepairMode::None` is the default and therefore the headline number; `Spec`
+//! is measured on the same bytes so the cost of the specification's tree is
+//! visible.  Inputs come from `simdhtml-bench` (`commoncrawl` and
 //! `swde`), never from a synthetic pattern.
 
 use criterion::Criterion;
@@ -15,7 +15,7 @@ use simdhtml::{Document, ParseOptions, RepairMode};
 use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bench_parse, bytes_group, env};
 
-const MODES: [RepairMode; 3] = [RepairMode::None, RepairMode::Practical, RepairMode::Spec];
+const MODES: [RepairMode; 2] = [RepairMode::None, RepairMode::Spec];
 
 fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
     for (bucket, ids) in corpus.buckets() {

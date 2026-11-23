@@ -26,6 +26,8 @@ test            Rust tests + PyO3 binding smoke test
 test-wpt        WPT tree-construction conformance
 test-corpus     Common Crawl preorder/invariant test
 xpath-diff      XPath differential test against lxml
+css-diff        CSS differential test against parsel (scripts/css_diff.py)
+parsel-api-diff parsel-shaped API differential test (scripts/parsel_api_diff.py)
 check           cargo fmt --check + cargo clippy
 fmt             cargo fmt
 clippy          cargo clippy
@@ -136,10 +138,20 @@ cmd_test_corpus() {
     SIMDHTML_RUN_CORPUS_TESTS=1 cargo test -p simdhtml --test mode_agreement -- --nocapture
 }
 
+cmd_css_diff() {
+    uv sync --group bench
+    uv run --group bench python scripts/css_diff.py
+}
+
+cmd_parsel_api_diff() {
+    uv sync --group bench
+    uv run --group bench python scripts/parsel_api_diff.py
+}
+
 cmd_xpath_diff() {
     uv sync --group bench
     mkdir -p target/bench
-    cargo run --release -p simdsel --example xpath_dump -- \
+    cargo run --release -p simdsel --example xpath -- \
         data/commoncrawl/html scripts/xpath_exprs.txt 40 > target/bench/xpath.jsonl
     uv run --group bench python scripts/xpath_diff.py target/bench/xpath.jsonl
 }
@@ -292,6 +304,8 @@ case "$cmd" in
     test-wpt) cmd_test_wpt ;;
     test-corpus) cmd_test_corpus ;;
     xpath-diff) cmd_xpath_diff ;;
+    css-diff) cmd_css_diff ;;
+    parsel-api-diff) cmd_parsel_api_diff ;;
     check)
         cargo fmt --all -- --check
         cargo clippy --workspace --all-targets

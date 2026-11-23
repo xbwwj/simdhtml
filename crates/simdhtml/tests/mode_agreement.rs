@@ -95,7 +95,7 @@ fn corpus_preorder_invariants() {
         if bytes.len() > 1 << 20 {
             continue;
         }
-        for mode in [RepairMode::Spec, RepairMode::Practical, RepairMode::None] {
+        for mode in [RepairMode::Spec, RepairMode::None] {
             if let Ok(doc) = Document::parse_with(&bytes, ParseOptions::new().repair(mode)) {
                 check_preorder(&doc, path);
             }

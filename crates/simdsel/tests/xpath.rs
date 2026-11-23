@@ -163,3 +163,63 @@ fn unsupported_syntax_is_rejected() {
         assert!(XPath::new(expr).is_err(), "expected {expr} to be rejected");
     }
 }
+
+#[test]
+fn function_library() {
+    let document = doc(PAGE);
+    let cases: &[(&str, &[&str])] = &[
+        // string functions
+        ("substring-after(//a[1]/@href, '/')", &["l1"]),
+        ("substring-before(//div[2]/a/@href, '/x')", &["http://e"]),
+        ("substring(//p[1], 1, 2)", &["on"]),
+        ("substring(//p[1], 2)", &["ne"]),
+        ("substring('12345', 1.5, 2.6)", &["234"]),
+        ("substring('12345', 0, 3)", &["12"]),
+        ("substring('12345', -1)", &["12345"]),
+        ("substring('12345', 1, 1 div 0)", &["12345"]),
+        ("substring('12345', 1, -1)", &[""]),
+        ("substring('12345', 0 div 0, 3)", &[""]),
+        ("substring('12345', 1, 0 div 0)", &[""]),
+        ("string-length(//p[1])", &["3"]),
+        ("string-length('café')", &["4"]),
+        ("translate('bar', 'abc', 'ABC')", &["BAr"]),
+        ("translate('--aaa--', 'abc-', 'ABC')", &["AAA"]),
+        ("normalize-space('  a   b  ')", &["a b"]),
+        // number functions
+        ("sum(//td)", &["3"]),
+        ("sum(//nosuch)", &["0"]),
+        ("floor(1.9)", &["1"]),
+        ("floor(-1.1)", &["-2"]),
+        ("ceiling(1.1)", &["2"]),
+        ("ceiling(-1.1)", &["-1"]),
+        ("round(2.5)", &["3"]),
+        ("round(-2.5)", &["-2"]),
+        ("round(2.4)", &["2"]),
+        // node-set functions
+        ("name(id('b'))", &["div"]),
+        ("count(id('b'))", &["1"]),
+        ("count(id('b nosuch'))", &["1"]),
+        ("namespace-uri(//p[1])", &[""]),
+        ("local-name(//p[1])", &["p"]),
+    ];
+    for (expr, expected) in cases {
+        assert_eq!(values(&document, expr), *expected, "expression {expr}");
+    }
+}
+
+#[test]
+fn language_function() {
+    let document =
+        doc(r#"<div id=a><span xml:lang="en-GB">s</span><p xml:lang="de">p</p><i>i</i></div>"#);
+    let cases: &[(&str, &[&str])] = &[
+        ("//*[lang('en')]", &["span"]),
+        ("//*[lang('en-gb')]", &["span"]),
+        ("//*[lang('de')]", &["p"]),
+        ("//*[lang('fr')]", &[]),
+        ("lang('en')", &["false"]),
+        ("count(//i[lang('en')])", &["0"]),
+    ];
+    for (expr, expected) in cases {
+        assert_eq!(values(&document, expr), *expected, "expression {expr}");
+    }
+}

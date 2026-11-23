@@ -26,10 +26,12 @@
 //! `position()`/`last()`, the `child`, `descendant`, `descendant-or-self`,
 //! `self`, `parent`, `ancestor`, `attribute`, `following-sibling` and
 //! `preceding-sibling` axes, comparisons, `and`/`or`/`not`, arithmetic
-//! (`+`, `-`, `*`, `div`, `mod`), and a small core function library
-//! (`position`, `last`, `count`, `not`, `true`, `false`, `name`, `local-name`,
-//! `string`, `number`, `boolean`, `contains`, `starts-with`,
-//! `normalize-space`, `concat`).
+//! (`+`, `-`, `*`, `div`, `mod`), and the XPath 1.0 core function library:
+//! `last`, `position`, `count`, `id`, `local-name`, `namespace-uri`, `name`,
+//! `string`, `concat`, `starts-with`, `contains`, `substring-before`,
+//! `substring-after`, `substring`, `string-length`, `normalize-space`,
+//! `translate`, `boolean`, `not`, `true`, `false`, `lang`, `number`, `sum`,
+//! `floor`, `ceiling`, `round`.
 //!
 //! Not supported (rejected at compile time, never silently wrong): the
 //! `following` and `preceding` axes, `comment()`/`processing-instruction()`
@@ -78,6 +80,14 @@ impl XPath {
     /// realistic queries).
     pub fn eval(&self, doc: &Document<'_>) -> Result<Value, XPathError> {
         eval::evaluate(doc, &self.expr)
+    }
+
+    /// Evaluates the expression with `node` as the context node.
+    ///
+    /// Relative paths (`./p`, `.//a`), `.`, and `string()`/`number()`/… with no
+    /// argument resolve against `node` instead of the document node.
+    pub fn eval_at(&self, doc: &Document<'_>, node: NodeRef) -> Result<Value, XPathError> {
+        eval::evaluate_at(doc, &self.expr, node)
     }
 }
 

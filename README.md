@@ -14,7 +14,14 @@ The following figures show how fast simdhtml extracts data from HTML. The task i
 
 [![Structured data extraction: SWDE, per-site field selectors](./figures/structured-data-extraction.svg)](./figures/structured-data-extraction.svg)
 
-We also reached 98% HTML compliance in `RepairMode::Spec`.
+We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
+`simdsel (spec mode)` row: the WHATWG tree, about 40% of the no-repair speed.
+
+The tree is the browser's, not libxml2's: `mode="spec"` inserts `<tbody>`,
+foster-parents table content and runs the adoption agency, so selectors copied
+from devtools (`table > tbody > tr`) work. `parsel` compatibility is API-level
+(`css()`/`xpath()`/`get()`/`re()`/`attrib`, `::text`/`::attr()`); see
+[`../与parsel不一致.md`](../与parsel不一致.md) for the deliberate differences.
 
 ## Development
 

@@ -12,6 +12,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 encoding_rs.workspace = true
 pyo3.workspace = true
-regex-lite.workspace = true
 simdhtml.workspace = true
 simdsel.workspace = true

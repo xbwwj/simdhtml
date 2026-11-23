@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Differential test of our XPath evaluator against lxml, on the *same* tree.
 
-`crates/simdsel/examples/xpath_dump` dumps each parsed document's node tape plus
+`crates/simdsel/examples/xpath` dumps each parsed document's node tape plus
 our XPath results as JSON.  Here we rebuild that exact tree with lxml (no
 re-parsing, so no second HTML repair pass) and run the same expressions with
 lxml's XPath engine.  Differences are therefore XPath-implementation bugs, not
@@ -9,7 +9,7 @@ tree-construction differences -- the CSS engine and the HTML repair rules are
 out of scope by construction.
 
 Usage:
-    cargo run --release -p simdsel --example xpath_dump -- \
+    cargo run --release -p simdsel --example xpath -- \
         data/commoncrawl/html scripts/xpath_exprs.txt 40 > /tmp/xpath.jsonl
     .venv/bin/python scripts/xpath_diff.py /tmp/xpath.jsonl
 """
@@ -81,11 +81,23 @@ def build(tree):
     return nodes[roots[0]]
 
 
+def num(value):
+    """JSON-able, equality-friendly numbers: NaN/inf compare unequal as floats."""
+    if isinstance(value, float):
+        if value != value:
+            return "nan"
+        if value == float("inf"):
+            return "inf"
+        if value == float("-inf"):
+            return "-inf"
+    return value
+
+
 def normalise(value):
     if isinstance(value, bool):
         return ("bool", value)
     if isinstance(value, float):
-        return ("number", value)
+        return ("number", num(value))
     if isinstance(value, etree._Element):
         return ("element", lower(value.tag))
     if isinstance(value, str):
@@ -147,7 +159,7 @@ def main():
                     else:
                         got.append(("text", clean(node["value"])))
                 elif "number" in node:
-                    got.append(("number", node["number"]))
+                    got.append(("number", num(node["number"])))
                 elif "string" in node:
                     got.append(("string", node["string"]))
                 elif "bool" in node:

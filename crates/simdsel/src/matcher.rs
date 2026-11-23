@@ -522,7 +522,8 @@ impl<'a> Eval<'a> {
         if let Some(roots) = roots
             && !(roots.len() == 1 && roots[0] == self.doc.root)
         {
-            let include_scope = selector_has_scope(selector);
+            let include_scope =
+                selector_has_scope(selector) || selector_starts_with_implied_universal(selector);
             let mut allowed = BitSet::new(self.n);
             for &root in roots {
                 let node = self.doc.node(root);
@@ -567,6 +568,11 @@ impl<'a> Eval<'a> {
             for record in out {
                 self.project(record, &pseudo, &mut projected);
             }
+            // Projection walks elements, so nested elements group their text
+            // children together.  Results are a node set: document order, i.e.
+            // ascending preorder id (`::attr` keeps the element id and is
+            // already sorted).
+            projected.sort_unstable_by_key(|record| record.node);
             projected
         } else {
             out
@@ -623,7 +629,13 @@ impl<'a> Eval<'a> {
             .iter_set()
             .collect();
         for (i, combinator) in complex.combinators.iter().enumerate() {
-            let windows = self.relation_windows(&current, *combinator);
+            // A pseudo-element with no compound of its own (`A ::text`) hangs
+            // off an implied `*`; after a descendant combinator that implied
+            // universal is `descendant-or-self`, so A's own text/attributes are
+            // included, as in parsel/cssselect.
+            let include_self =
+                *combinator == Combinator::Descendant && complex.compounds[i + 1].implied_universal;
+            let windows = self.relation_windows(&current, *combinator, include_self);
             current =
                 self.compound_points_in_windows(&complex.compounds[i + 1], &windows, depth)?;
         }
@@ -638,14 +650,20 @@ impl<'a> Eval<'a> {
     ///
     /// No global descendant/child bitmap is built: the windows come directly
     /// from `subtree_end`, `first_child`/`next_sibling` and sibling links.
-    fn relation_windows(&self, set: &[NodeId], combinator: Combinator) -> Vec<Range<NodeId>> {
+    fn relation_windows(
+        &self,
+        set: &[NodeId],
+        combinator: Combinator,
+        include_self: bool,
+    ) -> Vec<Range<NodeId>> {
         let mut windows = Vec::new();
         match combinator {
             Combinator::Descendant => {
                 for &id in set {
                     let end = self.doc.node(id).subtree_end().min(self.n as NodeId);
-                    if id + 1 < end {
-                        windows.push(id + 1..end);
+                    let start = if include_self { id } else { id + 1 };
+                    if start < end {
+                        windows.push(start..end);
                     }
                 }
             }
@@ -922,6 +940,94 @@ impl<'a> Eval<'a> {
         true
     }
 
+    /// Case-insensitive tag-name test against source spelling.
+    fn is_tag(&self, id: NodeId, name: &[u8]) -> bool {
+        let tag = self.doc.node(id).tag_token();
+        if tag == simdhtml::NO_TAG {
+            return false;
+        }
+        let actual = self.doc.tag_name(tag);
+        actual.len() == name.len() && actual.as_bytes().eq_ignore_ascii_case(name)
+    }
+
+    fn has_attr(&self, id: NodeId, name: &str) -> bool {
+        crate::raw::find_attr(self.doc, id, name).is_some()
+    }
+
+    /// `:link`: `a`, `area` or `link` carrying an `href`.
+    fn is_link(&self, id: NodeId) -> bool {
+        self.has_attr(id, "href")
+            && (self.is_tag(id, b"a") || self.is_tag(id, b"area") || self.is_tag(id, b"link"))
+    }
+
+    /// `:checked`: a checked `input`, or a selected `option`.
+    fn is_checked(&self, id: NodeId) -> bool {
+        (self.is_tag(id, b"input") && self.has_attr(id, "checked"))
+            || (self.is_tag(id, b"option") && self.has_attr(id, "selected"))
+    }
+
+    /// Elements an HTML `disabled` attribute applies to.
+    fn is_disableable(&self, id: NodeId) -> bool {
+        self.is_tag(id, b"button")
+            || self.is_tag(id, b"fieldset")
+            || self.is_tag(id, b"input")
+            || self.is_tag(id, b"optgroup")
+            || self.is_tag(id, b"option")
+            || self.is_tag(id, b"select")
+            || self.is_tag(id, b"textarea")
+    }
+
+    /// `:disabled`: the `disabled` attribute, or an ancestor `fieldset` with
+    /// one (the "first legend child" exception is not modelled).
+    fn is_disabled(&self, id: NodeId) -> bool {
+        if !self.is_disableable(id) {
+            return false;
+        }
+        if self.has_attr(id, "disabled") {
+            return true;
+        }
+        if self.is_tag(id, b"option")
+            && let parent = self.doc.node(id).parent()
+            && parent != NO_NODE
+            && self.is_tag(parent, b"optgroup")
+            && self.has_attr(parent, "disabled")
+        {
+            return true;
+        }
+        let mut current = self.doc.node(id).parent();
+        while current != NO_NODE {
+            let node = self.doc.node(current);
+            if !node.is_element() {
+                break;
+            }
+            if self.is_tag(current, b"fieldset") && self.has_attr(current, "disabled") {
+                return true;
+            }
+            current = node.parent();
+        }
+        false
+    }
+
+    /// `:lang(x)`: the nearest ancestor-or-self `lang` is `x` or `x-*`.
+    fn lang_matches(&self, id: NodeId, value: &str) -> bool {
+        let mut current = id;
+        while current != NO_NODE {
+            let node = self.doc.node(current);
+            if node.is_element()
+                && let Some(attr) = crate::raw::find_attr(self.doc, current, "lang")
+            {
+                let actual = crate::raw::attr_value(self.doc, attr);
+                let actual = actual.trim().to_ascii_lowercase();
+                return actual == value
+                    || (actual.len() > value.len()
+                        && actual.starts_with(value)
+                        && actual.as_bytes()[value.len()] == b'-');
+            }
+            current = node.parent();
+        }
+        false
+    }
+
     fn apply_pseudo(
         &self,
         mask: &mut BitSet,
@@ -971,6 +1077,17 @@ impl<'a> Eval<'a> {
                     crate::raw::text_content(self.doc, id).contains(text)
                 });
             }
+            Pseudo::OnlyOfType => {
+                self.filter_of_type(mask, tag, OfType::First);
+                self.filter_of_type(mask, tag, OfType::Last);
+            }
+            Pseudo::Link => self.filter(mask, |id| self.is_link(id)),
+            Pseudo::Checked => self.filter(mask, |id| self.is_checked(id)),
+            Pseudo::Disabled => self.filter(mask, |id| self.is_disabled(id)),
+            Pseudo::Enabled => {
+                self.filter(mask, |id| self.is_disableable(id) && !self.is_disabled(id))
+            }
+            Pseudo::Lang(value) => self.filter(mask, |id| self.lang_matches(id, value)),
             Pseudo::Never => {
                 mask.clear_all();
             }
@@ -1672,6 +1789,15 @@ unsafe fn key_mask_avx2(
     }
 }
 
+/// Whether the selector begins with the implied universal a bare pseudo-element
+/// creates (`::text`), which has to match the scope root itself.
+fn selector_starts_with_implied_universal(selector: &Selector) -> bool {
+    selector
+        .complexes
+        .iter()
+        .any(|complex| complex.compounds[0].implied_universal)
+}
+
 fn selector_has_scope(selector: &Selector) -> bool {
     let complexes = |list: &[Complex]| list.iter().any(complex_has_scope);
     selector.complexes.iter().any(|complex| {
@@ -1695,6 +1821,19 @@ fn complex_has_scope(complex: &Complex) -> bool {
             _ => false,
         })
     })
+}
+
+/// The document's root element (first element child of the document node).
+pub fn root_element(doc: &Document<'_>) -> Option<NodeId> {
+    let mut child = doc.node(doc.root).first_child();
+    while child != NO_NODE {
+        let node = doc.node(child);
+        if node.is_element() {
+            return Some(child);
+        }
+        child = node.next_sibling();
+    }
+    None
 }
 
 fn element_record(doc: &Document<'_>, id: NodeId) -> MatchRecord {

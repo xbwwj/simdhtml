@@ -546,10 +546,6 @@ pub(super) struct SpecTree<'a> {
     /// Whether the Document is in quirks mode.  One rule reads it: `in body`'s
     /// `table` start tag only closes a paragraph outside quirks mode.
     quirks: bool,
-    /// `RepairMode::Practical`: keep every structural repair, skip the
-    /// formatting-element machinery (list maintenance, reconstruction, adoption
-    /// agency).
-    practical: bool,
     /// Open `form` element, for the form element pointer rule.
     form: Option<u32>,
     /// `<pre>`/`<listing>` ignore a single newline that immediately follows.
@@ -600,7 +596,6 @@ pub(super) fn build(
     }
     let mut tree = SpecTree {
         quirks: false,
-        practical: mode == RepairMode::Practical,
         input,
         tokens,
         regions: &index.opaque_regions,
@@ -1489,10 +1484,6 @@ impl SpecTree<'_> {
 
     /// "Reconstruct the active formatting elements".
     fn reconstruct_afe(&mut self) {
-        if self.practical {
-            // Nothing was ever pushed, so there is never anything to rebuild.
-            return;
-        }
         let Some(last) = self.afe.len().checked_sub(1) else {
             return;
         };
@@ -1530,9 +1521,6 @@ impl SpecTree<'_> {
 
     /// Pushes a formatting element, with Noah's Ark (at most three equal names).
     fn push_formatting(&mut self, id: u32) {
-        if self.practical {
-            return;
-        }
         self.afe.push(Afe::Element(id));
         let start = self.last_marker().map_or(0, |marker| marker + 1);
         // Noah's Ark clause: at most three entries with the same tag name,
@@ -1661,11 +1649,6 @@ impl SpecTree<'_> {
 
     /// The adoption agency algorithm (`tree-construction__parsing.txt`).
     fn adoption_agency(&mut self, subject: &[u8], span: Range<u32>) -> Step {
-        if self.practical {
-            // The adoption agency only reparents formatting elements; without
-            // the list, the generic end-tag rule is the answer.
-            return self.any_other_end(subject, span);
-        }
         // Step 2: the current node already is the subject.
         let current = self.current();
         if self.is(current, subject) && !self.is_in_afe(current) {

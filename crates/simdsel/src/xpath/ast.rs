@@ -153,6 +153,30 @@ pub(super) enum Func {
     NormalizeSpace,
     /// `concat(a, b, ...)`
     Concat,
+    /// `substring(text, start[, length])`
+    Substring,
+    /// `substring-before(haystack, needle)`
+    SubstringBefore,
+    /// `substring-after(haystack, needle)`
+    SubstringAfter,
+    /// `string-length([string])`
+    StringLength,
+    /// `translate(text, from, to)`
+    Translate,
+    /// `sum(nodeset)`
+    Sum,
+    /// `floor(number)`
+    Floor,
+    /// `ceiling(number)`
+    Ceiling,
+    /// `round(number)`
+    Round,
+    /// `id(object)`
+    Id,
+    /// `lang(string)`
+    Lang,
+    /// `namespace-uri([nodeset])`
+    NamespaceUri,
 }
 
 impl Func {
@@ -174,6 +198,18 @@ impl Func {
             "starts-with" => Self::StartsWith,
             "normalize-space" => Self::NormalizeSpace,
             "concat" => Self::Concat,
+            "substring" => Self::Substring,
+            "substring-before" => Self::SubstringBefore,
+            "substring-after" => Self::SubstringAfter,
+            "string-length" => Self::StringLength,
+            "translate" => Self::Translate,
+            "sum" => Self::Sum,
+            "floor" => Self::Floor,
+            "ceiling" => Self::Ceiling,
+            "round" => Self::Round,
+            "id" => Self::Id,
+            "lang" => Self::Lang,
+            "namespace-uri" => Self::NamespaceUri,
             _ => return None,
         })
     }

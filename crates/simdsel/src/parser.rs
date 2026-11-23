@@ -28,6 +28,13 @@ pub struct Compound {
     pub tag: Option<String>,
     /// Whether the source had an explicit `*`.
     pub universal: bool,
+    /// A universal selector the parser inserted because a pseudo-element had no
+    /// compound of its own (`A ::text`, `A > ::attr(x)`, `::text`).
+    ///
+    /// A descendant combinator followed by one of these is
+    /// `descendant-or-self`, because that is how the pseudo-element attaches
+    /// (`parsel`/cssselect and every CSS-with-`::text` implementation agree).
+    pub implied_universal: bool,
     /// `#id`.
     pub id: Option<String>,
     /// `.class` list.
@@ -118,6 +125,18 @@ pub enum Pseudo {
     Empty,
     /// `:scope` (current query root)
     Scope,
+    /// `:link` (`a`/`area`/`link` with an `href`).
+    Link,
+    /// `:checked` (checked `input`, selected `option`).
+    Checked,
+    /// `:enabled` (a disable-able element that is not disabled).
+    Enabled,
+    /// `:disabled` (a disable-able element with the `disabled` attribute).
+    Disabled,
+    /// `:lang(tag)` (nearest `lang` ancestor-or-self is `tag` or `tag-*`).
+    Lang(String),
+    /// `:only-of-type`
+    OnlyOfType,
     /// Non-standard `:contains(text)`
     Contains(String),
     /// A dynamic pseudo class that can never match a static document.
@@ -165,6 +184,16 @@ impl std::error::Error for SelectorError {}
 ///
 /// Returns [`SelectorError`] for unsupported or malformed selectors.
 pub fn parse_selector(input: &str) -> Result<Selector, SelectorError> {
+    // CSS comments (`div/*x*/.item`) are whitespace-free trivia and can sit
+    // between any two tokens.  Removing them up front keeps the parser free of
+    // comment handling in every state; error positions then refer to the
+    // comment-free selector, which is what a caller can act on anyway.
+    let stripped;
+    let mut input = input;
+    if input.contains("/*") {
+        stripped = strip_comments(input)?;
+        input = &stripped;
+    }
     let mut parser = Parser::new(input);
     let complexes = parser.parse_list(false)?;
     parser.skip_ws();
@@ -291,13 +320,7 @@ impl<'a> Parser<'a> {
         pseudo_element: &mut Option<PseudoElement>,
     ) -> Result<Compound, SelectorError> {
         let mut compound = Compound::default();
-
-        if self.peek() == Some(b'*') {
-            self.pos += 1;
-            compound.universal = true;
-        } else if self.peek().is_some_and(is_ident_start) {
-            compound.tag = Some(self.parse_ident()?);
-        }
+        self.parse_type_selector(&mut compound)?;
 
         loop {
             match self.peek() {
@@ -334,9 +357,65 @@ impl<'a> Parser<'a> {
             && compound.attrs.is_empty()
             && compound.pseudos.is_empty()
         {
-            return Err(self.error("empty compound selector"));
+            // A pseudo-element with no compound in front of it (`::text`,
+            // `A ::text`, `A > ::attr(href)`) attaches to an implied universal
+            // selector at that position.
+            if pseudo_element.is_some() {
+                compound.universal = true;
+                compound.implied_universal = true;
+            } else {
+                return Err(self.error("empty compound selector"));
+            }
         }
         Ok(compound)
+    }
+
+    /// Parses the type selector, with an optional namespace prefix.
+    ///
+    /// Namespaces are not modelled (`Document` keeps local names only), so a
+    /// prefix is accepted and ignored: `*|*`, `*|div`, `|div` and `div` all
+    /// select on the local name.  That is strictly more permissive than
+    /// cssselect, which resolves prefixes through the XPath namespace map.
+    fn parse_type_selector(&mut self, compound: &mut Compound) -> Result<(), SelectorError> {
+        // `|local`: the "no namespace" prefix.
+        if self.peek() == Some(b'|') {
+            self.pos += 1;
+            return self.parse_local_name(compound);
+        }
+        let mut star = false;
+        let mut prefix = None;
+        if self.peek() == Some(b'*') {
+            self.pos += 1;
+            star = true;
+        } else if self.peek().is_some_and(is_ident_start) {
+            prefix = Some(self.parse_ident()?);
+        } else {
+            return Ok(());
+        }
+        if self.peek() == Some(b'|') {
+            self.pos += 1;
+            return self.parse_local_name(compound);
+        }
+        if star {
+            compound.universal = true;
+        } else {
+            compound.tag = prefix;
+        }
+        Ok(())
+    }
+
+    /// The local part of a namespaced type selector (`prefix|*`, `*|div`).
+    fn parse_local_name(&mut self, compound: &mut Compound) -> Result<(), SelectorError> {
+        if self.peek() == Some(b'*') {
+            self.pos += 1;
+            compound.universal = true;
+            return Ok(());
+        }
+        if self.peek().is_some_and(is_ident_start) {
+            compound.tag = Some(self.parse_ident()?);
+            return Ok(());
+        }
+        Err(self.error("expected a local name after the namespace prefix"))
     }
 
     fn parse_ident(&mut self) -> Result<String, SelectorError> {
@@ -469,6 +548,25 @@ impl<'a> Parser<'a> {
             "only-child" => Ok(Pseudo::OnlyChild),
             "first-of-type" => Ok(Pseudo::FirstOfType),
             "last-of-type" => Ok(Pseudo::LastOfType),
+            "only-of-type" => Ok(Pseudo::OnlyOfType),
+            "link" | "any-link" => Ok(Pseudo::Link),
+            "checked" => Ok(Pseudo::Checked),
+            "enabled" => Ok(Pseudo::Enabled),
+            "disabled" => Ok(Pseudo::Disabled),
+            "lang" => {
+                self.expect(b'(')?;
+                self.skip_ws();
+                let value = match self.peek() {
+                    Some(q @ (b'"' | b'\'')) => {
+                        self.pos += 1;
+                        self.parse_string(q)?
+                    }
+                    _ => self.parse_ident()?,
+                };
+                self.skip_ws();
+                self.expect(b')')?;
+                Ok(Pseudo::Lang(value.to_ascii_lowercase()))
+            }
             "root" => Ok(Pseudo::Root),
             "empty" => Ok(Pseudo::Empty),
             "scope" => Ok(Pseudo::Scope),
@@ -636,6 +734,27 @@ fn parse_an_plus_b_str(raw: &str) -> Result<(i32, i32), String> {
             .map_err(|_| "invalid nth argument".to_string())?;
         Ok((0, b))
     }
+}
+
+/// Removes `/* ... */` comments.  An unterminated comment is a syntax error.
+fn strip_comments(input: &str) -> Result<String, SelectorError> {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    let mut consumed = 0;
+    while let Some(start) = rest.find("/*") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("*/") else {
+            return Err(SelectorError {
+                message: "unterminated comment".to_string(),
+                position: consumed + start,
+            });
+        };
+        consumed += start + 2 + end + 2;
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 fn is_ws(b: u8) -> bool {

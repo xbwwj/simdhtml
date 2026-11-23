@@ -5,7 +5,7 @@
 //! cargo bench -p simdhtml-bench --bench extract --features external -- --quick
 //! ```
 //!
-//! Engines: simdsel in all three repair modes, scraper (html5ever + servo
+//! Engines: simdsel in both repair modes, scraper (html5ever + servo
 //! selectors), and dom_query (html5ever + its own selector engine).
 //!
 //! Documents come from `simdhtml-bench`; CC uses the checked-in workload selector
@@ -117,7 +117,7 @@ fn bench_common(c: &mut Criterion, corpus: &Corpus, sets: &[(String, Vec<String>
         .collect();
     let mut group = bytes_group(c, &format!("extract/{}", corpus.name), corpus.total_bytes());
 
-    for mode in [RepairMode::None, RepairMode::Practical, RepairMode::Spec] {
+    for mode in [RepairMode::None, RepairMode::Spec] {
         bench_simdsel_common(&mut group, corpus, sets, mode);
     }
 
@@ -162,7 +162,7 @@ fn bench_per_doc(c: &mut Criterion, corpus: &Corpus, queries: &[Vec<String>]) {
         .collect();
     let mut group = bytes_group(c, &format!("extract/{}", corpus.name), corpus.total_bytes());
 
-    for mode in [RepairMode::None, RepairMode::Practical, RepairMode::Spec] {
+    for mode in [RepairMode::None, RepairMode::Spec] {
         bench_simdsel_per_doc(&mut group, corpus, queries, mode);
     }
 

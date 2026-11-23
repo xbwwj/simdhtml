@@ -37,9 +37,9 @@ pub mod xpath;
 pub use bitset::BitSet;
 pub use error::Error;
 pub use matcher::{
-    Count, Html, MatchError, Projection, QueryCache, Records, Texts, extract, select, select_as,
-    select_as_within, select_as_within_cache, select_count, select_count_within, select_within,
-    select_within_cache,
+    Count, Html, MatchError, Projection, QueryCache, Records, Texts, extract, root_element, select,
+    select_as, select_as_within, select_as_within_cache, select_count, select_count_within,
+    select_within, select_within_cache,
 };
 pub use parser::{
     AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
