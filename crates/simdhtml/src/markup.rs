@@ -119,6 +119,19 @@ macro_rules! scan_one_block {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn scan_blocks_avx512(scanner: &mut Scanner<'_>, input: &[u8]) {
+    // SAFETY: this function has AVX-512BW enabled, which is what the kernels
+    // require; the loop's own memory accesses are the scanner's safe ones.
+    scan_blocks_body!(
+        scanner,
+        input,
+        crate::simd::avx512::probe_lt_inline,
+        crate::simd::avx512::classify_inline
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn scan_blocks_avx2(scanner: &mut Scanner<'_>, input: &[u8]) {
     // SAFETY: this function has AVX2 enabled, which is what `classify_subset`
@@ -126,8 +139,21 @@ unsafe fn scan_blocks_avx2(scanner: &mut Scanner<'_>, input: &[u8]) {
     scan_blocks_body!(
         scanner,
         input,
-        crate::simd::x86::probe_lt,
+        crate::simd::x86::probe_lt_inline,
         crate::simd::x86::classify_inline
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn scan_blocks_neon(scanner: &mut Scanner<'_>, input: &[u8]) {
+    // SAFETY: this function has NEON enabled, which is what the kernels
+    // require; the loop's own memory accesses are the scanner's safe ones.
+    scan_blocks_body!(
+        scanner,
+        input,
+        crate::simd::neon::probe_lt_inline,
+        crate::simd::neon::classify_inline
     );
 }
 
@@ -145,9 +171,22 @@ fn scan_blocks_fallback(scanner: &mut Scanner<'_>, input: &[u8]) {
 fn scan_blocks(scanner: &mut Scanner<'_>, input: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::simd::avx512_available() {
+            // SAFETY: the feature is checked immediately above.
+            unsafe { scan_blocks_avx512(scanner, input) };
+            return;
+        }
         if crate::simd::avx2_available() {
             // SAFETY: the feature is checked immediately above.
             unsafe { scan_blocks_avx2(scanner, input) };
+            return;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if crate::simd::neon_available() {
+            // SAFETY: NEON is part of the base aarch64 ISA.
+            unsafe { scan_blocks_neon(scanner, input) };
             return;
         }
     }

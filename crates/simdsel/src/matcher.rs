@@ -1331,14 +1331,27 @@ fn key_mask_scalar(
 /// Sets every element whose tag code is `code`.
 ///
 /// `Document::tag_code` is one byte per tag token, so this is a dense
-/// `cmpeq`+`movemask` scan (32 tags per iteration) instead of a gather over
-/// scattered name bytes: measured 0.22 vs 7.90 cycles per tag.
+/// `cmpeq`+`movemask` scan (64/32/16 tags per iteration) instead of a gather
+/// over scattered name bytes: measured 0.22 vs 7.90 cycles per tag.
 fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
     #[cfg(target_arch = "x86_64")]
     {
-        if doc.tag_code.len() >= 32 && std::is_x86_feature_detected!("avx2") {
+        if doc.tag_code.len() >= 64 && simdhtml::simd::avx512_available() {
+            // SAFETY: AVX-512 checked above; the kernel bounds-checks its tail.
+            unsafe { tag_code_mask_avx512(doc, code, mask) };
+            return;
+        }
+        if doc.tag_code.len() >= 32 && simdhtml::simd::avx2_available() {
             // SAFETY: AVX2 checked above; the kernel bounds-checks its tail.
             unsafe { tag_code_mask_avx2(doc, code, mask) };
+            return;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if doc.tag_code.len() >= 16 && simdhtml::simd::neon_available() {
+            // SAFETY: NEON is part of the base aarch64 ISA.
+            unsafe { tag_code_mask_neon(doc, code, mask) };
             return;
         }
     }
@@ -1351,6 +1364,75 @@ fn tag_code_mask_scalar(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
             let node = doc.tag_element[i];
             if node != NO_NODE {
                 mask.set(node);
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn tag_code_mask_avx512(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
+    use std::arch::x86_64::{
+        __m512i, _mm512_cmpeq_epi8_mask, _mm512_loadu_si512, _mm512_set1_epi8,
+    };
+    unsafe {
+        let codes = &doc.tag_code;
+        let needle = _mm512_set1_epi8(code as i8);
+        let mut i = 0usize;
+        while i + 64 <= codes.len() {
+            let v = _mm512_loadu_si512(codes.as_ptr().add(i).cast::<__m512i>());
+            let mut bits = _mm512_cmpeq_epi8_mask(v, needle);
+            while bits != 0 {
+                let j = bits.trailing_zeros() as usize;
+                let node = doc.tag_element[i + j];
+                if node != NO_NODE {
+                    mask.set(node);
+                }
+                bits &= bits - 1;
+            }
+            i += 64;
+        }
+        for (k, item) in codes.iter().enumerate().skip(i) {
+            if *item == code {
+                let node = doc.tag_element[k];
+                if node != NO_NODE {
+                    mask.set(node);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn tag_code_mask_neon(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
+    use std::arch::aarch64::{vceqq_u8, vdupq_n_u8, vld1q_u8};
+
+    use simdhtml::simd::neon::movemask_u16;
+
+    unsafe {
+        let codes = &doc.tag_code;
+        let needle = vdupq_n_u8(code);
+        let mut i = 0usize;
+        while i + 16 <= codes.len() {
+            let v = vld1q_u8(codes.as_ptr().add(i));
+            let mut bits = movemask_u16(vceqq_u8(v, needle));
+            while bits != 0 {
+                let j = bits.trailing_zeros() as usize;
+                let node = doc.tag_element[i + j];
+                if node != NO_NODE {
+                    mask.set(node);
+                }
+                bits &= bits - 1;
+            }
+            i += 16;
+        }
+        for (k, item) in codes.iter().enumerate().skip(i) {
+            if *item == code {
+                let node = doc.tag_element[k];
+                if node != NO_NODE {
+                    mask.set(node);
+                }
             }
         }
     }

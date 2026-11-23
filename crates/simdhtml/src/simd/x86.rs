@@ -21,6 +21,13 @@ pub fn prefix_xor(x: u64) -> u64 {
     unsafe { prefix_xor_clmul(x) }
 }
 
+/// AVX2 implementation of [`super::probe_lt`].
+#[must_use]
+pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
+    // SAFETY: installed in the dispatch table only after the AVX2 check.
+    unsafe { probe_lt_inline(block) }
+}
+
 /// Probe for the text/rawtext states, which only look at `<`.
 ///
 /// Returns `None` when the block has no `<`: then the state cannot change and
@@ -33,7 +40,7 @@ pub fn prefix_xor(x: u64) -> u64 {
 /// classifying everything (see BENCHLOG step2).
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
+pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     use super::{NEED_ALL, NEED_LT};
     // SAFETY: the caller has AVX2 enabled (this fn requires it too).
     unsafe {
