@@ -143,7 +143,7 @@ mod tests {
                 state ^= state << 17;
                 *b = state as u8;
             }
-            assert_eq!(classify(&block), super::super::fallback::classify(&block));
+            assert_eq!(classify(&block), crate::simd::fallback::classify(&block));
         }
     }
 
@@ -158,7 +158,7 @@ mod tests {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
-            assert_eq!(prefix_xor(state), super::super::fallback::prefix_xor(state));
+            assert_eq!(prefix_xor(state), crate::simd::fallback::prefix_xor(state));
         }
     }
 }

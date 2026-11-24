@@ -102,8 +102,8 @@ unsafe fn scan_blocks_avx2(scanner: &mut Scanner<'_>, input: &[u8]) {
     scan_blocks_body!(
         scanner,
         input,
-        crate::simd::x86::probe_lt_inline,
-        crate::simd::x86::classify_inline
+        crate::simd::avx2::probe_lt_inline,
+        crate::simd::avx2::classify_inline
     );
 }
 

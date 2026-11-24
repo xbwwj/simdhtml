@@ -2,19 +2,18 @@
 //! PCLMULQDQ) and `neon` implement the same `classify` / `probe_lt` /
 //! `prefix_xor` that `fallback` defines portably.
 
+use std::sync::OnceLock;
+
+#[cfg(target_arch = "x86_64")]
+pub mod avx2;
 #[cfg(target_arch = "x86_64")]
 pub mod avx512;
 pub mod fallback;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
-#[cfg(target_arch = "x86_64")]
-pub mod x86;
-
-use std::sync::OnceLock;
 
 /// Bytes per block, and the width of every mask here.
 pub const BLOCK_SIZE: usize = 64;
-
 // Mask-request bit for `<`.
 pub const NEED_LT: u8 = 1 << 0;
 // Mask-request bit for `>`.
@@ -24,19 +23,9 @@ pub const NEED_QUOTES: u8 = 1 << 2;
 // Every mask.
 pub const NEED_ALL: u8 = NEED_LT | NEED_GT | NEED_QUOTES;
 
-/// The masks the markup scan consumes: no letter classes and no whitespace,
-/// because only the bytes the scan branches on are classified.  A whitespace
-/// mask measured slower than the short tag-name byte loop it would replace.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct StructuralMasks {
-    pub lt: u64,
-    pub gt: u64,
-    pub dq: u64,
-    pub sq: u64,
-}
+/// Probe the machine simd support on first usage.
+static IMPLEMENTATION: OnceLock<Implementation> = OnceLock::new();
 
-/// One complete set of kernels for a target feature level, selected once per
-/// process.
 struct Implementation {
     classify: fn(&[u8; BLOCK_SIZE]) -> StructuralMasks,
     probe_lt: fn(&[u8; BLOCK_SIZE]) -> Option<StructuralMasks>,
@@ -47,52 +36,37 @@ struct Implementation {
     neon: bool,
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-const FALLBACK: Implementation = Implementation {
-    classify: fallback::classify,
-    probe_lt: fallback::probe_lt,
-    prefix_xor: fallback::prefix_xor,
-    avx512: false,
-    avx2: false,
-    pclmulqdq: false,
-    neon: false,
-};
-
-static IMPLEMENTATION: OnceLock<Implementation> = OnceLock::new();
-
 #[inline]
 fn implementation() -> &'static Implementation {
     IMPLEMENTATION.get_or_init(detect)
 }
 
-/// Picks the fastest available kernel set.  Classifiers and `prefix_xor` are
-/// selected independently: PCLMULQDQ is a separate feature used only by
-/// `prefix_xor`.
+/// Picks the fastest available kernel set.
 fn detect() -> Implementation {
     #[cfg(target_arch = "x86_64")]
     {
-        // AVX-512BW has the byte `vpcmpb` that lets one block be one mask.
         let avx512 =
             std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw");
         let avx2 = std::is_x86_feature_detected!("avx2");
         let pclmulqdq = std::is_x86_feature_detected!("pclmulqdq");
+
         Implementation {
             classify: if avx512 {
                 avx512::classify
             } else if avx2 {
-                x86::classify
+                avx2::classify
             } else {
                 fallback::classify
             },
             probe_lt: if avx512 {
                 avx512::probe_lt
             } else if avx2 {
-                x86::probe_lt
+                avx2::probe_lt
             } else {
                 fallback::probe_lt
             },
             prefix_xor: if pclmulqdq {
-                x86::prefix_xor
+                avx2::prefix_xor
             } else {
                 fallback::prefix_xor
             },
@@ -122,6 +96,28 @@ fn detect() -> Implementation {
         FALLBACK
     }
 }
+
+/// The masks the markup scan consumes: no letter classes and no whitespace,
+/// because only the bytes the scan branches on are classified.  A whitespace
+/// mask measured slower than the short tag-name byte loop it would replace.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StructuralMasks {
+    pub lt: u64,
+    pub gt: u64,
+    pub dq: u64,
+    pub sq: u64,
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const FALLBACK: Implementation = Implementation {
+    classify: fallback::classify,
+    probe_lt: fallback::probe_lt,
+    prefix_xor: fallback::prefix_xor,
+    avx512: false,
+    avx2: false,
+    pclmulqdq: false,
+    neon: false,
+};
 
 // Whether the AVX-512 block loop can be used.
 #[must_use]

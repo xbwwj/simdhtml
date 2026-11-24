@@ -1,19 +1,18 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
+use encoding_rs::Encoding;
+
 use crate::NodeId;
 use crate::character_reference::decode_character_references;
 use crate::tokenizer::{AttrQuote, TagToken};
 
-/// A parsed document.  It borrows the input when that already was UTF-8 and
-/// owns the transcoded bytes otherwise; spans index into `input` either way.
+/// A parsed HTML document. It borrows the input when that already was UTF-8 and
+/// owns the transcoded bytes otherwise.
 #[derive(Clone, Debug)]
 pub struct Document<'a> {
-    /// UTF-8 document bytes.
     pub input: Cow<'a, [u8]>,
-
-    /// Encoding the input was decoded from.
-    pub encoding: &'static encoding_rs::Encoding,
+    pub encoding: &'static Encoding,
 
     /// Whether invalid bytes were replaced during decoding.
     pub had_encoding_errors: bool,
