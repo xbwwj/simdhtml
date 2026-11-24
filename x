@@ -37,15 +37,6 @@ bench-targets   list benchmark targets
 bundle          build a portable bench bundle (binaries + data + Python)
                   options: --data sample|full|none --cc-docs N --swde-docs N
                            --format zst|gz|none --with-warc --out DIR
-
-Examples:
-  ./x data
-  ./x test-wpt
-  ./x bench
-  ./x bench-quick
-  X_BENCH_TARGETS='extract python_compare' ./x bench-quick
-  ./x bench 'markup/swde/camera'
-  ./x bundle --data sample
 MSG
 }
 
