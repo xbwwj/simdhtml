@@ -14,6 +14,9 @@ pub const NO_NODE: NodeId = u32::MAX;
 /// Sentinel used for "no tag".
 pub const NO_TAG: u32 = u32::MAX;
 
+/// The document node: always node `0`, and the only node without a parent.
+pub const DOC_ROOT: NodeId = 0;
+
 pub type TagId = u32;
 
 /// A parsed HTML document. It borrows the input when that already was UTF-8 and
@@ -77,9 +80,6 @@ pub struct Document<'a> {
     /// spelling, which [`Document::attr_name`] lowercases).  Foreign elements
     /// adjust a fixed list (`viewbox` -> `viewBox`); one byte per attribute.
     pub attr_name_override: Vec<u8>,
-
-    /// The Document node (always 0).
-    pub root: NodeId,
 
     /// Document diagnostics.
     pub flags: DocumentFlags,

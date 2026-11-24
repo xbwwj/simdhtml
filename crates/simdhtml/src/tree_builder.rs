@@ -341,7 +341,6 @@ pub(crate) fn build_with<'a>(
         attr_quote: tokens.attr_quote,
         attr_name_override,
         tag_name_override,
-        root: 0,
         flags,
         warnings,
     }

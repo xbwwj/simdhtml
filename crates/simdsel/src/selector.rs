@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
-use simdhtml::{Document, EncodingMode, NodeId, ParseOptions};
+use simdhtml::{DOC_ROOT, Document, EncodingMode, NodeId, ParseOptions};
 
 use crate::parser::Selector as CssSelector;
 use crate::record::{MatchKind, MatchRecord};
@@ -34,10 +34,9 @@ impl<'a> Selector<'a> {
     /// ```
     #[must_use]
     pub fn new(doc: Document<'a>) -> Self {
-        let root = doc.root;
         Self {
             doc: Rc::new(doc),
-            roots: vec![root],
+            roots: vec![DOC_ROOT],
             records: Vec::new(),
             cache: Rc::new(QueryCache::root()),
         }

@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyAnyMethods, PyByteArray, PyBytes, PyDict, PyList, PySlice, PySliceMethods,
 };
-use simdhtml::{Document, EncodingMode, ParseOptions};
+use simdhtml::{DOC_ROOT, Document, EncodingMode, ParseOptions};
 use simdsel::{
     MatchKind, MatchRecord, NodeId, NodeRef, QueryCache, RefKind, Value, XPath, extract,
     record_attrib, record_text, root_element, select_query_within_cache,
@@ -79,7 +79,7 @@ fn document_record(doc: &Document<'_>) -> MatchRecord {
     match root_element(doc) {
         Some(id) => element_record(doc, id),
         None => MatchRecord {
-            node: doc.root,
+            node: DOC_ROOT,
             kind: MatchKind::Element,
             span: 0..0,
             outer_end: 0,
@@ -404,7 +404,7 @@ impl PySelector {
         let doc = Document::parse_owned_with(bytes, options)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         let doc = Rc::new(doc);
-        let scope = vec![doc.root];
+        let scope = vec![DOC_ROOT];
         Ok(Self {
             item: Item::Element(document_record(&doc)),
             scope,
@@ -428,7 +428,7 @@ impl PySelector {
                 let doc = Rc::new(doc);
                 Ok(Self {
                     item: Item::Element(document_record(&doc)),
-                    scope: vec![doc.root],
+                    scope: vec![DOC_ROOT],
                     doc,
                     cache: Rc::new(QueryCache::root()),
                     base_url: None,

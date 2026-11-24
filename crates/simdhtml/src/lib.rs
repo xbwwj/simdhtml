@@ -20,8 +20,8 @@ mod tree_builder;
 
 pub use crate::character_reference::decode_character_references;
 pub use crate::document::{
-    Document, DocumentFlags, NO_NODE, NO_TAG, NS_HTML, NS_MATH_TEXT_POINT, NS_MATHML, NS_SVG,
-    NS_SVG_HTML_POINT, Node, NodeId, NodeKind, Warning, WarningKind,
+    DOC_ROOT, Document, DocumentFlags, NO_NODE, NO_TAG, NS_HTML, NS_MATH_TEXT_POINT, NS_MATHML,
+    NS_SVG, NS_SVG_HTML_POINT, Node, NodeId, NodeKind, Warning, WarningKind,
 };
 pub use crate::document::{normalize_newlines, replace_nulls};
 pub use crate::error::{ParseError, Result};

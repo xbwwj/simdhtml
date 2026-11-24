@@ -3,7 +3,7 @@ use std::cell::{OnceCell, RefCell};
 use std::ops::Range;
 
 use rustc_hash::FxHashMap;
-use simdhtml::{Document, NO_NODE, NodeId, NodeKind};
+use simdhtml::{DOC_ROOT, Document, NO_NODE, NodeId, NodeKind};
 use thiserror::Error;
 
 use crate::bitset::BitSet;
@@ -419,7 +419,7 @@ impl<'a> Eval<'a> {
         let n = doc.node_tape.len();
 
         let mut root_element = None;
-        let mut child = doc.node(doc.root).first_child();
+        let mut child = doc.node(DOC_ROOT).first_child();
         while child != NO_NODE {
             let node = doc.node(child);
             if node.is_element() {
@@ -486,7 +486,7 @@ impl<'a> Eval<'a> {
         self.set_scope(roots);
         let mut mask = self.selector_mask(selector, 0)?;
         if let Some(roots) = roots
-            && !(roots.len() == 1 && roots[0] == self.doc.root)
+            && !(roots.len() == 1 && roots[0] == DOC_ROOT)
         {
             let include_scope =
                 selector_has_scope(selector) || selector_starts_with_implied_universal(selector);
@@ -1762,7 +1762,7 @@ fn complex_has_scope(complex: &Complex) -> bool {
 
 /// The document's root element (first element child of the document node).
 pub fn root_element(doc: &Document<'_>) -> Option<NodeId> {
-    let mut child = doc.node(doc.root).first_child();
+    let mut child = doc.node(DOC_ROOT).first_child();
     while child != NO_NODE {
         let node = doc.node(child);
         if node.is_element() {

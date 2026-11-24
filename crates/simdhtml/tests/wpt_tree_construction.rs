@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::Path;
 
-use simdhtml::{Document, NO_NODE, NodeKind, ParseOptions, RepairMode};
+use simdhtml::{DOC_ROOT, Document, NO_NODE, NodeKind, ParseOptions, RepairMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TNode {
@@ -451,7 +451,7 @@ fn simdhtml_node(doc: &Document, id: u32) -> TNode {
 
 fn simdhtml_tree(doc: &Document) -> Vec<TNode> {
     let mut out = Vec::new();
-    let mut child = doc.node(doc.root).first_child();
+    let mut child = doc.node(DOC_ROOT).first_child();
     while child != NO_NODE {
         out.push(simdhtml_node(doc, child));
         child = doc.node(child).next_sibling();
