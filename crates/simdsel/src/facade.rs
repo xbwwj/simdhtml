@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use simdhtml::{DOC_ROOT, Document, EncodingMode, NodeId, ParseOptions};
 
-use crate::parser::Selector as CssSelector;
+use crate::css::SelectorList;
 use crate::record::{MatchKind, MatchRecord};
 use crate::{
     Count, Error, Projection, QueryCache, parse_selector, select_as_within_cache,
@@ -124,12 +124,12 @@ impl<'a> Selector<'a> {
     /// Per-thread compiled-selector intern table: `css*` takes selector text on
     /// every call, and parsing it costs ~11% of a warm query.  Bounded, so a
     /// query-generating crawler clears it instead of growing it.
-    fn compiled(query: &str) -> Result<Rc<CssSelector>, Error> {
+    fn compiled(query: &str) -> Result<Rc<SelectorList>, Error> {
         use std::cell::RefCell;
         use std::collections::HashMap;
 
         thread_local! {
-            static CACHE: RefCell<HashMap<Box<str>, Rc<CssSelector>>> = RefCell::new(HashMap::new());
+            static CACHE: RefCell<HashMap<Box<str>, Rc<SelectorList>>> = RefCell::new(HashMap::new());
         }
         // A few hundred selectors bound the memory.
         const MAX_ENTRIES: usize = 256;
@@ -309,7 +309,7 @@ pub fn select_query_within_cache(
 #[must_use]
 pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Cow<'a, str>> {
     match record.kind {
-        MatchKind::Element => Some(Cow::Owned(crate::raw::text_content(doc, record.node))),
+        MatchKind::Element => Some(Cow::Owned(crate::dom::text_content(doc, record.node))),
         MatchKind::Text => Some(doc.text(record.node)),
         MatchKind::Attr => None,
     }
@@ -324,8 +324,8 @@ pub fn record_attrib(doc: &Document<'_>, record: &MatchRecord) -> Option<Vec<(St
     }
     let mut out = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for attr in crate::raw::attr_range(doc, record.node) {
-        let name = crate::raw::attr_name(doc, attr);
+    for attr in crate::dom::attr_range(doc, record.node) {
+        let name = crate::dom::attr_name(doc, attr);
         if seen
             .iter()
             .any(|s| s.eq_ignore_ascii_case(std::str::from_utf8(name).unwrap_or("")))
@@ -334,7 +334,7 @@ pub fn record_attrib(doc: &Document<'_>, record: &MatchRecord) -> Option<Vec<(St
         }
         let name = String::from_utf8_lossy(name).into_owned();
         seen.push(name.clone());
-        out.push((name, crate::raw::attr_value(doc, attr).into_owned()));
+        out.push((name, crate::dom::attr_value(doc, attr).into_owned()));
     }
     Some(out)
 }

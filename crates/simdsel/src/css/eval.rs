@@ -1,268 +1,19 @@
-use std::borrow::Cow;
-use std::cell::{OnceCell, RefCell};
+use std::cell::OnceCell;
 use std::ops::Range;
 
-use rustc_hash::FxHashMap;
 use simdhtml::{DOC_ROOT, Document, NO_NODE, NodeId, NodeKind};
-use thiserror::Error;
 
 use crate::bitset::BitSet;
-use crate::parser::{
-    AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
-    Selector,
-};
 use crate::record::{MatchKind, MatchRecord};
 
+use super::ast::{
+    AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
+    SelectorList,
+};
+use super::cache::{ChildIndex, QueryCache};
+use super::select::MatchError;
+
 const MAX_DEPTH: usize = 64;
-
-/// Selector evaluation error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-pub enum MatchError {
-    #[error("depth limit")]
-    /// Nested `:not`/`:is`/`:has` exceeded the recursion limit.
-    DepthLimit,
-}
-
-/// A typed projection of a selector result: the same match mask materialized as
-/// records, strings, text or a count.  The lifetime lets borrowed results point
-/// into the document input.
-pub trait Projection {
-    type Output<'a>;
-
-    /// Projects an already-computed match mask.
-    ///
-    /// # Errors
-    ///
-    /// [`MatchError::DepthLimit`] if pseudo-element projection recurses past the
-    /// limit.
-    fn finish<'a>(
-        doc: &'a Document<'_>,
-        selector: &Selector,
-        mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError>;
-}
-
-/// Raw `MatchRecord` projection.
-pub struct Records;
-
-impl Projection for Records {
-    type Output<'a> = Vec<MatchRecord>;
-
-    fn finish<'a>(
-        doc: &'a Document<'_>,
-        selector: &Selector,
-        mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
-        {
-            let cache = QueryCache::root();
-            Ok(Eval::new(doc, &cache).records_for(selector, &mask))
-        }
-    }
-}
-
-/// Count-only projection: no records allocated.
-pub struct Count;
-
-impl Projection for Count {
-    type Output<'a> = usize;
-
-    fn finish<'a>(
-        doc: &'a Document<'_>,
-        selector: &Selector,
-        mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
-        if common_pseudo(selector).is_some() {
-            {
-                let cache = QueryCache::root();
-                Ok(Eval::new(doc, &cache).records_for(selector, &mask).len())
-            }
-        } else {
-            Ok(mask.count_ones() as usize)
-        }
-    }
-}
-
-/// `getall()`-style string projection.
-pub struct Html;
-
-impl Projection for Html {
-    type Output<'a> = Vec<Cow<'a, str>>;
-
-    fn finish<'a>(
-        doc: &'a Document<'_>,
-        selector: &Selector,
-        mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
-        let cache = QueryCache::root();
-        Ok(Eval::new(doc, &cache)
-            .records_for(selector, &mask)
-            .into_iter()
-            .map(|record| extract(doc, &record))
-            .collect())
-    }
-}
-
-/// Projection to text content / text nodes / attribute values.
-pub struct Texts;
-
-impl Projection for Texts {
-    type Output<'a> = Vec<Cow<'a, str>>;
-
-    fn finish<'a>(
-        doc: &'a Document<'_>,
-        selector: &Selector,
-        mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
-        let cache = QueryCache::root();
-        Ok(Eval::new(doc, &cache)
-            .records_for(selector, &mask)
-            .into_iter()
-            .map(|record| match record.kind {
-                MatchKind::Element => Cow::Owned(crate::raw::text_content(doc, record.node)),
-                MatchKind::Text => doc.text(record.node),
-                MatchKind::Attr => {
-                    let span = record.attr.as_ref().expect("attr record");
-                    crate::raw::attr_value_span(doc, span)
-                }
-            })
-            .collect())
-    }
-}
-
-/// Selects all elements matching `selector`, in document order.
-///
-/// # Errors
-///
-/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select(doc: &Document<'_>, selector: &Selector) -> Result<Vec<MatchRecord>, MatchError> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
-    ctx.select(selector, None)
-}
-
-/// Selects matching elements inside the subtrees of `roots`: what chained
-/// `Selector.css()` uses.
-///
-/// # Errors
-///
-/// Same as [`select`].
-pub fn select_within(
-    doc: &Document<'_>,
-    selector: &Selector,
-    roots: &[NodeId],
-) -> Result<Vec<MatchRecord>, MatchError> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
-    ctx.select(selector, Some(roots))
-}
-
-/// Selects within `roots` using a chain-local cache.
-///
-/// # Errors
-///
-/// Same as [`select`].
-pub fn select_within_cache(
-    doc: &Document<'_>,
-    selector: &Selector,
-    roots: &[NodeId],
-    cache: &QueryCache,
-) -> Result<Vec<MatchRecord>, MatchError> {
-    Eval::new(doc, cache).select(selector, Some(roots))
-}
-
-/// Evaluates a projection within `roots` using a chain-local cache.
-///
-/// # Errors
-///
-/// Same as [`select_as`].
-pub fn select_as_within_cache<'a, P: Projection>(
-    doc: &'a Document<'_>,
-    selector: &Selector,
-    roots: &[NodeId],
-    cache: &QueryCache,
-) -> Result<P::Output<'a>, MatchError> {
-    let ctx = Eval::new(doc, cache);
-    let mask = ctx.mask_for(selector, Some(roots))?;
-    P::finish(doc, selector, mask)
-}
-
-/// Counts matches without materializing records.  Pseudo-elements fall back to
-/// record projection so `::text` / `::attr()` counts stay correct.
-///
-/// # Errors
-///
-/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select_count(doc: &Document<'_>, selector: &Selector) -> Result<usize, MatchError> {
-    {
-        let cache = QueryCache::root();
-        Eval::new(doc, &cache).count(selector, None)
-    }
-}
-
-/// Like [`select_count`], but restricted to the subtrees of `roots`.
-///
-/// # Errors
-///
-/// Same as [`select_count`].
-pub fn select_count_within(
-    doc: &Document<'_>,
-    selector: &Selector,
-    roots: &[NodeId],
-) -> Result<usize, MatchError> {
-    {
-        let cache = QueryCache::root();
-        Eval::new(doc, &cache).count(selector, Some(roots))
-    }
-}
-
-/// Evaluates `selector` and projects the result with `P`.
-///
-/// # Errors
-///
-/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select_as<'a, P: Projection>(
-    doc: &'a Document<'_>,
-    selector: &Selector,
-) -> Result<P::Output<'a>, MatchError> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
-    let mask = ctx.mask_for(selector, None)?;
-    P::finish(doc, selector, mask)
-}
-
-/// Like [`select_as`], but restricted to the subtrees of `roots`.
-///
-/// # Errors
-///
-/// Same as [`select_as`].
-pub fn select_as_within<'a, P: Projection>(
-    doc: &'a Document<'_>,
-    selector: &Selector,
-    roots: &[NodeId],
-) -> Result<P::Output<'a>, MatchError> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
-    let mask = ctx.mask_for(selector, Some(roots))?;
-    P::finish(doc, selector, mask)
-}
-
-/// Extracts the text/HTML represented by a match record.
-#[must_use]
-pub fn extract<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> std::borrow::Cow<'a, str> {
-    match record.kind {
-        MatchKind::Element => {
-            let bytes = crate::raw::outer_html(doc, record.node);
-            std::borrow::Cow::Borrowed(
-                std::str::from_utf8(bytes).expect("Document input is valid UTF-8"),
-            )
-        }
-        MatchKind::Text => doc.text(record.node),
-        MatchKind::Attr => {
-            let span = record.attr.as_ref().expect("attr record has a value span");
-            crate::raw::attr_value_span(doc, span)
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 enum OfType {
@@ -280,106 +31,6 @@ impl OfType {
             Self::Nth(a, b) => nth(at, a, b),
             Self::NthLast(a, b) => nth_i64(total as i64 - at as i64 + 1, a, b),
         }
-    }
-}
-
-#[derive(Debug)]
-struct ChildIndex {
-    children: Vec<NodeId>,
-    child_start: Vec<u32>,
-    element_child_count: Vec<u32>,
-    element_index: Vec<u32>,
-}
-
-/// Document-derived query cache: tag/attribute/compound masks and a child index.
-/// It never borrows or owns the document, so it is only valid for the document
-/// it was built from.  The one-shot API creates a throwaway one per call;
-/// [`crate::Selector`] shares one across a selector chain.
-#[derive(Debug, Default)]
-pub struct QueryCache {
-    child_index: OnceCell<ChildIndex>,
-    tag_masks: RefCell<FxHashMap<String, BitSet>>,
-    attr_masks: RefCell<FxHashMap<String, BitSet>>,
-    bare_compounds: RefCell<FxHashMap<Compound, BitSet>>,
-}
-
-impl QueryCache {
-    /// Creates an empty query cache.
-    #[must_use]
-    pub fn root() -> Self {
-        Self::default()
-    }
-
-    fn get_tag_mask(&self, name: &str) -> Option<BitSet> {
-        self.tag_masks.borrow().get(name).cloned()
-    }
-
-    fn put_tag_mask(&self, name: String, mask: BitSet) {
-        self.tag_masks.borrow_mut().insert(name, mask);
-    }
-
-    fn get_attr_mask(&self, name: &str) -> Option<BitSet> {
-        self.attr_masks.borrow().get(name).cloned()
-    }
-
-    fn put_attr_mask(&self, name: String, mask: BitSet) {
-        self.attr_masks.borrow_mut().insert(name, mask);
-    }
-
-    fn get_compound(&self, compound: &Compound) -> Option<BitSet> {
-        self.bare_compounds.borrow().get(compound).cloned()
-    }
-
-    fn put_compound(&self, compound: Compound, mask: BitSet) {
-        self.bare_compounds.borrow_mut().insert(compound, mask);
-    }
-
-    /// Children of every node, in one pass over the preorder tape: count per
-    /// parent, then fill in node order, so each parent's children arrive in
-    /// increasing id order.
-    fn child_index(&self, doc: &Document<'_>, n: usize) -> &ChildIndex {
-        self.child_index.get_or_init(|| {
-            let node = |id: u32| doc.node(id);
-            let mut child_start = vec![0u32; n + 1];
-            for id in 1..n as u32 {
-                let parent = node(id).parent();
-                if (parent as usize) < n {
-                    child_start[parent as usize] += 1;
-                }
-            }
-            // Prefix sum: counts become start offsets.
-            let mut sum = 0u32;
-            for start in &mut child_start[..n] {
-                let count = *start;
-                *start = sum;
-                sum += count;
-            }
-            child_start[n] = sum;
-
-            let mut children = vec![0u32; sum as usize];
-            let mut cursor = child_start.clone();
-            let mut element_child_count = vec![0u32; n];
-            let mut element_index = vec![0u32; n];
-            for id in 1..n as u32 {
-                let parent = node(id).parent();
-                if parent as usize >= n {
-                    continue;
-                }
-                children[cursor[parent as usize] as usize] = id;
-                cursor[parent as usize] += 1;
-                if node(id).is_element() {
-                    element_child_count[parent as usize] += 1;
-                    element_index[id as usize] = element_child_count[parent as usize];
-                }
-            }
-
-            ChildIndex {
-                children,
-                child_start,
-                element_child_count,
-                element_index,
-            }
-        })
     }
 }
 
@@ -406,7 +57,7 @@ impl Position {
 }
 
 /// Evaluation context borrowing a document and its progressive cache.
-struct Eval<'a> {
+pub(super) struct Eval<'a> {
     doc: &'a Document<'a>,
     n: usize,
     cache: &'a QueryCache,
@@ -415,7 +66,7 @@ struct Eval<'a> {
 }
 
 impl<'a> Eval<'a> {
-    fn new(doc: &'a Document<'_>, cache: &'a QueryCache) -> Self {
+    pub(super) fn new(doc: &'a Document<'_>, cache: &'a QueryCache) -> Self {
         let n = doc.node_tape.len();
 
         let mut root_element = None;
@@ -478,9 +129,9 @@ impl<'a> Eval<'a> {
         let _ = self.scope.set(mask);
     }
 
-    fn mask_for(
+    pub(super) fn mask_for(
         &self,
-        selector: &Selector,
+        selector: &SelectorList,
         roots: Option<&[NodeId]>,
     ) -> Result<BitSet, MatchError> {
         self.set_scope(roots);
@@ -520,7 +171,7 @@ impl<'a> Eval<'a> {
     }
 
     /// Turns an element mask into records, applying a trailing pseudo-element.
-    fn records_for(&self, scope: &Selector, mask: &BitSet) -> Vec<MatchRecord> {
+    pub(super) fn records_for(&self, scope: &SelectorList, mask: &BitSet) -> Vec<MatchRecord> {
         let mut out = Vec::new();
         for id in mask.iter_set() {
             out.push(element_record(self.doc, id));
@@ -545,16 +196,20 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn select(
+    pub(super) fn select(
         &self,
-        selector: &Selector,
+        selector: &SelectorList,
         roots: Option<&[NodeId]>,
     ) -> Result<Vec<MatchRecord>, MatchError> {
         let mask = self.mask_for(selector, roots)?;
         Ok(self.records_for(selector, &mask))
     }
 
-    fn count(&self, selector: &Selector, roots: Option<&[NodeId]>) -> Result<usize, MatchError> {
+    pub(super) fn count(
+        &self,
+        selector: &SelectorList,
+        roots: Option<&[NodeId]>,
+    ) -> Result<usize, MatchError> {
         let mask = self.mask_for(selector, roots)?;
         if common_pseudo(selector).is_some() {
             Ok(self.records_for(selector, &mask).len())
@@ -563,7 +218,7 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn selector_mask(&self, selector: &Selector, depth: usize) -> Result<BitSet, MatchError> {
+    fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet, MatchError> {
         if depth > MAX_DEPTH {
             return Err(MatchError::DepthLimit);
         }
@@ -841,12 +496,12 @@ impl<'a> Eval<'a> {
         }
 
         if let Some(id_value) = &compound.id {
-            let Some(attr) = crate::raw::find_attr(self.doc, id, "id") else {
+            let Some(attr) = crate::dom::find_attr(self.doc, id, "id") else {
                 return false;
             };
-            let raw = crate::raw::attr_value_raw(self.doc, attr);
+            let raw = crate::dom::attr_value_raw(self.doc, attr);
             if raw.contains(&b'&') {
-                if crate::raw::attr_value(self.doc, attr).as_ref() != id_value.as_str() {
+                if crate::dom::attr_value(self.doc, attr).as_ref() != id_value.as_str() {
                     return false;
                 }
             } else if raw != id_value.as_bytes() {
@@ -855,13 +510,13 @@ impl<'a> Eval<'a> {
         }
 
         if !compound.classes.is_empty() {
-            let Some(attr) = crate::raw::find_attr(self.doc, id, "class") else {
+            let Some(attr) = crate::dom::find_attr(self.doc, id, "class") else {
                 return false;
             };
-            let raw = crate::raw::attr_value_raw(self.doc, attr);
+            let raw = crate::dom::attr_value_raw(self.doc, attr);
             if raw.contains(&b'&') {
                 // Rare: a class value with character references.
-                let value = crate::raw::attr_value(self.doc, attr);
+                let value = crate::dom::attr_value(self.doc, attr);
                 for class in &compound.classes {
                     if !value.split_ascii_whitespace().any(|c| c == class) {
                         return false;
@@ -898,7 +553,7 @@ impl<'a> Eval<'a> {
     }
 
     fn has_attr(&self, id: NodeId, name: &str) -> bool {
-        crate::raw::find_attr(self.doc, id, name).is_some()
+        crate::dom::find_attr(self.doc, id, name).is_some()
     }
 
     /// `:link`: `a`, `area` or `link` carrying an `href`.
@@ -961,9 +616,9 @@ impl<'a> Eval<'a> {
         while current != NO_NODE {
             let node = self.doc.node(current);
             if node.is_element()
-                && let Some(attr) = crate::raw::find_attr(self.doc, current, "lang")
+                && let Some(attr) = crate::dom::find_attr(self.doc, current, "lang")
             {
-                let actual = crate::raw::attr_value(self.doc, attr);
+                let actual = crate::dom::attr_value(self.doc, attr);
                 let actual = actual.trim().to_ascii_lowercase();
                 return actual == value
                     || (actual.len() > value.len()
@@ -1021,7 +676,7 @@ impl<'a> Eval<'a> {
             }
             Pseudo::Contains(text) => {
                 self.filter(mask, |id| {
-                    crate::raw::text_content(self.doc, id).contains(text)
+                    crate::dom::text_content(self.doc, id).contains(text)
                 });
             }
             Pseudo::OnlyOfType => {
@@ -1340,7 +995,7 @@ impl<'a> Eval<'a> {
                 }
             }
             PseudoElement::Attr(name) => {
-                if let Some(attr) = crate::raw::find_attr(self.doc, record.node, name) {
+                if let Some(attr) = crate::dom::find_attr(self.doc, record.node, name) {
                     let start = self.doc.attr_value_start[attr as usize];
                     let span = start..start + self.doc.attr_value_len[attr as usize];
                     out.push(MatchRecord {
@@ -1728,14 +1383,14 @@ unsafe fn key_mask_avx2(
 
 /// Whether the selector starts with the implied universal of a bare
 /// pseudo-element (`::text`), which must match the scope root itself.
-fn selector_starts_with_implied_universal(selector: &Selector) -> bool {
+fn selector_starts_with_implied_universal(selector: &SelectorList) -> bool {
     selector
         .complexes
         .iter()
         .any(|complex| complex.compounds[0].implied_universal)
 }
 
-fn selector_has_scope(selector: &Selector) -> bool {
+fn selector_has_scope(selector: &SelectorList) -> bool {
     let complexes = |list: &[Complex]| list.iter().any(complex_has_scope);
     selector.complexes.iter().any(|complex| {
         complex.compounds.iter().any(|compound| {
@@ -1784,7 +1439,7 @@ fn element_record(doc: &Document<'_>, id: NodeId) -> MatchRecord {
     }
 }
 
-fn common_pseudo(selector: &Selector) -> Option<PseudoElement> {
+pub(super) fn common_pseudo(selector: &SelectorList) -> Option<PseudoElement> {
     let first = selector.complexes.first()?.pseudo.clone();
     if selector
         .complexes
@@ -1799,7 +1454,7 @@ fn common_pseudo(selector: &Selector) -> Option<PseudoElement> {
 
 #[inline]
 fn matches_attr(doc: &Document<'_>, node: NodeId, pred: &AttrPred) -> bool {
-    let Some(attr) = crate::raw::find_attr(doc, node, &pred.name) else {
+    let Some(attr) = crate::dom::find_attr(doc, node, &pred.name) else {
         return false;
     };
     // Presence needs no value, and a value without references needs no decoding,
@@ -1807,12 +1462,12 @@ fn matches_attr(doc: &Document<'_>, node: NodeId, pred: &AttrPred) -> bool {
     if pred.op == AttrOp::Exists {
         return true;
     }
-    let raw = crate::raw::attr_value_raw(doc, attr);
+    let raw = crate::dom::attr_value_raw(doc, attr);
     if !raw.contains(&b'&') {
         let value = std::str::from_utf8(raw).expect("Document input is valid UTF-8");
         return matches_attr_value(value, pred);
     }
-    let value = crate::raw::attr_value(doc, attr);
+    let value = crate::dom::attr_value(doc, attr);
     matches_attr_value(value.as_ref(), pred)
 }
 
@@ -1871,172 +1526,5 @@ fn nth_i64(index: i64, a: i32, b: i32) -> bool {
         diff == 0
     } else {
         diff % i64::from(a) == 0 && diff / i64::from(a) >= 0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::parser::parse_selector;
-    use simdhtml::{ParseOptions, RepairMode};
-
-    fn doc(html: &str) -> Document<'_> {
-        Document::parse_with(
-            html.as_bytes(),
-            ParseOptions {
-                repair: RepairMode::Spec,
-                ..Default::default()
-            },
-        )
-        .unwrap()
-    }
-
-    fn tags(doc: &Document<'_>, sel: &str) -> Vec<String> {
-        let selector = parse_selector(sel).unwrap();
-        select(doc, &selector)
-            .unwrap()
-            .into_iter()
-            .map(|r| doc.tag_name(doc.node(r.node).tag_token()).to_string())
-            .collect()
-    }
-
-    #[test]
-    fn simple_and_combinators() {
-        let d = doc("<div><p class=a><span>x</span></p><p><b>y</b></p></div>");
-        assert_eq!(tags(&d, "p"), vec!["p", "p"]);
-        assert_eq!(tags(&d, "div > p"), vec!["p", "p"]);
-        assert_eq!(tags(&d, "p .none"), Vec::<String>::new());
-        assert_eq!(tags(&d, "div span"), vec!["span"]);
-        assert_eq!(tags(&d, "p + p"), vec!["p"]);
-        assert_eq!(tags(&d, "p ~ p"), vec!["p"]);
-    }
-
-    #[test]
-    fn attrs_and_classes() {
-        let d = doc(r#"<a id=x class="foo bar" href="/a" data-v="A B">1</a><a class=foo>2</a>"#);
-        assert_eq!(tags(&d, "a#x"), vec!["a"]);
-        assert_eq!(tags(&d, ".foo"), vec!["a", "a"]);
-        assert_eq!(tags(&d, ".foo.bar"), vec!["a"]);
-        assert_eq!(tags(&d, "[href]"), vec!["a"]);
-        assert_eq!(tags(&d, "[href^='/']"), vec!["a"]);
-        assert_eq!(tags(&d, "[data-v~='B']"), vec!["a"]);
-        assert_eq!(tags(&d, "[data-v='a b' i]"), vec!["a"]);
-    }
-
-    #[test]
-    fn structural_pseudos() {
-        let d = doc("<ul><li>1<li>2<li>3</ul>");
-        assert_eq!(tags(&d, "li:first-child"), vec!["li"]);
-        assert_eq!(tags(&d, "li:last-child"), vec!["li"]);
-        assert_eq!(tags(&d, "li:nth-child(2)"), vec!["li"]);
-        assert_eq!(tags(&d, "li:nth-last-child(1)"), vec!["li"]);
-        assert_eq!(tags(&d, "li:not(:first-child)"), vec!["li", "li"]);
-    }
-
-    #[test]
-    fn has_relative() {
-        let d = doc("<div><a class=x>1</a></div><div><p>2</p></div>");
-        let sel = parse_selector("div:has(> a.x)").unwrap();
-        let recs = select(&d, &sel).unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(doc_tag(&d, recs[0].node), "div");
-    }
-
-    #[test]
-    fn css_scope_and_contains() {
-        let d = doc(
-            "<div class=box><span class=title>hello scope</span></div><div class=other>x</div>",
-        );
-        let sel = crate::parser::parse_selector(":scope > .title").unwrap();
-        // The parser synthesises html/head/body, so the scope root is looked up
-        // by name.
-        let root = d
-            .node_tape
-            .iter()
-            .position(|node| {
-                node.is_element() && d.tag_name(node.tag_token()).eq_ignore_ascii_case("div")
-            })
-            .expect("div") as simdhtml::NodeId;
-        let recs = select_within(&d, &sel, &[root]).unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(doc_tag(&d, recs[0].node), "span");
-        assert_eq!(tags(&d, "div:contains('hello')"), vec!["div"]);
-    }
-
-    #[test]
-    fn pseudo_elements() {
-        let d = doc("<div><a href='/x'>hello<span>!</span></a></div>");
-        let sel = parse_selector("a::text").unwrap();
-        let recs = select(&d, &sel).unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(&*extract(&d, &recs[0]), "hello");
-        let sel = parse_selector("a::attr(href)").unwrap();
-        let recs = select(&d, &sel).unwrap();
-        assert_eq!(&*extract(&d, &recs[0]), "/x");
-    }
-
-    #[test]
-    fn simd_tag_mask_matches_scalar_on_many_tags() {
-        let mut html = String::from("<html><body>");
-        for i in 0..3000 {
-            match i % 5 {
-                0 => html.push_str("<div class=x>"),
-                1 => html.push_str("<p>"),
-                2 => html.push_str("<span>"),
-                3 => html.push_str("<DIV>"),
-                _ => html.push_str("<article>"),
-            }
-            html.push('x');
-            html.push_str("</");
-            match i % 5 {
-                0 => html.push_str("div>"),
-                1 => html.push_str("p>"),
-                2 => html.push_str("span>"),
-                3 => html.push_str("div>"),
-                _ => html.push_str("article>"),
-            }
-        }
-        html.push_str("</body></html>");
-        let d = doc(&html);
-        // `html` and `body` are explicit in this document; `head` is implied.
-        assert_eq!(d.tags.len(), 6004 + 1);
-        assert_eq!(tags(&d, "div").len(), 1200);
-        assert_eq!(tags(&d, "p").len(), 600);
-        assert_eq!(tags(&d, "span").len(), 600);
-        assert_eq!(tags(&d, "article").len(), 600);
-    }
-
-    /// A single huge list makes an unbudgeted per-candidate sibling walk
-    /// quadratic; the budget must fall back to the child index and stay correct.
-    #[test]
-    fn positional_pseudos_on_a_huge_list() {
-        let mut html = String::from("<ul>");
-        for i in 0..600 {
-            html.push_str(&format!("<li>{i}</li>"));
-        }
-        html.push_str("</ul>");
-        let d = doc(&html);
-        assert_eq!(tags(&d, "li:nth-child(1)").len(), 1);
-        assert_eq!(tags(&d, "li:nth-child(2)").len(), 1);
-        assert_eq!(tags(&d, "li:nth-child(2n+1)").len(), 300);
-        assert_eq!(tags(&d, "li:last-child").len(), 1);
-        assert_eq!(tags(&d, "li:nth-of-type(3)").len(), 1);
-        assert_eq!(tags(&d, "li:nth-last-of-type(1)").len(), 1);
-        assert_eq!(tags(&d, "ul > li:nth-child(2n)").len(), 300);
-    }
-
-    #[test]
-    fn query_side_child_and_type_indexes() {
-        let d = doc("<div><p>a</p><span>x</span><p>b</p><p>c</p></div>");
-        assert_eq!(tags(&d, "p:nth-of-type(2)"), vec!["p"]);
-        assert_eq!(tags(&d, "p:last-of-type"), vec!["p"]);
-        assert_eq!(tags(&d, "p:nth-last-of-type(2)"), vec!["p"]);
-        assert_eq!(tags(&d, "span:nth-child(2)"), vec!["span"]);
-        assert_eq!(tags(&d, "p:last-child"), vec!["p"]);
-        assert_eq!(tags(&d, "*:nth-of-type(2)"), vec!["p"]);
-    }
-
-    fn doc_tag<'a>(doc: &'a Document<'a>, id: NodeId) -> &'a str {
-        doc.tag_name(doc.node(id).tag_token())
     }
 }

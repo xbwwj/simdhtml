@@ -1,7 +1,7 @@
 use super::XPathError;
 use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
 use super::value::{NodeRef, RefKind, Value};
-use crate::raw::{attr_name, attr_range};
+use crate::dom::{attr_name, attr_range};
 
 /// Last id of the text run starting at `id`, or `None` for a single node.
 /// Adjacent text siblings are one node in the XPath data model and are
@@ -655,10 +655,10 @@ impl Evaluator<'_, '_> {
                         if !self.doc.node(id).is_element() {
                             continue;
                         }
-                        let Some(attr) = crate::raw::find_attr(self.doc, id, "id") else {
+                        let Some(attr) = crate::dom::find_attr(self.doc, id, "id") else {
                             continue;
                         };
-                        let value = crate::raw::attr_value(self.doc, attr);
+                        let value = crate::dom::attr_value(self.doc, attr);
                         if tokens.iter().any(|token| token == value.trim()) {
                             out.push(NodeRef::element(id));
                         }
@@ -699,9 +699,9 @@ impl Evaluator<'_, '_> {
         while let Some(id) = current {
             let record = self.doc.node(id);
             if record.is_element()
-                && let Some(attr) = crate::raw::find_attr(self.doc, id, "xml:lang")
+                && let Some(attr) = crate::dom::find_attr(self.doc, id, "xml:lang")
             {
-                let value = crate::raw::attr_value(self.doc, attr).to_ascii_lowercase();
+                let value = crate::dom::attr_value(self.doc, attr).to_ascii_lowercase();
                 return value == wanted
                     || (value.len() > wanted.len()
                         && value.starts_with(wanted)

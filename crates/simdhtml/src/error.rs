@@ -10,7 +10,7 @@ use crate::encoding;
 pub enum ParseError {
     #[error("input exceeds u32::MAX bytes")]
     InputTooLarge,
-    #[error("invalid utf-8: {0}")]
+    #[error("{0}")]
     InvalidUtf8(encoding::Utf8Error),
 }
 

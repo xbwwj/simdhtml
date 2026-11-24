@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252};
-use thiserror::Error;
 
 /// How far into the document the `charset` prescan looks ("prescan a byte
 /// stream to determine its encoding").
@@ -245,50 +244,11 @@ fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize) -> Option
     (from..=last).find(|&at| haystack[at..at + needle.len()].eq_ignore_ascii_case(needle))
 }
 
-/// UTF-8 validation failure, as returned by [`validate_utf8`].
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub struct Utf8Error {
-    valid_up_to: usize,
-    error_len: Option<usize>,
-}
-
-impl Utf8Error {
-    #[must_use]
-    pub const fn valid_up_to(&self) -> usize {
-        self.valid_up_to
-    }
-
-    #[must_use]
-    pub const fn error_len(&self) -> Option<usize> {
-        self.error_len
-    }
-}
-
-impl std::fmt::Display for Utf8Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.error_len {
-            Some(len) => write!(
-                f,
-                "invalid utf-8 sequence of {len} bytes from index {}",
-                self.valid_up_to
-            ),
-            None => write!(
-                f,
-                "incomplete utf-8 byte sequence from index {}",
-                self.valid_up_to
-            ),
-        }
-    }
-}
+pub use simdutf8::compat::Utf8Error;
 
 /// Validates `bytes` as UTF-8.
 pub fn validate_utf8(bytes: &[u8]) -> Result<(), Utf8Error> {
-    simdutf8::compat::from_utf8(bytes)
-        .map(|_| ())
-        .map_err(|e| Utf8Error {
-            valid_up_to: e.valid_up_to(),
-            error_len: e.error_len(),
-        })
+    simdutf8::compat::from_utf8(bytes).map(|_| ())
 }
 
 #[cfg(test)]
