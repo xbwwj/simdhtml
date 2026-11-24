@@ -71,23 +71,11 @@ pub struct ParseOptions {
 
 impl<'a> Document<'a> {
     /// Parses `input` into a flattened document with default [`ParseOptions`].
-    ///
-    /// The input is *bytes*, not a string: the encoding is sniffed and decoded
-    /// per the HTML specification (see [`encoding`]).
-    ///
-    /// The default [`RepairMode`] is [`RepairMode::None`]: no implied tags and
-    /// no adoption-agency machinery.  Ask for [`RepairMode::Spec`] through
-    /// [`Document::parse_with`] when the WHATWG tree is required.
     pub fn parse(input: &'a [u8]) -> Result<Self> {
         Self::parse_with(input, ParseOptions::default())
     }
 
     /// Parses `input` with explicit [`ParseOptions`].
-    ///
-    /// [`RepairMode::None`] skips HTML error recovery entirely: the tree is the
-    /// flat result of "a start tag opens, a matching end tag closes", which is
-    /// cheaper and is what a caller gets to choose when the markup is already
-    /// well-formed (or when it wants the unrepaired nesting).
     pub fn parse_with(input: &'a [u8], options: ParseOptions) -> Result<Self> {
         let decoded = match options.encoding {
             EncodingMode::Sniff => encoding::decode(input),
@@ -101,35 +89,16 @@ impl<'a> Document<'a> {
                 }
             }
         };
-        build(decoded, options.repair)
+        parse_inner(decoded, options.repair)
     }
 }
 
 impl Document<'static> {
     /// Parses `input`, taking ownership of it.
-    ///
-    /// This is [`Document::parse`] for a buffer the caller would otherwise have
-    /// to keep alive next to the document (a fetched response body, or the
-    /// result of a binding's argument conversion).
-    ///
-    /// Transcoding a legacy encoding still allocates; what this avoids is the
-    /// document borrowing the caller's buffer, which would tie it to a local
-    /// and stop [`crate::Document`] from being returned from a function.
-    ///
-    /// # Errors
-    ///
-    /// [`ParseError::InputTooLarge`] for oversized input.
     pub fn parse_owned(input: Vec<u8>) -> Result<Self> {
         Self::parse_owned_with(input, ParseOptions::default())
     }
 
-    /// [`Document::parse_owned`] with explicit [`ParseOptions`].
-    ///
-    /// # Errors
-    ///
-    /// [`ParseError::InvalidUtf8`] when [`EncodingMode::Utf8`] was asked for
-    /// and the bytes are not UTF-8, and [`ParseError::InputTooLarge`] for
-    /// oversized input.
     pub fn parse_owned_with(input: Vec<u8>, options: ParseOptions) -> Result<Self> {
         let decoded = match options.encoding {
             EncodingMode::Sniff => encoding::decode_owned(input),
@@ -143,11 +112,11 @@ impl Document<'static> {
                 }
             }
         };
-        build(decoded, options.repair)
+        parse_inner(decoded, options.repair)
     }
 }
 
-fn build(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Document<'_>> {
+fn parse_inner(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Document<'_>> {
     let index = markup::scan(&decoded.bytes)?;
     let tokens = tokenizer::tokenize(&decoded.bytes, &index);
     let mut doc = tree_builder::build_with(decoded.bytes, &index, tokens, repair);
