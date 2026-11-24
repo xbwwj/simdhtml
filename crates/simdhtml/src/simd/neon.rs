@@ -3,14 +3,12 @@ use super::{BLOCK_SIZE, NEED_ALL, NEED_GT, NEED_LT, NEED_QUOTES, StructuralMasks
 /// NEON [`super::classify`].
 #[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: NEON is part of the base aarch64 ISA.
     unsafe { classify_neon(block) }
 }
 
 /// NEON [`super::probe_lt`].
 #[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: NEON is part of the base aarch64 ISA.
     unsafe { probe_lt_neon(block) }
 }
 
@@ -18,7 +16,6 @@ pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: the caller has NEON enabled (this fn requires it too).
     unsafe { classify_impl(block, NEED_ALL) }
 }
 
@@ -26,7 +23,6 @@ pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMask
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: the caller has NEON enabled (this fn requires it too).
     unsafe {
         let lt = lt_mask(block);
         if lt == 0 {
@@ -40,13 +36,11 @@ pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<Structu
 
 #[target_feature(enable = "neon")]
 unsafe fn classify_neon(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: this function has NEON enabled.
     unsafe { classify_impl(block, NEED_ALL) }
 }
 
 #[target_feature(enable = "neon")]
 unsafe fn probe_lt_neon(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: this function has NEON enabled.
     unsafe { probe_lt_inline(block) }
 }
 
@@ -54,7 +48,7 @@ unsafe fn probe_lt_neon(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
 unsafe fn lt_mask(block: &[u8; BLOCK_SIZE]) -> u64 {
     use std::arch::aarch64::{uint8x16_t, vceqq_u8, vdupq_n_u8, vld1q_u8};
 
-    // SAFETY: NEON is enabled; the block is 64 valid bytes.
+    // SAFETY: the block is 64 valid bytes.
     unsafe {
         let ptr = block.as_ptr();
         let needle = vdupq_n_u8(b'<');
@@ -72,8 +66,7 @@ unsafe fn classify_impl(block: &[u8; BLOCK_SIZE], need: u8) -> StructuralMasks {
 
     let mut m = StructuralMasks::default();
 
-    // SAFETY: NEON is enabled; the block is 64 valid bytes; unaligned loads
-    // are permitted.
+    // SAFETY: the block is 64 valid bytes; unaligned loads are permitted.
     unsafe {
         let ptr = block.as_ptr();
         let v0 = vld1q_u8(ptr);
@@ -115,10 +108,6 @@ unsafe fn classify_impl(block: &[u8; BLOCK_SIZE], need: u8) -> StructuralMasks {
 ///
 /// This is public because the selector's dense `tag_code` scan in `simdsel`
 /// needs the same 16-bit lane mask that the block classifier builds.
-///
-/// # Safety
-///
-/// The CPU must support NEON (guaranteed on aarch64).
 #[inline]
 #[target_feature(enable = "neon")]
 pub unsafe fn movemask_u16(v: std::arch::aarch64::uint8x16_t) -> u16 {
@@ -126,7 +115,7 @@ pub unsafe fn movemask_u16(v: std::arch::aarch64::uint8x16_t) -> u16 {
 
     const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
 
-    // SAFETY: NEON is enabled; WEIGHTS has 16 readable bytes.
+    // SAFETY: WEIGHTS has 16 readable bytes.
     unsafe {
         let bits = vandq_u8(v, vld1q_u8(WEIGHTS.as_ptr()));
         let lo = u16::from(vaddv_u8(vget_low_u8(bits)));

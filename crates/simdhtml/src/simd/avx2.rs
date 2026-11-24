@@ -3,21 +3,18 @@ use super::{BLOCK_SIZE, StructuralMasks};
 /// AVX2 implementation of [`super::classify`].
 #[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: installed in the dispatch table only after the AVX2 check.
     unsafe { classify_markup_avx2(block) }
 }
 
 /// PCLMULQDQ implementation of [`super::prefix_xor`].
 #[must_use]
 pub fn prefix_xor(x: u64) -> u64 {
-    // SAFETY: installed in the dispatch table only after the PCLMULQDQ check.
     unsafe { prefix_xor_clmul(x) }
 }
 
 /// AVX2 implementation of [`super::probe_lt`].
 #[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: installed in the dispatch table only after the AVX2 check.
     unsafe { probe_lt_inline(block) }
 }
 
@@ -29,7 +26,6 @@ pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     use super::{NEED_ALL, NEED_LT};
-    // SAFETY: the caller has AVX2 enabled (this fn requires it too).
     unsafe {
         let lt = classify_impl(block, NEED_LT).lt;
         if lt == 0 {
@@ -51,13 +47,11 @@ pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<Structu
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: the caller has AVX2 enabled (this fn requires it too).
     unsafe { classify_markup_avx2(block) }
 }
 
 #[target_feature(enable = "avx2")]
 unsafe fn classify_markup_avx2(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: this function has AVX2 enabled.
     unsafe { classify_impl(block, super::NEED_ALL) }
 }
 
@@ -76,15 +70,13 @@ unsafe fn classify_impl(block: &[u8; BLOCK_SIZE], need: u8) -> StructuralMasks {
 
     let mut m = StructuralMasks::default();
 
-    // SAFETY: AVX2 is enabled; the block is 64 valid bytes; unaligned loads
-    // are permitted.
+    // SAFETY: the block is 64 valid bytes; unaligned loads are permitted.
     unsafe {
         let lo = _mm256_loadu_si256(block.as_ptr().cast::<__m256i>());
         let hi = _mm256_loadu_si256(block.as_ptr().add(32).cast::<__m256i>());
 
         #[inline(always)]
         unsafe fn eq_mask(v: __m256i, byte: u8) -> u32 {
-            // SAFETY: called from an AVX2 context.
             unsafe {
                 _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, _mm256_set1_epi8(byte as i8))) as u32
             }

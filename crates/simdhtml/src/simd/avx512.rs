@@ -3,14 +3,12 @@ use super::{BLOCK_SIZE, NEED_ALL, NEED_GT, NEED_LT, NEED_QUOTES, StructuralMasks
 /// AVX-512 [`super::classify`].
 #[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: installed in the dispatch table only after the AVX-512BW check.
     unsafe { classify_avx512(block) }
 }
 
 /// AVX-512 [`super::probe_lt`].
 #[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: installed in the dispatch table only after the AVX-512BW check.
     unsafe { probe_lt_avx512(block) }
 }
 
@@ -18,7 +16,6 @@ pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: the caller has AVX-512 enabled (this fn requires it too).
     unsafe { classify_impl(block, NEED_ALL) }
 }
 
@@ -26,7 +23,6 @@ pub(crate) unsafe fn classify_inline(block: &[u8; BLOCK_SIZE]) -> StructuralMask
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: the caller has AVX-512 enabled (this fn requires it too).
     unsafe {
         let lt = lt_mask(block);
         if lt == 0 {
@@ -40,13 +36,11 @@ pub(crate) unsafe fn probe_lt_inline(block: &[u8; BLOCK_SIZE]) -> Option<Structu
 
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn classify_avx512(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
-    // SAFETY: this function has AVX-512 enabled.
     unsafe { classify_impl(block, NEED_ALL) }
 }
 
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn probe_lt_avx512(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
-    // SAFETY: this function has AVX-512 enabled.
     unsafe { probe_lt_inline(block) }
 }
 
@@ -56,7 +50,7 @@ unsafe fn lt_mask(block: &[u8; BLOCK_SIZE]) -> u64 {
         __m512i, _mm512_cmpeq_epi8_mask, _mm512_loadu_si512, _mm512_set1_epi8,
     };
 
-    // SAFETY: AVX-512 is enabled; the block is 64 valid bytes.
+    // SAFETY: the block is 64 valid bytes.
     unsafe {
         let v = _mm512_loadu_si512(block.as_ptr().cast::<__m512i>());
         _mm512_cmpeq_epi8_mask(v, _mm512_set1_epi8(b'<' as i8))
@@ -71,8 +65,7 @@ unsafe fn classify_impl(block: &[u8; BLOCK_SIZE], need: u8) -> StructuralMasks {
 
     let mut m = StructuralMasks::default();
 
-    // SAFETY: AVX-512 is enabled; the block is 64 valid bytes; unaligned loads
-    // are permitted.
+    // SAFETY: the block is 64 valid bytes; unaligned loads are permitted.
     unsafe {
         let v = _mm512_loadu_si512(block.as_ptr().cast::<__m512i>());
 
