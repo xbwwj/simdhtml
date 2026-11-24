@@ -3,9 +3,18 @@ use std::ops::Range;
 
 use encoding_rs::Encoding;
 
-use crate::NodeId;
 use crate::character_reference::decode_character_references;
 use crate::tokenizer::{AttrQuote, TagToken};
+
+/// A node index in a flattened document.
+pub type NodeId = u32;
+
+/// Sentinel used for "no node".
+pub const NO_NODE: NodeId = u32::MAX;
+/// Sentinel used for "no tag".
+pub const NO_TAG: u32 = u32::MAX;
+
+pub type TagId = u32;
 
 /// A parsed HTML document. It borrows the input when that already was UTF-8 and
 /// owns the transcoded bytes otherwise.
@@ -57,7 +66,7 @@ pub struct Document<'a> {
 
     // Attribute columns: name/value spans plus quoting style, one entry per
     // attribute in source order.
-    pub attr_tag: Vec<u32>,
+    pub attr_tag: Vec<TagId>,
     pub attr_name_start: Vec<u32>,
     pub attr_name_len: Vec<u16>,
     pub attr_value_start: Vec<u32>,
@@ -89,7 +98,6 @@ pub struct Document<'a> {
 pub struct NodeTape {
     /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].  This is the scan column.
     pub kind: Vec<u8>,
-    /// Every other field, one record per node.
     pub record: Vec<NodeRecord>,
 }
 
@@ -103,7 +111,7 @@ pub struct NodeRecord {
     subtree_end: NodeId,
     depth: u16,
     span: Range<u32>,
-    tag_token: u32,
+    tag_token: TagId,
     outer_end: u32,
 }
 
@@ -199,7 +207,7 @@ pub(crate) struct NodeRecordInit {
     pub subtree_end: NodeId,
     pub depth: u16,
     pub span: Range<u32>,
-    pub tag_token: u32,
+    pub tag_token: TagId,
     pub outer_end: u32,
     pub raw_text: bool,
     /// Set on [`NodeKind::Comment`] nodes that came from a doctype.
@@ -563,7 +571,7 @@ impl Document<'_> {
             let parent = self.node(self.node(id).parent());
             let parent_ns = parent.namespace();
             let at_point = match parent.tag_token() {
-                crate::NO_TAG => false,
+                NO_TAG => false,
                 tag => {
                     let name = self.tag_name_lower(tag).to_ascii_lowercase();
                     let svg_point = matches!(name.as_ref(), "foreignobject" | "desc" | "title");
