@@ -4,7 +4,6 @@ members = [
     "crates/simdsel",
     "crates/simdsel-py",
     "bench",
-    "fuzz",
 ]
 default-members = [
     "crates/simdhtml",
