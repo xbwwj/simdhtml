@@ -580,6 +580,8 @@ impl TreeBuilder {
 
 #[cfg(test)]
 mod tests {
+    use crate::ParseOptions;
+
     use super::*;
 
     /// Validates the preorder tape invariants that everything downstream
@@ -649,7 +651,10 @@ mod tests {
             let none = crate::Document::parse(input.as_bytes()).unwrap();
             let spec = crate::Document::parse_with(
                 input.as_bytes(),
-                crate::ParseOptions::new().repair(crate::RepairMode::Spec),
+                ParseOptions {
+                    repair: RepairMode::Spec,
+                    ..Default::default()
+                },
             )
             .unwrap();
             assert_preorder(&none);
@@ -671,7 +676,10 @@ mod tests {
         let none = crate::Document::parse(input.as_bytes()).unwrap();
         let spec = crate::Document::parse_with(
             input.as_bytes(),
-            crate::ParseOptions::new().repair(crate::RepairMode::Spec),
+            ParseOptions {
+                repair: RepairMode::Spec,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(
@@ -690,7 +698,10 @@ mod tests {
         let none = crate::Document::parse(input.as_bytes()).unwrap();
         let spec = crate::Document::parse_with(
             input.as_bytes(),
-            crate::ParseOptions::new().repair(crate::RepairMode::Spec),
+            ParseOptions {
+                repair: RepairMode::Spec,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert!(none.implied_names.is_empty());

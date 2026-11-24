@@ -69,22 +69,6 @@ pub struct ParseOptions {
     pub encoding: EncodingMode,
 }
 
-impl ParseOptions {
-    /// Sets [`Self::repair`].
-    #[must_use]
-    pub const fn repair(mut self, repair: RepairMode) -> Self {
-        self.repair = repair;
-        self
-    }
-
-    /// Sets [`Self::encoding`].
-    #[must_use]
-    pub const fn encoding(mut self, encoding: EncodingMode) -> Self {
-        self.encoding = encoding;
-        self
-    }
-}
-
 impl<'a> Document<'a> {
     /// Parses `input` into a flattened document with default [`ParseOptions`].
     ///
@@ -180,7 +164,10 @@ mod tests {
     fn doc(input: &'static str) -> Document<'static> {
         Document::parse_with(
             input.as_bytes(),
-            ParseOptions::default().repair(RepairMode::Spec),
+            ParseOptions {
+                repair: RepairMode::Spec,
+                ..Default::default()
+            },
         )
         .unwrap()
     }
@@ -353,8 +340,14 @@ mod tests {
     fn default_repair_mode_is_none() {
         assert_eq!(RepairMode::default(), RepairMode::None);
         let none = Document::parse(b"<p>a").unwrap();
-        let spec = Document::parse_with(b"<p>a", ParseOptions::default().repair(RepairMode::Spec))
-            .unwrap();
+        let spec = Document::parse_with(
+            b"<p>a",
+            ParseOptions {
+                repair: RepairMode::Spec,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(none.node_tape.len() < spec.node_tape.len());
         assert!(
             !none
@@ -374,7 +367,10 @@ mod tests {
         assert!(matches!(
             Document::parse_with(
                 b"<p>\xFF</p>",
-                ParseOptions::default().encoding(EncodingMode::Utf8)
+                ParseOptions {
+                    encoding: EncodingMode::Utf8,
+                    ..Default::default()
+                },
             ),
             Err(ParseError::InvalidUtf8(_))
         ));

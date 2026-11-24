@@ -1,4 +1,4 @@
-use simdsel::Selector;
+use simdsel::{ParseOptions, RepairMode, Selector};
 
 const HTML: &str = r#"\
 <html>
@@ -174,7 +174,10 @@ fn owned_entries_are_lifetime_free() {
     // Options still apply to owned input.
     let spec = Selector::from_vec_with(
         b"<p>x".to_vec(),
-        simdsel::ParseOptions::new().repair(simdsel::RepairMode::Spec),
+        ParseOptions {
+            repair: RepairMode::Spec,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(spec.css("html").unwrap().len(), 1);

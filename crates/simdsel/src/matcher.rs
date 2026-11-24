@@ -1883,7 +1883,10 @@ mod tests {
     fn doc(html: &str) -> Document<'_> {
         Document::parse_with(
             html.as_bytes(),
-            ParseOptions::new().repair(RepairMode::Spec),
+            ParseOptions {
+                repair: RepairMode::Spec,
+                ..Default::default()
+            },
         )
         .unwrap()
     }

@@ -17,7 +17,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use simdhtml::{Document, NO_NODE, NodeKind};
+use simdhtml::{Document, NO_NODE, NodeKind, ParseOptions, RepairMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TNode {
@@ -723,7 +723,10 @@ struct FileStats {
 fn parse_mode(data: &str) -> Result<simdhtml::Document<'_>, simdhtml::ParseError> {
     simdhtml::Document::parse_with(
         data.as_bytes(),
-        simdhtml::ParseOptions::new().repair(simdhtml::RepairMode::Spec),
+        ParseOptions {
+            repair: RepairMode::Spec,
+            ..Default::default()
+        },
     )
 }
 

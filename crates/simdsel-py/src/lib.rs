@@ -336,7 +336,7 @@ impl PySelector {
             let text = text.filter(|text| !text.is_empty()).ok_or_else(|| {
                 PyValueError::new_err("Selector needs text, body, or root arguments")
             })?;
-            let doc = Document::parse_owned_with(Vec::new(), ParseOptions::new())
+            let doc = Document::parse_owned_with(Vec::new(), ParseOptions::default())
                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
             let mut selector = Self::scalar(Rc::new(doc), text, _expr);
             selector.base_url = base_url;
@@ -357,15 +357,17 @@ impl PySelector {
             (Some(text), _) => match encoding {
                 Some(encoding) => (
                     encoding.encode(text).0.into_owned(),
-                    ParseOptions::new()
-                        .repair(repair)
-                        .encoding(EncodingMode::Explicit(encoding)),
+                    ParseOptions {
+                        repair,
+                        encoding: EncodingMode::Explicit(encoding),
+                    },
                 ),
                 None => (
                     text.as_bytes().to_vec(),
-                    ParseOptions::new()
-                        .repair(repair)
-                        .encoding(EncodingMode::Utf8),
+                    ParseOptions {
+                        repair,
+                        encoding: EncodingMode::Utf8,
+                    },
                 ),
             },
             // `body=` is bytes off the wire, so the charset comes from `encoding=`
@@ -381,10 +383,14 @@ impl PySelector {
                 (
                     body,
                     match encoding {
-                        Some(encoding) => ParseOptions::new()
-                            .repair(repair)
-                            .encoding(EncodingMode::Explicit(encoding)),
-                        None => ParseOptions::new().repair(repair),
+                        Some(encoding) => ParseOptions {
+                            repair,
+                            encoding: EncodingMode::Explicit(encoding),
+                        },
+                        None => ParseOptions {
+                            repair,
+                            ..Default::default()
+                        },
                     },
                 )
             }
@@ -417,7 +423,7 @@ impl PySelector {
         bodies
             .into_iter()
             .map(|body| {
-                let doc = Document::parse_owned_with(body, ParseOptions::new())
+                let doc = Document::parse_owned_with(body, ParseOptions::default())
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
                 let doc = Rc::new(doc);
                 Ok(Self {
