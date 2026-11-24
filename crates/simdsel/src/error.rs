@@ -1,4 +1,3 @@
-use simdhtml::ParseError;
 use thiserror::Error;
 
 use crate::{MatchError, SelectorError};
@@ -8,7 +7,7 @@ use crate::{MatchError, SelectorError};
 pub enum Error {
     /// Parsing the HTML failed.
     #[error("parse error: {0}")]
-    Parse(#[from] ParseError),
+    Parse(#[from] simdhtml::ParseError),
 
     /// The selector was invalid.
     #[error("selector error: {0}")]

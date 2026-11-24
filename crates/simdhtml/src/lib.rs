@@ -1,12 +1,15 @@
 //! HTML parsing into a preorder [`Document`].
 //!
-//! Pipeline: `markup` finds tag spans and opaque regions, `tokenizer` cuts them
-//! into tag/attribute tokens, `tree_builder` builds the node tape, and
-//! `document` is the resulting model.  `simd` holds the byte kernels.
+//! Pipeline:
+//!
+//! 1. markup
+//! 2. tokenizer
+//! 3. tree_builder
 
 mod character_reference;
 mod document;
 pub mod encoding;
+mod error;
 pub mod markup;
 pub mod simd;
 mod tag_code;
@@ -14,14 +17,13 @@ pub mod token_data;
 mod tokenizer;
 mod tree_builder;
 
-use thiserror::Error;
-
 pub use crate::character_reference::decode_character_references;
 pub use crate::document::{
     Document, DocumentFlags, NS_HTML, NS_MATH, NS_MATH_TEXT_POINT, NS_SVG, NS_SVG_HTML_POINT, Node,
     NodeKind, Warning, WarningKind,
 };
 pub use crate::document::{normalize_newlines, replace_nulls};
+pub use crate::error::{ParseError, Result};
 pub use crate::markup::{MarkupDiagnostics, MarkupError, MarkupIndex, OpaqueRegion, RegionKind};
 pub use crate::tag_code::code_of as tag_code_of;
 pub use crate::tokenizer::{AttrQuote, TagKind, TagToken};
@@ -33,24 +35,6 @@ pub type NodeId = u32;
 pub const NO_NODE: NodeId = u32::MAX;
 /// Sentinel used for "no tag".
 pub const NO_TAG: u32 = u32::MAX;
-
-/// Fatal parse errors.
-///
-/// Recoverable problems are reported per-document in [`Document::flags`] and
-/// [`Document::warnings`] instead.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum ParseError {
-    #[error("input exceeds u32::MAX bytes")]
-    InputTooLarge,
-    #[error("invalid utf-8: {0}")]
-    InvalidUtf8(encoding::Utf8Error),
-}
-
-impl From<MarkupError> for ParseError {
-    fn from(_: MarkupError) -> Self {
-        Self::InputTooLarge
-    }
-}
 
 /// Where the parser gets its UTF-8 bytes from.
 ///
@@ -146,7 +130,7 @@ impl<'a> Document<'a> {
     /// # Errors
     ///
     /// [`ParseError::InputTooLarge`] for oversized input.
-    pub fn parse(input: &'a [u8]) -> Result<Self, ParseError> {
+    pub fn parse(input: &'a [u8]) -> Result<Self> {
         Self::parse_with(input, ParseOptions::new())
     }
 
@@ -162,7 +146,7 @@ impl<'a> Document<'a> {
     /// [`ParseError::InvalidUtf8`] when [`EncodingMode::Utf8`] was asked for
     /// and the bytes are not UTF-8, and [`ParseError::InputTooLarge`] for
     /// oversized input.
-    pub fn parse_with(input: &'a [u8], options: ParseOptions) -> Result<Self, ParseError> {
+    pub fn parse_with(input: &'a [u8], options: ParseOptions) -> Result<Self> {
         let decoded = match options.encoding {
             EncodingMode::Sniff => encoding::decode(input),
             EncodingMode::Explicit(encoding) => encoding::decode_with(input, encoding),
@@ -193,7 +177,7 @@ impl Document<'static> {
     /// # Errors
     ///
     /// [`ParseError::InputTooLarge`] for oversized input.
-    pub fn parse_owned(input: Vec<u8>) -> Result<Self, ParseError> {
+    pub fn parse_owned(input: Vec<u8>) -> Result<Self> {
         Self::parse_owned_with(input, ParseOptions::new())
     }
 
@@ -204,7 +188,7 @@ impl Document<'static> {
     /// [`ParseError::InvalidUtf8`] when [`EncodingMode::Utf8`] was asked for
     /// and the bytes are not UTF-8, and [`ParseError::InputTooLarge`] for
     /// oversized input.
-    pub fn parse_owned_with(input: Vec<u8>, options: ParseOptions) -> Result<Self, ParseError> {
+    pub fn parse_owned_with(input: Vec<u8>, options: ParseOptions) -> Result<Self> {
         let decoded = match options.encoding {
             EncodingMode::Sniff => encoding::decode_owned(input),
             EncodingMode::Explicit(encoding) => encoding::decode_with_owned(input, encoding),
@@ -221,7 +205,7 @@ impl Document<'static> {
     }
 }
 
-fn build(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Document<'_>, ParseError> {
+fn build(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Document<'_>> {
     let index = markup::scan(&decoded.bytes)?;
     let tokens = tokenizer::tokenize(&decoded.bytes, &index);
     let mut doc = tree_builder::build_with(decoded.bytes, &index, tokens, repair);

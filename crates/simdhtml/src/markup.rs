@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use thiserror::Error;
 
+use crate::error::{ParseError, Result};
 use crate::simd::StructuralMasks;
 
 use self::region::{StartTagKind, eq_ignore_ascii_case, start_tag_kind};
@@ -157,9 +158,9 @@ fn scan_blocks(scanner: &mut Scanner<'_>, input: &[u8]) {
 }
 
 /// Builds the markup index for `input`.
-pub fn scan(input: &[u8]) -> Result<MarkupIndex, MarkupError> {
+pub fn scan(input: &[u8]) -> Result<MarkupIndex> {
     if input.len() > u32::MAX as usize {
-        return Err(MarkupError::InputTooLarge);
+        return Err(ParseError::InputTooLarge);
     }
 
     let mut scanner = Scanner::new(input);

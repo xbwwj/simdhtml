@@ -25,7 +25,7 @@ pub use record::{MatchKind, MatchRecord};
 pub use selector::{Selector, record_attrib, record_text, select_query_within_cache};
 pub use simdhtml::{
     AttrQuote, Document, DocumentFlags, EncodingMode, NO_NODE, NO_TAG, Node, NodeId, NodeKind,
-    ParseError, ParseOptions, RepairMode, TagKind, TagToken, Warning, WarningKind,
+    ParseOptions, RepairMode, TagKind, TagToken, Warning, WarningKind,
 };
 pub use xpath::{NodeRef, RefKind, Value, XPath, XPathError};
 
