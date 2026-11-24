@@ -19,8 +19,8 @@ mod tree_builder;
 
 pub use crate::character_reference::decode_character_references;
 pub use crate::document::{
-    Document, DocumentFlags, NS_HTML, NS_MATH, NS_MATH_TEXT_POINT, NS_SVG, NS_SVG_HTML_POINT, Node,
-    NodeKind, Warning, WarningKind,
+    Document, DocumentFlags, NS_HTML, NS_MATH_TEXT_POINT, NS_MATHML, NS_SVG, NS_SVG_HTML_POINT,
+    Node, NodeKind, Warning, WarningKind,
 };
 pub use crate::document::{normalize_newlines, replace_nulls};
 pub use crate::error::{ParseError, Result};

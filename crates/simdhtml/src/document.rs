@@ -150,15 +150,12 @@ pub const NORMALIZE_NEWLINES_BIT: u8 = 0b1000_0000;
 /// Set on [`NodeKind::Comment`] nodes that are doctypes.
 pub const DOCTYPE_BIT: u8 = 0b0100_0000;
 
-/// Namespace of an element: HTML (the default).
 pub const NS_HTML: u8 = 0;
-/// Namespace of an element: SVG.
 pub const NS_SVG: u8 = 1;
-/// Namespace of an element: MathML.
-pub const NS_MATH: u8 = 2;
+pub const NS_MATHML: u8 = 2;
 
-/// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`): the
-/// element is MathML, but its children belong to HTML.
+/// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`)
+/// the element is MathML, but its children belong to HTML.
 pub const NS_MATH_TEXT_POINT: u8 = 3;
 
 /// An SVG element whose children are HTML (`foreignObject`, `desc`, `title`).
@@ -345,7 +342,7 @@ impl Node<'_> {
     #[inline]
     pub fn namespace(&self) -> u8 {
         match self.tape.namespace_of(self.id) {
-            NS_MATH_TEXT_POINT => NS_MATH,
+            NS_MATH_TEXT_POINT => NS_MATHML,
             NS_SVG_HTML_POINT => NS_SVG,
             other => other,
         }

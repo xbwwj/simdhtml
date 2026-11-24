@@ -124,7 +124,7 @@ pub(crate) const ADJUSTED_ATTR_NAMES: [(&str, &str); 59] = [
 /// Index+1 for an adjusted attribute name, given the element's namespace: the
 /// SVG table applies to SVG elements only, the MathML entry to MathML only.
 pub(crate) fn adjusted_attr_index(name: &[u8], ns: u8) -> Option<u8> {
-    let (table, offset): (&[(&str, &str)], usize) = if ns == crate::NS_MATH {
+    let (table, offset): (&[(&str, &str)], usize) = if ns == crate::NS_MATHML {
         (
             &ADJUSTED_ATTR_NAMES[SVG_ATTRIBUTE_COUNT..],
             SVG_ATTRIBUTE_COUNT,
@@ -188,7 +188,7 @@ fn raw_mode_namespace(name: &[u8]) -> u8 {
     if name.eq_ignore_ascii_case(b"svg") {
         crate::NS_SVG
     } else if name.eq_ignore_ascii_case(b"math") {
-        crate::NS_MATH
+        crate::NS_MATHML
     } else {
         crate::NS_HTML
     }
@@ -217,7 +217,7 @@ pub(crate) fn build_with<'a>(
             continue;
         }
         let ns = builder.node_tape.namespace_of(element);
-        if ns != crate::NS_SVG && ns != crate::NS_MATH {
+        if ns != crate::NS_SVG && ns != crate::NS_MATHML {
             continue;
         }
         for attr in tokens.tags[tag_index].attr_range.clone() {

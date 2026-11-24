@@ -3,22 +3,19 @@ use std::ops::Range;
 use crate::MarkupIndex;
 use crate::tag_code::TagCode;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TagKind {
-    Start,
-    End,
-}
-
 /// A parsed tag: span, kind and the attribute range it owns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TagToken {
     pub span: Range<u32>,
-
     pub kind: TagKind,
-
     pub attr_range: Range<u32>,
-
     pub self_closing: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TagKind {
+    Start,
+    End,
 }
 
 /// Attribute value quoting style, which decides whether references are decoded.

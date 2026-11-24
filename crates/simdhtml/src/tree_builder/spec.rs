@@ -891,7 +891,7 @@ impl SpecTree<'_> {
             if own == b"svg" {
                 element_ns = crate::NS_SVG;
             } else if own == b"math" {
-                element_ns = crate::NS_MATH;
+                element_ns = crate::NS_MATHML;
             }
         }
         if element_ns == crate::NS_SVG
@@ -1189,7 +1189,7 @@ impl SpecTree<'_> {
         let named = |names: &[&[u8]]| names.iter().any(|name| self.is(id, name));
         let base = match ns {
             crate::NS_SVG => named(&[b"foreignobject", b"desc", b"title"]),
-            crate::NS_MATH => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
+            crate::NS_MATHML => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
             _ => named(&[
                 b"applet",
                 b"caption",
@@ -1255,7 +1255,7 @@ impl SpecTree<'_> {
         let named = |names: &[&[u8]]| names.iter().any(|name| self.is(id, name));
         match ns {
             crate::NS_SVG => named(&[b"foreignobject", b"desc", b"title"]),
-            crate::NS_MATH => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
+            crate::NS_MATHML => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
             _ => false,
         }
     }
@@ -3447,7 +3447,7 @@ impl SpecTree<'_> {
                 .iter()
                 .any(|name| self.is(id, name));
         }
-        if ns != crate::NS_MATH {
+        if ns != crate::NS_MATHML {
             return false;
         }
         if !self.is(id, b"annotation-xml") {

@@ -407,7 +407,7 @@ fn simdhtml_node(doc: &Document, id: u32) -> TNode {
             let name = doc.tag_name_lower(node.tag_token());
             let name = match node.namespace() {
                 simdhtml::NS_SVG => format!("svg {name}"),
-                simdhtml::NS_MATH => format!("math {name}"),
+                simdhtml::NS_MATHML => format!("math {name}"),
                 _ => name.into_owned(),
             };
             TNode::Element {
