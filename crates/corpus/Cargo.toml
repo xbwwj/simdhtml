@@ -1,0 +1,11 @@
+[package]
+name = "simdhtml-corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Streaming benchmark corpora: Common Crawl WARC and SWDE 7z, read directly"
+publish = false
+
+[dependencies]
+flate2 = { workspace = true }
+warc = { workspace = true }

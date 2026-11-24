@@ -9,3 +9,6 @@ description = "CSS selector compilation and set-at-a-time matching over simdhtml
 rustc-hash = { workspace = true }
 simdhtml = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+simdhtml-corpus = { workspace = true }

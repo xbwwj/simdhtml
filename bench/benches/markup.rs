@@ -6,9 +6,10 @@
 //! SIMDHTML_DATA_DIR=/data cargo bench -p simdhtml-bench --bench markup
 //! ```
 //!
-//! Input is `data/commoncrawl/html` and `data/prepared/swde`, sampled through
-//! `simdhtml-bench` (see `data/README.md`).  There is no synthetic filler pattern:
-//! the point is the tag/attribute/region distribution real pages have.
+//! Input is streamed from the Common Crawl `.warc.gz` and the SWDE `.7z`
+//! archives (`simdhtml-corpus`, see `data/README.md`), sampled to a bounded
+//! number of documents.  There is no synthetic filler pattern: the point is the
+//! tag/attribute/region distribution real pages have.
 
 use std::hint::black_box;
 
@@ -43,12 +44,6 @@ fn main() {
     for dataset in [Dataset::CommonCrawl, Dataset::Swde] {
         if let Some(corpus) = Corpus::load(dataset) {
             found = true;
-            println!(
-                "{}: {} docs, {:.1} MiB",
-                corpus.name,
-                corpus.len(),
-                corpus.mib()
-            );
             bench_corpus(&mut c, &corpus);
         }
     }

@@ -1,0 +1,10 @@
+ul.reset
+div.mainBox
+span.title
+div.starRating
+td.corner
+div.copyright
+ul.links
+ul.last
+ul.first
+li.first

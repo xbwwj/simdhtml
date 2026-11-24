@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/corpus",
   "crates/simdhtml",
   "crates/simdsel",
   "crates/simdsel-py",
@@ -40,4 +41,5 @@ warc = "0.4"
 # internal crates
 
 simdhtml = { path = "crates/simdhtml" }
+simdhtml-corpus = { path = "crates/corpus" }
 simdsel = { path = "crates/simdsel" }

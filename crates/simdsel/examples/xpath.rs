@@ -1,7 +1,10 @@
-//! Dumps each document's tree plus XPath results as JSON, to test difference with
-//! `scripts/xpath_diff.py`.
+//! Dumps each document's tree plus XPath results as JSON, to test difference
+//! with `scripts/xpath_diff.py`.
 //!
-//! Usage: `cargo run --release --example xpath -- <html-dir> <exprs-file> [limit]`
+//! Usage: `cargo run --release --example xpath -- <cc|swde|html-dir> <exprs-file> [limit]`
+//!
+//! A dataset name streams the corpus through `simdhtml-corpus` (no extraction);
+//! a directory is read as a flat set of `.html` files.
 
 use std::{
     env, fs,
@@ -89,7 +92,7 @@ fn dump_tree(out: &mut String, doc: &Document<'_>) {
 }
 
 /// Times evaluation only: documents and expressions are compiled/parsed once.
-fn bench(files: &[std::path::PathBuf], exprs: &[String]) {
+fn bench(docs_in: &[(String, Vec<u8>)], exprs: &[String]) {
     let compiled: Vec<XPath> = exprs
         .iter()
         .map(|expr| XPath::new(expr).unwrap_or_else(|error| panic!("{expr}: {error}")))
@@ -99,12 +102,11 @@ fn bench(files: &[std::path::PathBuf], exprs: &[String]) {
     let mut docs: Vec<Document<'_>> = Vec::new();
     let mut buffers: Vec<Vec<u8>> = Vec::new();
 
-    for path in files {
-        let bytes = fs::read(path).expect("read doc");
+    for (_, bytes) in docs_in {
         if bytes.len() > 1 << 20 {
             continue;
         }
-        buffers.push(bytes);
+        buffers.push(bytes.clone());
     }
 
     let mut lengths = Vec::new();
@@ -145,22 +147,26 @@ fn bench(files: &[std::path::PathBuf], exprs: &[String]) {
     );
 }
 
-fn main() {
-    let mut args = env::args().skip(1);
+/// Load `limit` documents from a dataset name or a flat html directory.
+fn load_docs(source: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
+    use simdhtml_corpus::{Corpus, Dataset, SamplePolicy};
 
-    let dir = args.next().expect("html dir");
-    let exprs_path = args.next().expect("expressions file");
-    let limit: usize = args.next().map_or(40, |n| n.parse().expect("limit"));
+    if let Some(dataset) = Dataset::from_name(source) {
+        let policy = SamplePolicy {
+            limit: limit.max(1),
+            bytes: 256 << 20,
+            ..SamplePolicy::default()
+        };
+        let corpus =
+            Corpus::load_with(dataset, &policy).unwrap_or_else(|err| panic!("{source}: {err}"));
+        return corpus
+            .docs
+            .into_iter()
+            .map(|doc| (doc.id, doc.bytes))
+            .collect();
+    }
 
-    let exprs: Vec<String> = fs::read_to_string(&exprs_path)
-        .expect("read exprs")
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect();
-
-    let mut files: Vec<_> = fs::read_dir(&dir)
+    let mut files: Vec<_> = fs::read_dir(source)
         .expect("read dir")
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -172,17 +178,42 @@ fn main() {
         .collect();
     files.sort();
     files.truncate(limit);
+    files
+        .into_iter()
+        .map(|path| {
+            let id = path
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            (id, fs::read(&path).expect("read doc"))
+        })
+        .collect()
+}
+
+fn main() {
+    let mut args = env::args().skip(1);
+
+    let source = args.next().expect("corpus (cc|swde) or html dir");
+    let exprs_path = args.next().expect("expressions file");
+    let limit: usize = args.next().map_or(40, |n| n.parse().expect("limit"));
+
+    let exprs: Vec<String> = fs::read_to_string(&exprs_path)
+        .expect("read exprs")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect();
+
+    let docs = load_docs(&source, limit);
 
     if env::var("XPATH_BENCH").is_ok() {
-        bench(&files, &exprs);
+        bench(&docs, &exprs);
         return;
     }
 
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
-    for path in files {
-        let bytes = fs::read(&path).expect("read doc");
-
+    for (id, bytes) in docs {
         if bytes.len() > 1 << 20 {
             continue;
         }
@@ -192,7 +223,7 @@ fn main() {
 
         let mut line = String::new();
         line.push_str("{\"doc\":");
-        json_string(&mut line, &path.file_name().unwrap().to_string_lossy());
+        json_string(&mut line, &id);
         line.push(',');
         dump_tree(&mut line, &doc);
         line.push_str(",\"results\":[");

@@ -1,0 +1,10 @@
+tr.required
+td.value
+td.label
+tr.odd
+div.ad
+th.value
+input.hidden
+div.promo
+p.servedAdlabel
+ul.tools

@@ -8,8 +8,9 @@
 //! Engines: simdsel in both repair modes, scraper (html5ever + servo
 //! selectors), and dom_query (html5ever + its own selector engine).
 //!
-//! Documents come from `simdhtml-bench`; CC uses the checked-in workload selector
-//! sets, SWDE uses the per-site selectors from the generated manifest.
+//! Documents are streamed from the real corpora by `simdhtml-corpus`; CC uses
+//! the checked-in selector sets (`bench/selectors/cc`), SWDE the per-site
+//! selectors (`bench/selectors/swde`).
 
 use std::hint::black_box;
 
@@ -19,42 +20,10 @@ use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bytes_group, env};
 use simdsel::Selector;
 
-fn read_queries(path: &std::path::Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
-}
-
-fn workload_sets() -> Vec<(String, Vec<String>)> {
-    let Some(dir) = env::workload_dir() else {
-        return Vec::new();
-    };
-    ["cc10.sel", "complex8.sel"]
-        .into_iter()
-        .filter_map(|name| {
-            let queries = read_queries(&dir.join(name));
-            (!queries.is_empty()).then(|| (name.trim_end_matches(".sel").to_string(), queries))
-        })
-        .collect()
-}
-
+/// Per-document selectors, when the corpus carries them (SWDE).
 fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {
-    let mut out = Vec::with_capacity(corpus.docs.len());
-    let mut any = false;
-    for doc in &corpus.docs {
-        let queries = doc
-            .queries
-            .as_ref()
-            .map(|path| read_queries(path))
-            .unwrap_or_default();
-        any |= !queries.is_empty();
-        out.push(queries);
-    }
-    any.then_some(out)
+    let any = corpus.docs.iter().any(|doc| !doc.queries.is_empty());
+    any.then(|| corpus.docs.iter().map(|doc| doc.queries.clone()).collect())
 }
 
 fn bench_simdsel_common(
@@ -68,9 +37,14 @@ fn bench_simdsel_common(
         b.iter(|| {
             let mut matches = 0usize;
             for doc in &corpus.docs {
-                let parsed =
-                    Document::parse_with(black_box(&doc.bytes), ParseOptions::new().repair(mode))
-                        .expect("parse");
+                let parsed = Document::parse_with(
+                    black_box(&doc.bytes),
+                    ParseOptions {
+                        repair: mode,
+                        ..Default::default()
+                    },
+                )
+                .expect("parse");
                 let selector = Selector::new(parsed);
                 for (_, queries) in sets {
                     for query in queries {
@@ -95,9 +69,14 @@ fn bench_simdsel_per_doc(
         b.iter(|| {
             let mut matches = 0usize;
             for (doc, queries) in corpus.docs.iter().zip(queries) {
-                let parsed =
-                    Document::parse_with(black_box(&doc.bytes), ParseOptions::new().repair(mode))
-                        .expect("parse");
+                let parsed = Document::parse_with(
+                    black_box(&doc.bytes),
+                    ParseOptions {
+                        repair: mode,
+                        ..Default::default()
+                    },
+                )
+                .expect("parse");
                 let selector = Selector::new(parsed);
                 for query in queries {
                     matches =
@@ -197,14 +176,13 @@ fn bench_per_doc(c: &mut Criterion, corpus: &Corpus, queries: &[Vec<String>]) {
 
 fn main() {
     let mut c = Criterion::default().configure_from_args();
-    let sets = workload_sets();
     let mut found = false;
 
     if let Some(cc) = Corpus::load(Dataset::CommonCrawl) {
         found = true;
-        println!("{}: {} docs, {:.1} MiB", cc.name, cc.len(), cc.mib());
+        let sets = cc.workload_sets();
         if sets.is_empty() {
-            eprintln!("extract/cc: no workload selectors; skipped");
+            eprintln!("extract/cc: no selectors under bench/selectors/cc; skipped");
         } else {
             bench_common(&mut c, &cc, &sets);
         }
@@ -212,11 +190,10 @@ fn main() {
 
     if let Some(swde) = Corpus::load(Dataset::Swde) {
         found = true;
-        println!("{}: {} docs, {:.1} MiB", swde.name, swde.len(), swde.mib());
         if let Some(queries) = per_doc_queries(&swde) {
             bench_per_doc(&mut c, &swde, &queries);
         } else {
-            eprintln!("extract/swde: manifest has no per-site selectors; skipped");
+            eprintln!("extract/swde: corpus has no per-site selectors; skipped");
         }
     }
 

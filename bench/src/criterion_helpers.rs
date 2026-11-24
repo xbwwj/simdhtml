@@ -4,7 +4,7 @@
 use criterion::{BenchmarkGroup, BenchmarkId, Criterion, Throughput, measurement::WallTime};
 use std::hint::black_box;
 
-use crate::Corpus;
+use crate::Subset;
 
 /// A group whose throughput is `bytes`.
 pub fn bytes_group<'a>(
@@ -33,7 +33,7 @@ pub fn count_group<'a>(
 /// not optimised away.
 pub fn bench_parse<F>(
     group: &mut BenchmarkGroup<'_, WallTime>,
-    corpus: &Corpus,
+    subset: &Subset<'_>,
     mode: &str,
     mut f: F,
 ) where
@@ -42,7 +42,7 @@ pub fn bench_parse<F>(
     group.bench_function(BenchmarkId::new("parse", mode), |b| {
         b.iter(|| {
             let mut nodes = 0usize;
-            for doc in &corpus.docs {
+            for doc in &subset.docs {
                 nodes = nodes.wrapping_add(f(black_box(&doc.bytes)));
             }
             black_box(nodes)

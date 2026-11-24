@@ -22,16 +22,13 @@ python = ["dep:pyo3-embed"]
 [dependencies]
 criterion = { workspace = true }
 dom_query = { workspace = true, optional = true }
-flate2 = { workspace = true }
 html5ever_039 = { workspace = true, optional = true }
 markup5ever_rcdom = { workspace = true, optional = true }
 pyo3-embed = { workspace = true, optional = true }
 scraper = { workspace = true, optional = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 simdhtml = { workspace = true }
+simdhtml-corpus = { workspace = true }
 simdsel = { workspace = true }
-warc = { workspace = true }
 
 [[bench]]
 name = "markup"

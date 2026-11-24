@@ -33,7 +33,10 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
                     nodes = nodes.wrapping_add(
                         Document::parse_with(
                             black_box(&doc.bytes),
-                            ParseOptions::new().repair(RepairMode::None),
+                            ParseOptions {
+                                repair: RepairMode::None,
+                                ..Default::default()
+                            },
                         )
                         .expect("parse")
                         .node_tape
@@ -51,7 +54,10 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
                     nodes = nodes.wrapping_add(
                         Document::parse_with(
                             black_box(&doc.bytes),
-                            ParseOptions::new().repair(RepairMode::Spec),
+                            ParseOptions {
+                                repair: RepairMode::Spec,
+                                ..Default::default()
+                            },
                         )
                         .expect("parse")
                         .node_tape

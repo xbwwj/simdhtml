@@ -5,18 +5,14 @@ edition.workspace = true
 license.workspace = true
 description = "Fast read-only HTML parsing into a preorder FlatDoc"
 
-[features]
-bench-external = ["dep:html5ever_039", "dep:markup5ever_rcdom"]
-
 [dependencies]
 bitflags = { workspace = true }
 encoding_rs = { workspace = true }
 entities = { workspace = true }
-html5ever_039 = { workspace = true, optional = true }
-markup5ever_rcdom = { workspace = true, optional = true }
 memchr = { workspace = true }
 simdutf8 = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+simdhtml-corpus = { workspace = true }

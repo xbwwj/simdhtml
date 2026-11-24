@@ -10,9 +10,8 @@
 //! SIMDHTML_RUN_CORPUS_TESTS=1 cargo test -p simdhtml --test mode_agreement -- --nocapture
 //! ```
 
-mod common;
-
 use simdhtml::{Document, NO_NODE, NodeKind, ParseOptions, RepairMode};
+use simdhtml_corpus::{Dataset, SamplePolicy};
 
 fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
     for id in 0..doc.node_tape.len() as u32 {
@@ -70,34 +69,30 @@ fn corpus_preorder_invariants() {
         eprintln!("skip mode_agreement: set SIMDHTML_RUN_CORPUS_TESTS=1 to walk commoncrawl");
         return;
     }
-    let Some(root) = common::commoncrawl_dir() else {
-        common::skip("mode_agreement", None);
-        return;
-    };
     let limit: usize = std::env::var("AGREEMENT_LIMIT")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(500);
-    let mut files: Vec<_> = std::fs::read_dir(&root)
-        .expect("corpus")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "html"))
-        .collect();
-    files.sort();
-    files.truncate(limit);
+    let policy = SamplePolicy {
+        limit,
+        bytes: 256 * 1024 * 1024,
+        ..SamplePolicy::default()
+    };
+    let Ok(corpus) = simdhtml_corpus::Corpus::load_with(Dataset::CommonCrawl, &policy) else {
+        simdhtml_corpus::skip("mode_agreement", None);
+        return;
+    };
 
     let mut parsed = 0usize;
-    for path in &files {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
+    for source in &corpus.docs {
+        let bytes = &source.bytes;
         if bytes.len() > 1 << 20 {
             continue;
         }
+        let path = std::path::Path::new(&source.id);
         for repair in [RepairMode::Spec, RepairMode::None] {
             if let Ok(doc) = Document::parse_with(
-                &bytes,
+                bytes,
                 ParseOptions {
                     repair,
                     ..Default::default()

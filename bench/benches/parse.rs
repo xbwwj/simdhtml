@@ -7,8 +7,8 @@
 //!
 //! `RepairMode::None` is the default and therefore the headline number; `Spec`
 //! is measured on the same bytes so the cost of the specification's tree is
-//! visible.  Inputs come from `simdhtml-bench` (`commoncrawl` and
-//! `swde`), never from a synthetic pattern.
+//! visible.  Inputs are streamed from the real corpora by `simdhtml-corpus`
+//! (Common Crawl `.warc.gz` and SWDE `.7z`), never synthesised.
 
 use criterion::Criterion;
 use simdhtml::{Document, ParseOptions, RepairMode};
@@ -24,10 +24,16 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
         let mut group = bytes_group(c, &name, subset.total_bytes());
         for mode in MODES {
             bench_parse(&mut group, &subset, &format!("{mode:?}"), |bytes| {
-                Document::parse_with(bytes, ParseOptions::new().repair(mode))
-                    .expect("parse")
-                    .node_tape
-                    .len()
+                Document::parse_with(
+                    bytes,
+                    ParseOptions {
+                        repair: mode,
+                        ..Default::default()
+                    },
+                )
+                .expect("parse")
+                .node_tape
+                .len()
             });
         }
         group.finish();
@@ -40,12 +46,6 @@ fn main() {
     for dataset in [Dataset::CommonCrawl, Dataset::Swde] {
         if let Some(corpus) = Corpus::load(dataset) {
             found = true;
-            println!(
-                "{}: {} docs, {:.1} MiB",
-                corpus.name,
-                corpus.len(),
-                corpus.mib()
-            );
             bench_corpus(&mut c, &corpus);
         }
     }

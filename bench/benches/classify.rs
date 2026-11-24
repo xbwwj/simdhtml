@@ -7,7 +7,8 @@
 //!
 //! This is a kernel-level bench (dispatch vs scalar `classify`, and
 //! `prefix_xor`), but the bytes still come from `data/commoncrawl` and
-//! `data/prepared/swde` via `simdhtml-bench`; no repeated synthetic pattern.
+//! the Common Crawl and SWDE archives via `simdhtml-corpus`; no repeated
+//! synthetic pattern.
 
 use std::hint::black_box;
 

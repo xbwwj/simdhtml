@@ -1,18 +1,13 @@
 //! WPT html5lib tree-construction compatibility test.
 //!
-//! This integration test discovers the WPT checkout through `simdhtml-bench`
-//! (`data/wpt` by default, `SIMDHTML_WPT_DIR` to override). It compares
-//! `simdhtml` against the expected
-//! tree; with `--features bench-external` it also runs html5ever over the same
-//! cases, which is the only way to read the score as "compatible with X% of
-//! what a reference parser does" instead of "X% of the corpus".
+//! The `.dat` files come from the `data/wpt` submodule
+//! (`html/syntax/parsing/resources`, the html5lib tree-construction suite,
+//! maintained in WPT).  It compares `simdhtml` against the expected tree.
 //!
 //! ```text
 //! cargo test -p simdhtml --test wpt_tree_construction -- --nocapture
 //! SIMDHTML_REQUIRE_TESTDATA=1 cargo test -p simdhtml --test wpt_tree_construction
 //! ```
-
-mod common;
 
 use std::fs;
 use std::path::Path;
@@ -464,79 +459,6 @@ fn simdhtml_tree(doc: &Document) -> Vec<TNode> {
     merge_text(out)
 }
 
-/// Reference tree from html5ever, in the same shape as the expected tree.
-///
-/// Only compiled with `bench-external`; the comparison is the point, the
-/// dependency is not.
-#[cfg(feature = "bench-external")]
-fn html5ever_tree(html: &str) -> Vec<TNode> {
-    use html5ever_039::driver::parse_document;
-    use html5ever_039::tendril::TendrilSink;
-    use markup5ever_rcdom::{Handle, NodeData, RcDom};
-
-    fn walk(handle: &Handle) -> Option<TNode> {
-        match &handle.data {
-            NodeData::Document => None,
-            NodeData::Doctype { name, .. } => Some(TNode::Doctype(name.to_string())),
-            NodeData::Text { contents } => Some(TNode::Text(contents.borrow().to_string())),
-            NodeData::Comment { contents } => Some(TNode::Comment(contents.to_string())),
-            NodeData::Element { name, attrs, .. } => {
-                let mut attrs: Vec<(String, String)> = attrs
-                    .borrow()
-                    .iter()
-                    .map(|a| (a.name.local.to_string(), a.value.to_string()))
-                    .collect();
-                attrs.sort();
-                let children = handle.children.borrow().iter().filter_map(walk).collect();
-                Some(TNode::Element {
-                    name: name.local.to_string(),
-                    attrs,
-                    children,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    let dom = parse_document(RcDom::default(), Default::default()).one(html.to_string());
-    merge_text(
-        dom.document
-            .children
-            .borrow()
-            .iter()
-            .filter_map(walk)
-            .collect(),
-    )
-}
-
-/// Drops `svg `/`math ` namespace prefixes.
-///
-/// The html5ever tree in this harness is built from local names only, so the
-/// "do we agree with the reference parser" metric compares names without the
-/// namespace that the WPT expected trees do carry.
-#[cfg(feature = "bench-external")]
-fn strip_namespaces(nodes: Vec<TNode>) -> Vec<TNode> {
-    nodes
-        .into_iter()
-        .map(|node| match node {
-            TNode::Element {
-                name,
-                attrs,
-                children,
-            } => TNode::Element {
-                name: name
-                    .strip_prefix("svg ")
-                    .or_else(|| name.strip_prefix("math "))
-                    .unwrap_or(&name)
-                    .to_owned(),
-                attrs,
-                children: strip_namespaces(children),
-            },
-            other => other,
-        })
-        .collect()
-}
-
 /// A one-line description of where two trees first disagree.
 ///
 /// The WPT score says *how many* cases fail; this says *which rule* fails
@@ -712,10 +634,6 @@ struct FileStats {
     total: usize,
     skipped: usize,
     passed: usize,
-    #[cfg(feature = "bench-external")]
-    reference_passed: usize,
-    #[cfg(feature = "bench-external")]
-    agree: usize,
 }
 
 /// Parses under the only caliber there is: the tree the standard's algorithms
@@ -740,10 +658,6 @@ fn process_file(
         total: 0,
         skipped: 0,
         passed: 0,
-        #[cfg(feature = "bench-external")]
-        reference_passed: 0,
-        #[cfg(feature = "bench-external")]
-        agree: 0,
     };
     let file_started = std::time::Instant::now();
     let file_name = file
@@ -790,20 +704,6 @@ fn process_file(
                 entry.1.push(test.data.clone());
             }
         }
-
-        #[cfg(feature = "bench-external")]
-        {
-            let reference = normalize_root(html5ever_tree(&test.data));
-            if reference == expected {
-                stats.reference_passed += 1;
-            }
-            // "Do we produce what html5ever produces", regardless of which of
-            // the two is right about the expected tree.
-            if strip_namespaces(reference) == strip_namespaces(actual) {
-                stats.agree += 1;
-            }
-            let _ = simdhtml_ok;
-        }
     }
     if std::env::var_os("WPT_TIME").is_some() {
         eprintln!("{}: {:?}", file_name, file_started.elapsed());
@@ -819,8 +719,8 @@ const MIN_PASS: usize = 1691;
 
 #[test]
 fn wpt_tree_construction() {
-    let Some(root) = common::wpt_resources() else {
-        common::skip("wpt_tree_construction", common::data_dir().as_deref());
+    let Some(root) = simdhtml_corpus::wpt_resources() else {
+        simdhtml_corpus::skip("wpt_tree_construction", None);
         return;
     };
     let mut files: Vec<_> = fs::read_dir(&root)
@@ -844,12 +744,6 @@ fn wpt_tree_construction() {
         eprintln!("skip wpt_tree_construction: no usable WPT cases");
         return;
     }
-    #[cfg(feature = "bench-external")]
-    let (reference_passed, agree): (usize, usize) = (
-        stats.iter().map(|s| s.reference_passed).sum(),
-        stats.iter().map(|s| s.agree).sum(),
-    );
-
     let mut per_file: Vec<(String, usize, usize)> = stats
         .into_iter()
         .map(|s| (s.name, s.total, s.passed))
@@ -860,14 +754,6 @@ fn wpt_tree_construction() {
          simdhtml {:5.1}% ({passed}/{total})",
         passed as f64 * 100.0 / total as f64,
     );
-    #[cfg(feature = "bench-external")]
-    println!(
-        "html5ever {:5.1}% ({reference_passed}/{total})\n\
-         simdhtml == html5ever: {:5.1}% ({agree}/{total})",
-        reference_passed as f64 * 100.0 / total as f64,
-        agree as f64 * 100.0 / total as f64,
-    );
-
     per_file.sort_by_key(|(_, _, pass)| *pass);
     println!("\nsimdhtml by file (lowest first):");
     for (name, n, pass) in per_file.iter() {

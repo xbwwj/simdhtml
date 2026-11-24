@@ -1,0 +1,10 @@
+td.label
+td.data
+span.searchBarLabel
+select.searchBarDropDownList
+a.aFooterLink
+span.data
+span.topBorder
+span.rightBorder
+span.leftBorder
+div.item

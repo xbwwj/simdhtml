@@ -1520,10 +1520,9 @@ dependencies = [
  "bitflags",
  "encoding_rs",
  "entities",
- "html5ever 0.39.0",
- "markup5ever_rcdom",
  "memchr",
  "proptest",
+ "simdhtml-corpus",
  "simdutf8",
  "thiserror",
 ]
@@ -1534,15 +1533,20 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "dom_query",
- "flate2",
  "html5ever 0.39.0",
  "markup5ever_rcdom",
  "pyo3",
  "scraper",
- "serde",
- "serde_json",
  "simdhtml",
+ "simdhtml-corpus",
  "simdsel",
+]
+
+[[package]]
+name = "simdhtml-corpus"
+version = "0.1.0"
+dependencies = [
+ "flate2",
  "warc",
 ]
 
@@ -1552,6 +1556,7 @@ version = "0.1.0"
 dependencies = [
  "rustc-hash",
  "simdhtml",
+ "simdhtml-corpus",
  "thiserror",
 ]
 

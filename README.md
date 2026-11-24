@@ -8,7 +8,7 @@ A SIMD-accelerated HTML parser and CSS selector.
 
 ## Performance results
 
-The following figures show how fast simdhtml extracts data from HTML. The task is to extract main content from most webpages and extract structured data from specified sites. The bench currently runs on an AMD Ryzen 5600 processor with single core. You can reproduce the result on your device with `./x bench`.
+The following figures show how fast simdhtml extracts data from HTML. The task is to extract main content from most webpages and extract structured data from specified sites. The bench currently runs on an AMD Ryzen 5600 processor with single core. You can reproduce the result on your device with `make bench`.
 
 [![Main content and link extraction: Common Crawl, parse + 18 CSS selectors](./figures/main-content-and-link-extraction.svg)](./figures/main-content-and-link-extraction.svg)
 
@@ -71,26 +71,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Development
 
+`make` is the only entry point; `make` alone lists the targets.
+
 ```bash
-./x data          # download/extract Common Crawl WARC, prepare SWDE + manifests
-./x test          # Rust tests + PyO3 binding smoke test
-./x test-wpt      # WPT tree-construction conformance
-./x test-corpus   # Common Crawl preorder-invariant test
-./x bench         # full Criterion run: simdhtml/simdsel + html5ever/scraper/dom_query + Python
-./x bench-quick   # smaller/faster run for iteration
-./x check         # cargo fmt --check + cargo clippy
-./x bundle        # portable tarball: binaries + data + Python runtime
+make data          # fetch raw inputs: Common Crawl WARC + SWDE submodule (once)
+make extract-data  # unpack SWDE and build its index (once, ~1 min, 8 GiB disk)
+make test          # Rust tests
+make test-wpt      # html5lib tree-construction conformance
+make test-corpus   # Common Crawl preorder-invariant test
+make bench         # full Criterion run: simdhtml/simdsel + html5ever/scraper/dom_query + Python
+make bench-quick   # sampled run for iteration (no plots)
+make check         # cargo fmt --check + cargo clippy
+make info          # current mode, data and binaries
 ```
 
-`./x bundle` builds a `.tar.zst` (falls back to `.tar.gz`) with the prebuilt
-bench binaries, a sampled data tree, the uv site-packages, and a portable
-CPython runtime.  Unpack it on the target machine and run `./x bench`; no build
-or network is needed.
+Benchmarks stream the corpora instead of loading them: Common Crawl is read
+straight from the `.warc.gz`, SWDE from the index that `make extract-data`
+writes, so a quick run keeps ~100 documents in memory instead of 8 GiB.
+
+`make bundle` builds a tarball with the prebuilt bench binaries, this
+`Makefile`, and the raw corpora (`.warc.gz` + `.7z`) for a machine without a
+Rust toolchain:
 
 ```bash
-./x bundle                              # sample data (500 CC + 500 SWDE docs)
-./x bundle --data full --with-warc      # full corpora
-./x bundle --data none                  # binaries/Python only
-./x bundle --cc-docs 100 --swde-docs 100
-./x bundle --format gz
+make bundle                       # target/bundle/simdhtml-bundle-<stamp>.tar
+
+# on the target machine (needs make + p7zip):
+tar -xf simdhtml-bundle-*.tar && cd simdhtml-bundle-*/
+make data           # no-op: the raw inputs are in the tarball
+make extract-data   # unpack SWDE once
+make bench-quick    # runs bin/*, never cargo
 ```

@@ -1,0 +1,11 @@
+# general extraction: links, images, text, article/table shapes
+a[href]
+img[src]
+p
+h1
+h2
+article
+main
+div.content
+table
+ul li

@@ -1,0 +1,10 @@
+# complex combinators and pseudo-classes: the shallow predicates in cc10 never
+# exercise the bitmap merge, so this set does.
+div.article > ul.list li a[data-id]
+nav ul li > a[href^="/"]
+section > div > p:first-child
+ul > li:nth-child(2n+1)
+div:not(.ad) p
+table > tbody > tr > td:nth-child(2)
+a[href$=".pdf"]
+h2 + p

@@ -13,7 +13,7 @@
 //!
 //! The Python packages are installed by:
 //!     uv sync --group bench
-//! and `./x bench` points `PYO3_PYTHON` at that environment.
+//! and `make bench` makes the venv importable through `PYTHONPATH`.
 
 use std::hint::black_box;
 
@@ -24,42 +24,9 @@ use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::python::add_venv_sys_path;
 use simdhtml_bench::{bytes_group, env};
 
-fn read_queries(path: &std::path::Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
-}
-
-fn workload_sets() -> Vec<(String, Vec<String>)> {
-    let Some(dir) = env::workload_dir() else {
-        return Vec::new();
-    };
-    ["cc10.sel", "complex8.sel"]
-        .into_iter()
-        .filter_map(|name| {
-            let queries = read_queries(&dir.join(name));
-            (!queries.is_empty()).then(|| (name.trim_end_matches(".sel").to_string(), queries))
-        })
-        .collect()
-}
-
 fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {
-    let mut out = Vec::with_capacity(corpus.docs.len());
-    let mut any = false;
-    for doc in &corpus.docs {
-        let queries = doc
-            .queries
-            .as_ref()
-            .map(|path| read_queries(path))
-            .unwrap_or_default();
-        any |= !queries.is_empty();
-        out.push(queries);
-    }
-    any.then_some(out)
+    let any = corpus.docs.iter().any(|doc| !doc.queries.is_empty());
+    any.then(|| corpus.docs.iter().map(|doc| doc.queries.clone()).collect())
 }
 
 #[derive(Clone, Copy)]
@@ -196,7 +163,6 @@ fn main() {
         }
     });
 
-    let sets = workload_sets();
     let mut c = Criterion::default().configure_from_args();
     let mut found = false;
 
@@ -207,8 +173,9 @@ fn main() {
             .iter()
             .map(|doc| String::from_utf8_lossy(&doc.bytes).into_owned())
             .collect();
+        let sets = cc.workload_sets();
         if sets.is_empty() {
-            eprintln!("python/cc: no workload selectors; skipped");
+            eprintln!("python/cc: no selectors under bench/selectors/cc; skipped");
         } else {
             bench_common(&mut c, &cc, &sets, &strings);
         }
@@ -224,7 +191,7 @@ fn main() {
         if let Some(queries) = per_doc_queries(&swde) {
             bench_per_doc(&mut c, &swde, &queries, &strings);
         } else {
-            eprintln!("python/swde: manifest has no per-site selectors; skipped");
+            eprintln!("python/swde: corpus has no per-site selectors; skipped");
         }
     }
 

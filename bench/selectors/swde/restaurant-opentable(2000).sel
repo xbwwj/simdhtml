@@ -1,0 +1,10 @@
+tr.BVRatingRow
+li.botNavItem
+a.botNavLink
+td.BVcustomerRatingScore
+td.BVcustomerRatingItem
+td.BVcustomerRating
+span.BVratingSummaryFinal
+div.clearme
+span.BVtagCount
+li.BVtagFilter

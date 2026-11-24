@@ -10,9 +10,9 @@
 //! * `warm` — parse once in setup, then reuse one `Selector`/`QueryCache` per
 //!   document across the query list.
 //!
-//! The query sets are the checked-in workload files (`data/prepared/workload`),
+//! The query sets are the checked-in selector files (`bench/selectors/cc`),
 //! not synthetic documents.  SWDE uses the per-site selectors carried by the
-//! generated manifest.
+//! corpus (checked-in `bench/selectors/swde/<site>.sel`).
 
 use std::hint::black_box;
 
@@ -22,43 +22,10 @@ use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bytes_group, env};
 use simdsel::Selector;
 
-fn read_queries(path: &std::path::Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
-}
-
-fn workload_sets() -> Vec<(String, Vec<String>)> {
-    let Some(dir) = env::workload_dir() else {
-        return Vec::new();
-    };
-    ["cc10.sel", "complex8.sel"]
-        .into_iter()
-        .filter_map(|name| {
-            let queries = read_queries(&dir.join(name));
-            (!queries.is_empty()).then(|| (name.trim_end_matches(".sel").to_string(), queries))
-        })
-        .collect()
-}
-
-/// Per-document selectors from the SWDE manifest, when present.
+/// Per-document selectors, when the corpus carries them (SWDE).
 fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {
-    let mut out = Vec::with_capacity(corpus.docs.len());
-    let mut any = false;
-    for doc in &corpus.docs {
-        let queries = doc
-            .queries
-            .as_ref()
-            .map(|path| read_queries(path))
-            .unwrap_or_default();
-        any |= !queries.is_empty();
-        out.push(queries);
-    }
-    any.then_some(out)
+    let any = corpus.docs.iter().any(|doc| !doc.queries.is_empty());
+    any.then(|| corpus.docs.iter().map(|doc| doc.queries.clone()).collect())
 }
 
 fn bench_cold(c: &mut Criterion, corpus: &Corpus, sets: &[(String, Vec<String>)]) {
@@ -137,7 +104,7 @@ fn bench_warm(c: &mut Criterion, corpus: &Corpus, sets: &[(String, Vec<String>)]
 
 fn bench_swde(c: &mut Criterion, corpus: &Corpus) {
     let Some(queries) = per_doc_queries(corpus) else {
-        eprintln!("select/swde: manifest has no per-site selectors; skipped");
+        eprintln!("select/swde: corpus has no per-site selectors; skipped");
         return;
     };
 
@@ -189,14 +156,13 @@ fn bench_swde(c: &mut Criterion, corpus: &Corpus) {
 
 fn main() {
     let mut c = Criterion::default().configure_from_args();
-    let sets = workload_sets();
     let mut found = false;
 
     if let Some(cc) = Corpus::load(Dataset::CommonCrawl) {
         found = true;
-        println!("{}: {} docs, {:.1} MiB", cc.name, cc.len(), cc.mib());
+        let sets = cc.workload_sets();
         if sets.is_empty() {
-            eprintln!("select/cc: no workload selectors under data/prepared/workload; skipped");
+            eprintln!("select/cc: no selectors under bench/selectors/cc; skipped");
         } else {
             bench_cold(&mut c, &cc, &sets);
             bench_warm(&mut c, &cc, &sets);
@@ -204,7 +170,6 @@ fn main() {
     }
     if let Some(swde) = Corpus::load(Dataset::Swde) {
         found = true;
-        println!("{}: {} docs, {:.1} MiB", swde.name, swde.len(), swde.mib());
         bench_swde(&mut c, &swde);
     }
     if !found {

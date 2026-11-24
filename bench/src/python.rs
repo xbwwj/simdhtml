@@ -1,7 +1,7 @@
 //! Small helpers for the embedded-CPython benchmarks/tests.
 //!
 //! PyO3's auto-initialized interpreter does not inherit a uv virtualenv's
-//! site-packages.  `./x bench` exports `PYTHONPATH`, but this
+//! site-packages.  `make bench` exports `PYTHONPATH`, but this
 //! fallback keeps a direct run working when `PYO3_PYTHON` already points at the
 //! venv.
 
