@@ -1,7 +1,6 @@
 /target
 /dist
 /data/commoncrawl/
-/data/swde/
 /data/prepared/
 *.so
 *.pyd
