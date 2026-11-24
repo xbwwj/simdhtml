@@ -6,6 +6,6 @@ license.workspace = true
 description = "CSS selector compilation and set-at-a-time matching over simdhtml FlatDoc"
 
 [dependencies]
-rustc-hash.workspace = true
-simdhtml.workspace = true
-thiserror.workspace = true
+rustc-hash = { workspace = true }
+simdhtml = { workspace = true }
+thiserror = { workspace = true }

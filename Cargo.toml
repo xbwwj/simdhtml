@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "crates/simdhtml",
-    "crates/simdsel",
-    "crates/simdsel-py",
-    "bench",
+  "crates/simdhtml",
+  "crates/simdsel",
+  "crates/simdsel-py",
+  "bench",
 ]
 default-members = [
-    "crates/simdhtml",
-    "crates/simdsel",
+  "crates/simdhtml",
+  "crates/simdsel",
 ]
 resolver = "3"
 
@@ -17,40 +17,27 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-# Internal crates
-simdhtml = { path = "crates/simdhtml" }
-simdsel = { path = "crates/simdsel" }
-
-# Parsing and text processing
+bitflags = "2"
+criterion = "0.8"
+dom_query = "0.29"
+encoding_rs = "0.8.44"
 entities = "1"
+flate2 = "1"
 html5ever_039 = { package = "html5ever", version = "0.39" }
 markup5ever_rcdom = "0.39"
 memchr = "2"
-simdutf8 = "0.1"
-flate2 = "1"
-warc = "0.4"
-
-# SIMD and data structures
-bitflags = "2"
-rustc-hash = "2"
-
-# Selector and HTML comparison
-dom_query = "0.29"
-scraper = { version = "0.27", default-features = false }
-
-# Python bindings
-pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
-# Embedding CPython in the bench binary: no extension-module, auto-initialize.
-pyo3-embed = { package = "pyo3", version = "0.30", features = ["auto-initialize"] }
-
-# Error handling
-thiserror = "2.0.21"
-
-# Testing and benchmarking
 proptest = "1"
-criterion = "0.8"
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
+pyo3-embed = { package = "pyo3", version = "0.30", features = ["auto-initialize"] }
+rustc-hash = "2"
+scraper = { version = "0.27", default-features = false }
 serde = "1"
 serde_json = "1"
-libfuzzer-sys = "0.4"
+simdutf8 = "0.1"
+thiserror = "2.0.21"
+warc = "0.4"
 
-encoding_rs = "0.8.44"
+# internal crates
+
+simdhtml = { path = "crates/simdhtml" }
+simdsel = { path = "crates/simdsel" }

@@ -6,18 +6,17 @@ license.workspace = true
 description = "Fast read-only HTML parsing into a preorder FlatDoc"
 
 [features]
-# Internal feature for external parse-only comparisons. Do not use in normal builds.
 bench-external = ["dep:html5ever_039", "dep:markup5ever_rcdom"]
 
 [dependencies]
-bitflags.workspace = true
-entities.workspace = true
+bitflags = { workspace = true }
+encoding_rs = { workspace = true }
+entities = { workspace = true }
 html5ever_039 = { workspace = true, optional = true }
 markup5ever_rcdom = { workspace = true, optional = true }
-memchr.workspace = true
-simdutf8.workspace = true
+memchr = { workspace = true }
+simdutf8 = { workspace = true }
 thiserror = { workspace = true }
-encoding_rs = { workspace = true }
 
 [dev-dependencies]
-proptest.workspace = true
+proptest = { workspace = true }
