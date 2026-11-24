@@ -8,7 +8,6 @@ mod character_reference;
 mod document;
 pub mod encoding;
 pub mod markup;
-mod repair;
 pub mod simd;
 mod tag_code;
 pub mod token_data;
@@ -24,7 +23,6 @@ pub use crate::document::{
 };
 pub use crate::document::{normalize_newlines, replace_nulls};
 pub use crate::markup::{MarkupDiagnostics, MarkupError, MarkupIndex, OpaqueRegion, RegionKind};
-pub use crate::repair::RepairMode;
 pub use crate::tag_code::code_of as tag_code_of;
 pub use crate::tokenizer::{AttrQuote, TagKind, TagToken};
 
@@ -81,6 +79,19 @@ pub enum EncodingMode {
     /// bytes that are not UTF-8 are an error instead of being read as some
     /// legacy encoding.
     Utf8,
+}
+
+/// How much WHATWG tree-construction recovery to apply.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RepairMode {
+    /// For most web crawling load, there is no need to repair HTML,
+    /// the default [`RepairMode::None`] is sufficient.
+    #[default]
+    None,
+    /// Strictly follows the HTML spec's insertion-mode machine, including
+    /// implied tags, foster parenting, the adoption agency, templates and
+    /// foreign content.
+    Spec,
 }
 
 /// Everything that changes how bytes become a [`Document`].

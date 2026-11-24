@@ -1,7 +1,7 @@
 use std::ops::Range;
 
+use crate::RepairMode;
 use crate::document::{NodeRecordInit, NodeTape};
-use crate::repair::RepairMode;
 
 mod spec;
 use crate::markup::{MarkupIndex, TextRun, TextRuns};

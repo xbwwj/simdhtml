@@ -63,7 +63,7 @@ fn bench_simdsel_common(
     sets: &[(String, Vec<String>)],
     mode: RepairMode,
 ) {
-    let id = format!("simdhtml-{mode}");
+    let id = format!("simdhtml-{mode:?}");
     group.bench_function(&id, |b| {
         b.iter(|| {
             let mut matches = 0usize;
@@ -90,7 +90,7 @@ fn bench_simdsel_per_doc(
     queries: &[Vec<String>],
     mode: RepairMode,
 ) {
-    let id = format!("simdhtml-{mode}");
+    let id = format!("simdhtml-{mode:?}");
     group.bench_function(&id, |b| {
         b.iter(|| {
             let mut matches = 0usize;

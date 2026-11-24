@@ -23,7 +23,7 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
         let name = format!("parse/{}/{bucket}", corpus.name);
         let mut group = bytes_group(c, &name, subset.total_bytes());
         for mode in MODES {
-            bench_parse(&mut group, &subset, &mode.to_string(), |bytes| {
+            bench_parse(&mut group, &subset, &format!("{mode:?}"), |bytes| {
                 Document::parse_with(bytes, ParseOptions::new().repair(mode))
                     .expect("parse")
                     .node_tape
