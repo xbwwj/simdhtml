@@ -17,6 +17,8 @@ pub mod token_data;
 mod tokenizer;
 mod tree_builder;
 
+use encoding_rs::Encoding;
+
 pub use crate::character_reference::decode_character_references;
 pub use crate::document::{
     Document, DocumentFlags, NS_HTML, NS_MATH_TEXT_POINT, NS_MATHML, NS_SVG, NS_SVG_HTML_POINT,
@@ -36,72 +38,38 @@ pub const NO_NODE: NodeId = u32::MAX;
 /// Sentinel used for "no tag".
 pub const NO_TAG: u32 = u32::MAX;
 
-/// Where the parser gets its UTF-8 bytes from.
-///
-/// The input to a parser is *bytes*, not text: the specification starts with
-/// the encoding sniffing algorithm, and roughly half of the real web is not
-/// UTF-8.  This enum is the choice between running that algorithm
-/// ([`Self::Sniff`]), trusting a charset the caller already knows
-/// ([`Self::Explicit`]) and trusting the caller that the bytes already are
-/// UTF-8 ([`Self::Utf8`]).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EncodingMode {
-    /// The specification's sniffing algorithm (see [`encoding`]): byte order
-    /// mark, then `<meta charset>` in the first 1024 bytes, then UTF-8 if the
-    /// bytes validate and windows-1252 otherwise.
+    /// Sniff first 1024 bytes, decide using BOM and `<meta>`.
     #[default]
     Sniff,
-    /// The caller already knows the charset: an HTTP `Content-Type` header, or
-    /// an explicit `encoding=` argument in a binding.  A byte order mark still
-    /// wins; `<meta charset>` declarations no longer do.  Bytes that are
-    /// invalid in `encoding` are replaced and reported through
-    /// [`Document::had_encoding_errors`].
-    ///
-    /// [`encoding::lookup`] turns a label such as `"gbk"` into the `Encoding`.
-    Explicit(&'static encoding_rs::Encoding),
-    /// The input already is UTF-8: the document borrows it unchanged, and
-    /// bytes that are not UTF-8 are an error instead of being read as some
-    /// legacy encoding.
+    /// Caller already knows the charset (e.g. from Content-Type).
+    /// BOM will still win, `<meta>` is ignored.
+    Explicit(&'static Encoding),
+    /// The input is already UTF-8. Non UTF-8 bytes now become an error.
     Utf8,
 }
 
-/// How much WHATWG tree-construction recovery to apply.
+/// How much effort to recover malformed HTMLs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RepairMode {
     /// For most web crawling load, there is no need to repair HTML,
     /// the default [`RepairMode::None`] is sufficient.
     #[default]
     None,
-    /// Strictly follows the HTML spec's insertion-mode machine, including
-    /// implied tags, foster parenting, the adoption agency, templates and
-    /// foreign content.
+    /// HTML spec's tree-construction algorith, including implied tags,
+    /// foster parenting, the adoption agency, templates and foreign content.
     Spec,
 }
 
 /// Everything that changes how bytes become a [`Document`].
-///
-/// The pipeline has two independent knobs - how far tree construction follows
-/// the specification, and where the UTF-8 bytes come from - and the parser used
-/// to expose one function per combination.  They are collected here instead, so
-/// [`Document::parse_with`] is the only entry point that takes arguments.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParseOptions {
-    /// How much tree-construction recovery to apply.
     pub repair: RepairMode,
-    /// How to obtain UTF-8 bytes from the input.
     pub encoding: EncodingMode,
 }
 
 impl ParseOptions {
-    /// The defaults: [`RepairMode::None`] and [`EncodingMode::Sniff`].
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            repair: RepairMode::None,
-            encoding: EncodingMode::Sniff,
-        }
-    }
-
     /// Sets [`Self::repair`].
     #[must_use]
     pub const fn repair(mut self, repair: RepairMode) -> Self {
@@ -126,12 +94,8 @@ impl<'a> Document<'a> {
     /// The default [`RepairMode`] is [`RepairMode::None`]: no implied tags and
     /// no adoption-agency machinery.  Ask for [`RepairMode::Spec`] through
     /// [`Document::parse_with`] when the WHATWG tree is required.
-    ///
-    /// # Errors
-    ///
-    /// [`ParseError::InputTooLarge`] for oversized input.
     pub fn parse(input: &'a [u8]) -> Result<Self> {
-        Self::parse_with(input, ParseOptions::new())
+        Self::parse_with(input, ParseOptions::default())
     }
 
     /// Parses `input` with explicit [`ParseOptions`].
@@ -140,12 +104,6 @@ impl<'a> Document<'a> {
     /// flat result of "a start tag opens, a matching end tag closes", which is
     /// cheaper and is what a caller gets to choose when the markup is already
     /// well-formed (or when it wants the unrepaired nesting).
-    ///
-    /// # Errors
-    ///
-    /// [`ParseError::InvalidUtf8`] when [`EncodingMode::Utf8`] was asked for
-    /// and the bytes are not UTF-8, and [`ParseError::InputTooLarge`] for
-    /// oversized input.
     pub fn parse_with(input: &'a [u8], options: ParseOptions) -> Result<Self> {
         let decoded = match options.encoding {
             EncodingMode::Sniff => encoding::decode(input),
@@ -178,7 +136,7 @@ impl Document<'static> {
     ///
     /// [`ParseError::InputTooLarge`] for oversized input.
     pub fn parse_owned(input: Vec<u8>) -> Result<Self> {
-        Self::parse_owned_with(input, ParseOptions::new())
+        Self::parse_owned_with(input, ParseOptions::default())
     }
 
     /// [`Document::parse_owned`] with explicit [`ParseOptions`].
@@ -222,7 +180,7 @@ mod tests {
     fn doc(input: &'static str) -> Document<'static> {
         Document::parse_with(
             input.as_bytes(),
-            ParseOptions::new().repair(RepairMode::Spec),
+            ParseOptions::default().repair(RepairMode::Spec),
         )
         .unwrap()
     }
@@ -395,8 +353,8 @@ mod tests {
     fn default_repair_mode_is_none() {
         assert_eq!(RepairMode::default(), RepairMode::None);
         let none = Document::parse(b"<p>a").unwrap();
-        let spec =
-            Document::parse_with(b"<p>a", ParseOptions::new().repair(RepairMode::Spec)).unwrap();
+        let spec = Document::parse_with(b"<p>a", ParseOptions::default().repair(RepairMode::Spec))
+            .unwrap();
         assert!(none.node_tape.len() < spec.node_tape.len());
         assert!(
             !none
@@ -416,7 +374,7 @@ mod tests {
         assert!(matches!(
             Document::parse_with(
                 b"<p>\xFF</p>",
-                ParseOptions::new().encoding(EncodingMode::Utf8)
+                ParseOptions::default().encoding(EncodingMode::Utf8)
             ),
             Err(ParseError::InvalidUtf8(_))
         ));

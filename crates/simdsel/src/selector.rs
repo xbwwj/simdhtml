@@ -70,7 +70,7 @@ impl<'a> Selector<'a> {
     pub fn from_text(text: &'a str) -> Result<Self, Error> {
         Self::from_bytes_with(
             text.as_bytes(),
-            ParseOptions::new().encoding(EncodingMode::Utf8),
+            ParseOptions::default().encoding(EncodingMode::Utf8),
         )
     }
 
@@ -270,7 +270,7 @@ impl Selector<'static> {
     pub fn from_string(text: String) -> Result<Self, Error> {
         Self::from_vec_with(
             text.into_bytes(),
-            ParseOptions::new().encoding(EncodingMode::Utf8),
+            ParseOptions::default().encoding(EncodingMode::Utf8),
         )
     }
 }
