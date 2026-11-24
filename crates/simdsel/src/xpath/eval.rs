@@ -140,6 +140,15 @@ impl Evaluator<'_, '_> {
                 step = &path.steps[index];
                 axis = Axis::Descendant;
             }
+            if axis == Axis::Descendant
+                && step.predicates.is_empty()
+                && let NodeTest::Name(name) = &step.test
+                && let Some(named) = self.descendant_named(&set, name)?
+            {
+                set = sorted(named);
+                index += 1;
+                continue;
+            }
             let mut next = Vec::new();
             for node in &set {
                 let candidates = self.axis(axis, *node)?;
@@ -153,6 +162,48 @@ impl Evaluator<'_, '_> {
             index += 1;
         }
         Ok(set)
+    }
+
+    /// Descendant elements named `name`, seeded from the tag-code column.  `None`
+    /// when the name has no dedicated code (the generic axis+test path).
+    fn descendant_named(
+        &mut self,
+        contexts: &[NodeRef],
+        name: &str,
+    ) -> Result<Option<Vec<NodeRef>>, XPathError> {
+        let code = simdhtml::tag_code_of(name.as_bytes());
+        if code == 0 {
+            return Ok(None);
+        }
+        let mut ids: Vec<NodeId> = self
+            .doc
+            .tag_element
+            .iter()
+            .enumerate()
+            .filter_map(|(tag, &element)| {
+                (element != simdhtml::NO_NODE && self.doc.tag_code[tag] == code).then_some(element)
+            })
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+
+        let mut out = Vec::new();
+        for ctx in contexts {
+            let node = self.doc.node(ctx.node_id());
+            if !matches!(node.kind(), NodeKind::Document | NodeKind::Element) {
+                continue;
+            }
+            let start = ctx.node_id() + 1;
+            let end = node.subtree_end();
+            let lo = ids.partition_point(|&id| id < start);
+            let hi = ids.partition_point(|&id| id < end);
+            out.extend(ids[lo..hi].iter().map(|&id| NodeRef::element(id)));
+        }
+        self.visits += (ids.len() + contexts.len() + out.len()) as u64;
+        if self.visits > self.budget {
+            return Err(XPathError::TooComplex);
+        }
+        Ok(Some(out))
     }
 
     /// Applies predicates left to right with per-axis position semantics.
