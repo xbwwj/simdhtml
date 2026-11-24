@@ -14,6 +14,8 @@ pub const NO_NODE: NodeId = u32::MAX;
 /// Sentinel used for "no tag".
 pub const NO_TAG: u32 = u32::MAX;
 
+pub(crate) const MAX_DEPTH: u16 = 1024;
+
 /// The document node: always node `0`, and the only node without a parent.
 pub const DOC_ROOT: NodeId = 0;
 
@@ -107,9 +109,7 @@ pub struct NodeRecord {
     parent: NodeId,
     first_child: NodeId,
     next_sibling: NodeId,
-    prev_element_sibling: NodeId,
     subtree_end: NodeId,
-    depth: u16,
     span: Range<u32>,
     tag_token: TagId,
     outer_end: u32,
@@ -203,9 +203,7 @@ pub(crate) struct NodeRecordInit {
     pub parent: NodeId,
     pub first_child: NodeId,
     pub next_sibling: NodeId,
-    pub prev_element_sibling: NodeId,
     pub subtree_end: NodeId,
-    pub depth: u16,
     pub span: Range<u32>,
     pub tag_token: TagId,
     pub outer_end: u32,
@@ -258,9 +256,7 @@ impl NodeTape {
             parent: init.parent,
             first_child: init.first_child,
             next_sibling: init.next_sibling,
-            prev_element_sibling: init.prev_element_sibling,
             subtree_end: init.subtree_end,
-            depth: init.depth,
             span: init.span,
             tag_token: init.tag_token,
             outer_end: init.outer_end,
@@ -278,10 +274,6 @@ impl NodeTape {
     #[must_use]
     pub fn namespace_of(&self, id: NodeId) -> u8 {
         (self.kind[self.idx(id)] & NS_MASK) >> NS_SHIFT
-    }
-
-    pub(crate) fn depth_of(&self, id: NodeId) -> u16 {
-        self.record[self.idx(id)].depth
     }
 
     pub(crate) fn outer_end_of(&self, id: NodeId) -> u32 {
@@ -310,11 +302,6 @@ impl NodeTape {
     pub(crate) fn set_next_sibling(&mut self, id: NodeId, next: NodeId) {
         let i = self.idx(id);
         self.record[i].next_sibling = next;
-    }
-
-    pub(crate) fn set_prev_element_sibling(&mut self, id: NodeId, prev: NodeId) {
-        let i = self.idx(id);
-        self.record[i].prev_element_sibling = prev;
     }
 }
 
@@ -396,9 +383,20 @@ impl Node<'_> {
     }
 
     #[must_use]
-    #[inline]
     pub fn prev_element_sibling(&self) -> NodeId {
-        self.tape.record[self.tape.idx(self.id)].prev_element_sibling
+        let parent = self.parent();
+        if parent == NO_NODE {
+            return NO_NODE;
+        }
+        let mut prev = NO_NODE;
+        let mut child = self.tape.record[self.tape.idx(parent)].first_child;
+        while child != NO_NODE && child != self.id {
+            if self.tape.kind[self.tape.idx(child)] & KIND_MASK == NodeKind::Element.bits() {
+                prev = child;
+            }
+            child = self.tape.record[self.tape.idx(child)].next_sibling;
+        }
+        prev
     }
 
     #[must_use]
@@ -408,9 +406,17 @@ impl Node<'_> {
     }
 
     #[must_use]
-    #[inline]
     pub fn depth(&self) -> u16 {
-        self.tape.record[self.tape.idx(self.id)].depth
+        let mut depth = 0;
+        let mut id = self.id;
+        loop {
+            let parent = self.tape.record[self.tape.idx(id)].parent;
+            if parent == NO_NODE || depth == MAX_DEPTH {
+                return depth;
+            }
+            depth += 1;
+            id = parent;
+        }
     }
 
     #[must_use]
@@ -617,8 +623,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_store_is_41_bytes_per_node() {
+    fn node_store_is_33_bytes_per_node() {
         // `NodeKind` + `RAW_TEXT_BIT` column, plus one record per node.
-        assert_eq!(1 + std::mem::size_of::<NodeRecord>(), 41);
+        assert_eq!(1 + std::mem::size_of::<NodeRecord>(), 33);
     }
 }

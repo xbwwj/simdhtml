@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::RepairMode;
-use crate::document::{NodeRecordInit, NodeTape};
+use crate::document::{MAX_DEPTH, NodeRecordInit, NodeTape};
 
 mod spec;
 use crate::markup::{MarkupIndex, TextRun, TextRuns};
@@ -178,8 +178,6 @@ fn cdata_inner(input: &[u8], span: &Range<u32>) -> Option<Range<u32>> {
     let inner_start = span.start + 9;
     Some(inner_start..inner_start + inner_len as u32)
 }
-
-const DEPTH_LIMIT: u16 = 1024;
 
 /// How a start tag's name affects namespace assignment.  `Spec` decides the
 /// namespace itself and hands one byte per node to the tape; the no-repair mode
@@ -367,7 +365,6 @@ struct TreeBuilder {
     node_tape: NodeTape,
     stack: Vec<NodeId>,
     last_child: Vec<NodeId>,
-    last_element_child: Vec<NodeId>,
     tag_element: Vec<NodeId>,
     implied_tags: Vec<TagToken>,
     implied_literals: Vec<Option<&'static str>>,
@@ -384,9 +381,7 @@ impl TreeBuilder {
             parent: NO_NODE,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
-            prev_element_sibling: NO_NODE,
             subtree_end: NO_NODE,
-            depth: 0,
             span: 0..0,
             tag_token: NO_TAG,
             outer_end: input_len,
@@ -401,13 +396,10 @@ impl TreeBuilder {
         // O(nodes) vector pushes and random writes for every text node.
         let mut last_child = Vec::with_capacity(64);
         last_child.push(NO_NODE);
-        let mut last_element_child = Vec::with_capacity(64);
-        last_element_child.push(NO_NODE);
         Self {
             node_tape,
             stack,
             last_child,
-            last_element_child,
             tag_element: vec![NO_NODE; tag_count],
             implied_tags: Vec::new(),
             implied_literals: Vec::new(),
@@ -453,15 +445,11 @@ impl TreeBuilder {
         self.node_tape
             .set_outer_end(id, if implied { span.start } else { span.end });
         self.last_child.pop();
-        self.last_element_child.pop();
     }
 
     fn insert_element(&mut self, tag_token: u32, span: Range<u32>, ns: u8) -> NodeId {
         let parent = *self.stack.last().expect("root is always open");
-        let depth = self.node_tape.depth_of(parent).saturating_add(1);
-        let mut depth = depth;
-        if depth > DEPTH_LIMIT {
-            depth = DEPTH_LIMIT;
+        if self.stack.len() > MAX_DEPTH as usize {
             self.depth_limit_hit = true;
         }
         let id = self.node_tape.push(NodeRecordInit {
@@ -470,9 +458,7 @@ impl TreeBuilder {
             parent,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
-            prev_element_sibling: NO_NODE,
             subtree_end: NO_NODE,
-            depth,
             span,
             tag_token,
             outer_end: 0,
@@ -480,17 +466,15 @@ impl TreeBuilder {
             doctype: false,
             normalize_newlines: false,
         });
-        self.append_child(parent, id, true);
+        self.append_child(parent, id);
         self.stack.push(id);
         self.last_child.push(NO_NODE);
-        self.last_element_child.push(NO_NODE);
         id
     }
 
     /// Appends a comment or doctype node at the current position.
     fn insert_comment(&mut self, span: Range<u32>, is_doctype: bool) {
         let parent = *self.stack.last().expect("root is always open");
-        let depth = self.node_tape.depth_of(parent).saturating_add(1);
         let id = self.node_tape.len() as NodeId;
         self.node_tape.push(NodeRecordInit {
             kind: NodeKind::Comment,
@@ -500,21 +484,18 @@ impl TreeBuilder {
             parent,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
-            prev_element_sibling: NO_NODE,
             subtree_end: id + 1,
-            depth,
             span: span.clone(),
             tag_token: NO_TAG,
             outer_end: span.end,
             raw_text: false,
         });
-        self.append_child(parent, id, false);
+        self.append_child(parent, id);
     }
 
     /// Appends a text node.
     fn insert_characters(&mut self, run: TextRun) {
         let parent = *self.stack.last().expect("root is always open");
-        let depth = self.node_tape.depth_of(parent).saturating_add(1);
         let id = self.node_tape.len() as NodeId;
         let span = run.span;
         let raw = run.raw_text;
@@ -524,9 +505,7 @@ impl TreeBuilder {
             parent,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
-            prev_element_sibling: NO_NODE,
             subtree_end: id + 1,
-            depth,
             span: span.clone(),
             tag_token: NO_TAG,
             outer_end: span.end,
@@ -534,10 +513,10 @@ impl TreeBuilder {
             doctype: false,
             normalize_newlines: false,
         });
-        self.append_child(parent, id, false);
+        self.append_child(parent, id);
     }
 
-    fn append_child(&mut self, parent: NodeId, child: NodeId, is_element: bool) {
+    fn append_child(&mut self, parent: NodeId, child: NodeId) {
         debug_assert_eq!(self.stack.last().copied(), Some(parent));
         let frame = self.stack.len() - 1;
         let previous_last = self.last_child[frame];
@@ -547,15 +526,6 @@ impl TreeBuilder {
             self.node_tape.set_next_sibling(previous_last, child);
         }
         self.last_child[frame] = child;
-
-        if is_element {
-            let previous_element = self.last_element_child[frame];
-            if previous_element != NO_NODE {
-                self.node_tape
-                    .set_prev_element_sibling(child, previous_element);
-            }
-            self.last_element_child[frame] = child;
-        }
     }
 
     fn finish(&mut self, input_len: u32, flags: &mut DocumentFlags) {

@@ -87,6 +87,12 @@ mod tests {
     }
 
     #[test]
+    fn has_adjacent_sibling() {
+        let d = doc("<ul><li>1</li> x <li>2</li><li>3</li></ul>");
+        assert_eq!(tags(&d, "li:has(+ li)"), vec!["li", "li"]);
+    }
+
+    #[test]
     fn css_scope_and_contains() {
         let d = doc(
             "<div class=box><span class=title>hello scope</span></div><div class=other>x</div>",

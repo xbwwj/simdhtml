@@ -941,13 +941,22 @@ impl<'a> Eval<'a> {
         out
     }
 
-    /// `prev_element_sibling(S)` as a scatter over the set bits.
+    /// `prev_element_sibling(S)` as one pass over the child index.
     fn prev_element_sibling(&self, set: &BitSet) -> BitSet {
+        let index = self.child_index();
         let mut out = BitSet::new(self.n);
-        for id in set.iter_set() {
-            let prev = self.doc.node(id).prev_element_sibling();
-            if prev != NO_NODE {
-                out.set(prev);
+        for parent in 0..self.n {
+            let start = index.child_start[parent] as usize;
+            let end = index.child_start[parent + 1] as usize;
+            let mut prev = NO_NODE;
+            for &child in &index.children[start..end] {
+                if !self.doc.node(child).is_element() {
+                    continue;
+                }
+                if set.get(child) && prev != NO_NODE {
+                    out.set(prev);
+                }
+                prev = child;
             }
         }
         out
