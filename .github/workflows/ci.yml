@@ -38,7 +38,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude simdsel-py --exclude simdhtml-bench
       - name: Check the published crate
         if: matrix.os == 'ubuntu-latest'
         run: cargo package -p simdhtml

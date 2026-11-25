@@ -31,6 +31,13 @@ FIXTURES = {
     "case": '<html ID="top"><body><DIV CLASS="Box" DATA-X="1"><p>a</p></DIV></body></html>',
 }
 
+# uv resolves parsel 1.10 + cssselect 1.3 for Python < 3.10; the case-insensitive
+# attribute flag and the form-control-only `:enabled` both arrived in later releases.
+needs_recent_parsel = pytest.mark.skipif(
+    tuple(int(part) for part in parsel.__version__.split(".")[:2]) < (1, 11),
+    reason="reference parsel predates the cssselect fix",
+)
+
 CASES = [
     ("nested", ".item"),
     ("nested", ".item .title"),
@@ -49,7 +56,7 @@ CASES = [
     ("nested", "a[title]"),
     ("nested", "input[checked]"),
     pytest.param("nested", "[data-id!='1']", marks=pytest.mark.xfail(strict=True, reason="parsel/cssselect [attr!=v] implementation detail")),
-    ("case", "[data-x=abc i]"),
+    pytest.param("case", "[data-x=abc i]", marks=needs_recent_parsel),
     ("nested", ".item:first-child"),
     ("nested", ".item:nth-child(2n+1)"),
     ("nested", "li:nth-of-type(2)"),
@@ -62,7 +69,7 @@ CASES = [
     ("forms", ":link"),
     ("forms", ":checked"),
     ("forms", ":disabled"),
-    ("forms", ":enabled"),
+    pytest.param("forms", ":enabled", marks=needs_recent_parsel),
     ("forms", ":lang(en)"),
     ("nested", "a::attr(href)"),
     ("nested", ".title::text"),
