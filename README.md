@@ -1,6 +1,6 @@
 # simdhtml : Parsing gigabytes of HTML per second
 
-<!-- TODO: badges -->
+[![License](https://img.shields.io/github/license/xbwwj/simdhtml)](https://github.com/xbwwj/simdhtml/blob/main/LICENSE)
 
 **Blazing fast HTML parser and selector, powered by Rust and SIMD**.
 
