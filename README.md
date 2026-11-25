@@ -1,15 +1,16 @@
-# simdhtml
+# simdhtml : Parsing gigabytes of HTML per second
 
-A SIMD-accelerated HTML parser and CSS/XPath selector.
+<!-- TODO: badges -->
 
-- Rust crates: [`simdhtml`](./crates/simdhtml) (parser) and
-  [`simdsel`](./crates/simdsel) (selection).
-- Python binding: [`simdsel-py`](./crates/simdsel-py).
+Parsing has been a critical bottleneck for high-throughput web scrapers. **simdhtml** brings native SIMD speed to the HTML extraction pipeline—**10x faster than parsel and 150x faster than bs4**.
 
-## Performance
+- **Fast**: 7x-150x faster than commonly used HTML parsers in real-world workloads **(4k+ pages/s/core)**.
+- **Drop-in Replacement**: Migrate from parsel or ~~bs4~~ by changing a single line of code.
+- **Standard**: Over 98% HTML standard conformance in repair mode, while remaining significantly faster
+- **Automatic**: Adapt to different CPU feature sets. No configuration needed.
+- **Reliable**: Built in Rust, with `unsafe` strictly confined to low-level SIMD intrinsics.
 
-The figures show extraction speed on real pages, single core on an AMD Ryzen
-5 5600.
+## Performance results
 
 [![Common Crawl: parse + 18 CSS selectors](./figures/cc.svg)](./figures/cc.svg)
 
