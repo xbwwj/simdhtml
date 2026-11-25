@@ -1,10 +1,8 @@
-//! HTML parsing into a preorder [`Document`].
+//! simdhtml is a fast HTML parser powered by SIMD.
 //!
-//! Pipeline:
+//! See [`Document`] and [`Document::parse`] for a quickstart.
 //!
-//! 1. markup
-//! 2. tokenizer
-//! 3. tree_builder
+//! This crate is not user-facing. See `simdsel` which provides a parsel like facade.
 
 mod character_reference;
 mod document;
