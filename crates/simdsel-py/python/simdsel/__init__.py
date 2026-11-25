@@ -1,5 +1,5 @@
-"""simdsel: parsel-shaped HTML selection backed by a Rust/SIMD core."""
+"""simdsel: SIMD-accelerated HTML parsing and CSS/XPath selection."""
 
-from ._simdsel import Selector, SelectorList, __version__
+from ._simdsel import __version__
 
-__all__ = ["Selector", "SelectorList", "__version__"]
+__all__ = ["__version__"]

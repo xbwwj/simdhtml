@@ -20,7 +20,7 @@ The figures show extraction speed on real pages, single core on an AMD Ryzen
 ### Python
 
 ```python
->>> from simdsel import Selector
+>>> from simdsel.parsel import Selector
 >>> html = """
 ... <div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
 ... <div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>

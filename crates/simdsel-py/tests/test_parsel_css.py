@@ -1,6 +1,6 @@
 import parsel
 import pytest
-import simdsel
+from simdsel.parsel import Selector
 
 FIXTURES = {
     "nested": (
@@ -100,6 +100,6 @@ def call(selector, query):
 @pytest.mark.parametrize("fixture,query", CASES)
 def test_parsel_css(fixture, query):
     html = FIXTURES[fixture]
-    ours = call(simdsel.Selector(text=html), query)
+    ours = call(Selector(text=html), query)
     theirs = call(parsel.Selector(text=html), query)
     assert ours == theirs, f"[{fixture}] {query!r}"

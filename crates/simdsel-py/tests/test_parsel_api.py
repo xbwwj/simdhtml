@@ -2,7 +2,7 @@ import re as _re
 
 import parsel
 import pytest
-import simdsel
+from simdsel.parsel import Selector
 
 HTML = (
     "<html lang=en><body><div id=a class='x y'><p>one</p><p>two\n</p>"
@@ -81,6 +81,6 @@ CASES = [
 
 @pytest.mark.parametrize("name,fn", CASES, ids=[name for name, _ in CASES])
 def test_parsel_api(name, fn):
-    ours = call(simdsel.Selector(text=HTML), fn)
+    ours = call(Selector(text=HTML), fn)
     theirs = call(parsel.Selector(text=HTML), fn)
     assert ours == theirs, name

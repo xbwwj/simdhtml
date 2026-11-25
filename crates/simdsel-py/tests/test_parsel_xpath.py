@@ -1,6 +1,6 @@
 import parsel
 import pytest
-import simdsel
+from simdsel.parsel import Selector
 
 HTML = (
     "<html lang='en'><head><title>T</title></head><body>"
@@ -72,6 +72,6 @@ def call(selector, query):
 
 @pytest.mark.parametrize("query", EXPRESSIONS)
 def test_parsel_xpath(query):
-    ours = call(simdsel.Selector(text=HTML), query)
+    ours = call(Selector(text=HTML), query)
     theirs = call(parsel.Selector(text=HTML), query)
     assert ours == theirs, query
