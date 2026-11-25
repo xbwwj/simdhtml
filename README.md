@@ -22,20 +22,24 @@ We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
 ### Python
 
 ```python
-from simdsel import Selector
-
-html = """<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
-<div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>"""
-
-sel = Selector(text=html)
-
-print(sel.css(".item h2::text").getall())       # ['First & best', 'Second']
-print(sel.css(".item h2::text").get())          # 'First & best'
-print(sel.css(".item a::attr(href)").getall())  # ['/one', '/two']
-print(sel.xpath("//div[@data-id='2']/h2/text()").get())  # 'Second'
-
-for item in sel.css(".item"):
-    print(item.attrib["data-id"], item.css("h2::text").get())
+>>> from simdsel import Selector
+>>> html = """
+... <div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
+... <div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>
+... """
+>>> sel = Selector(text=html)
+>>> sel.css(".item h2::text").getall()
+['First & best', 'Second']
+>>> sel.css(".item h2::text").get()
+'First & best'
+>>> sel.css(".item a::attr(href)").getall()
+['/one', '/two']
+>>> sel.xpath("//div[@data-id='2']/h2/text()").get()
+'Second'
+>>> [item.attrib["data-id"] for item in sel.css(".item")]
+['1', '2']
+>>> [item.css("h2::text").get() for item in sel.css(".item")]
+['First & best', 'Second']
 ```
 
 ### Rust
@@ -44,8 +48,10 @@ for item in sel.css(".item"):
 use simdsel::{Selector, Value, XPath};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let html = r#"<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
-<div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>"#;
+    let html = r#"
+<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
+<div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>
+"#;
 
     let root = Selector::from_text(html)?;      // or from_vec(body) for owned bytes
 
@@ -56,8 +62,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let links = root.css(".item a::attr(href)")?;
     println!("{:?}", links.getall());           // ["/one", "/two"]
 
-    for record in root.css(".item")?.records() {
-        println!("{:?}", simdsel::record_attrib(root.doc(), record));
+    let items = root.css(".item")?;
+    for item in items.split() {
+        println!("{:?}", item.attrib());        // Some([("data-id", "1")])
+        println!("{:?}", item.css("h2::text")?.get()); // Some("First & best")
     }
 
     if let Value::Str(id) = XPath::new("string(//div[2]/@data-id)")?.eval(root.doc())? {
