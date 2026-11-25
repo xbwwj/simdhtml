@@ -1,6 +1,5 @@
 # simdhtml : Parsing gigabytes of HTML per second
 
-[![License](https://img.shields.io/github/license/xbwwj/simdhtml)](https://github.com/xbwwj/simdhtml/blob/main/LICENSE)
 
 **Blazing fast HTML parser and selector, powered by Rust and SIMD**.
 
@@ -11,6 +10,10 @@ Parsing has been a critical bottleneck for high-throughput web scrapers. simdhtm
 - **Standards**: 98% WPT conformance in spec mode, while remaining significantly faster.
 - **Automatic**: Adapt to available CPU features at runtime. No configuration needed.
 - **Reliable**: Built in Rust, with `unsafe` strictly confined to low-level SIMD intrinsics.
+
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+**[Documentation](#)** · [Getting started](#) · [Choose your API](#) · [Examples](#) · [Benchmarks](#) · [API reference](#) · [Changelog](#)
 
 ## Performance results
 
