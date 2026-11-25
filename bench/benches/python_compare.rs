@@ -12,8 +12,8 @@
 //! the other bench targets; this file is only the Python side.
 //!
 //! The Python packages are installed by:
-//!     uv sync --group bench
-//! and `make bench` makes the venv importable through `PYTHONPATH`.
+//!     make venv        (or venv-cn / venv-ali for a PyPI mirror)
+//! and `make bench-compare` makes the venv importable through `PYTHONPATH`.
 
 use std::hint::black_box;
 
@@ -156,7 +156,7 @@ fn main() {
         for engine in PyEngine::ALL {
             if let Err(err) = engine.parse(py, "<p>x</p>") {
                 panic!(
-                    "{} is not importable: {err}\ninstall the bench group with: uv sync --group bench",
+                    "{} is not importable: {err}\nprepare the venv with: make venv (venv-cn / venv-ali for a mirror)",
                     engine.name()
                 );
             }

@@ -62,8 +62,8 @@ crate to `data/`.  Override when the data lives elsewhere:
 | `SIMDHTML_SWDE_INDEX` | SWDE document index |
 | `SIMDHTML_SELECTORS_DIR` | selector files (default `bench/selectors`) |
 | `SIMDHTML_WPT_DIR` | WPT submodule checkout |
-| `SIMDHTML_BENCH_LIMIT` | documents kept per corpus (default 500; `bench-quick` uses 60) |
-| `SIMDHTML_BENCH_BYTES` | byte budget per corpus (default 64 MiB; quick 16 MiB) |
+| `SIMDHTML_BENCH_LIMIT` | documents kept per corpus (default 500; `bench-quick`/`bench-compare` use 60) |
+| `SIMDHTML_BENCH_BYTES` | byte budget per corpus (default 64 MiB; quick/compare 16 MiB) |
 | `SIMDHTML_BENCH_MAX_DOC_BYTES` | drop larger documents (default 4 MiB) |
 | `SIMDHTML_BENCH_ALL=1` | keep every document (needs RAM for the whole corpus) |
 | `SIMDHTML_REQUIRE_TESTDATA=1` | missing data is an error, not a skip |
@@ -76,8 +76,11 @@ make data           # WARC download + SWDE submodule          (once, network)
 make data-wpt       # WPT submodule (only for `make test-wpt`)
 make extract-data   # 7z x + index.tsv                        (once, ~1 min, 8 GiB)
 make bench-quick    # sampled criterion run for iteration     (no plots)
-make bench          # full criterion run
-make info           # current mode, data and binaries
+make bench-build    # build the bench executables (cargo, once)
+make bench-compare  # scoreboard: extract + python_compare    (60 docs, figures/*.svg)
+make bench          # full criterion run (runs the prebuilt binaries)
+make venv           # .venv with parsel/selectolax/bs4 via pip (venv-cn/venv-ali: mirrors)
+make info           # data, venv, bench binaries and the targets that will run
 ```
 
 Benchmarks never download or unpack anything implicitly: a missing input fails
@@ -88,28 +91,37 @@ A quick run can be narrowed; the sampling knobs also apply per run:
 ```bash
 make bench-parse
 make bench-quick SIMDHTML_BENCH_LIMIT=200 SIMDHTML_BENCH_BYTES=$((64*1024*1024))
+make bench-compare SIMDHTML_BENCH_LIMIT=200
 SIMDHTML_BENCH_ALL=1 make bench-parse
 ```
 
-## Portable bundle
+## Running the benchmarks on another machine
 
-`make bundle` builds a tarball with the prebuilt bench binaries, the `Makefile`,
-the selector files (`bench/selectors`), and the **raw** corpora (`.warc.gz` +
-`.7z`), for a machine without a Rust toolchain:
+`make bench-build` stages the executables under `target/bench/bin`; `make
+bench` only runs them, so a copied working tree needs neither cargo nor the
+registry cache.  Copy `Makefile`, `bench/`, `crates/`, `Cargo.toml`,
+`Cargo.lock`, `scripts/`, `target/` (the staged binaries plus the `deps/` they
+point into), `.venv/` and the working set (`data/commoncrawl/warc/*.warc.gz`,
+`data/swde-html`, `data/swde-index.tsv`).  The raw inputs (`data/swde/*.7z`,
+`data/wpt`) are only needed by `make extract-data`/`make test-wpt`.
 
 ```bash
-make bundle                      # target/bundle/simdhtml-bundle-<stamp>.tar
+# build machine
+make data extract-data bench-build
+rsync -a --exclude .git ./ server:simdhtml/
 
-# on the target machine (needs make + p7zip):
-tar -xf simdhtml-bundle-*.tar && cd simdhtml-bundle-*/
-make data           # no-op: the raw inputs are in the tarball
-make extract-data   # unpack SWDE once
-make bench-quick    # runs bin/*, never cargo
+# server (only make + bash are required)
+cd simdhtml && make bench-compare
 ```
 
-The bundle does not include the unpacked SWDE tree, `index.tsv`, the WPT
-submodule, or a Python runtime; `python_compare` is excluded from bundle runs,
-and `make data` on the target machine is a no-op (the raw inputs are inside).
+`data/swde-html` is 8 GiB and is what makes the copy large; the alternative is
+to ship `data/swde` (0.6 GiB) and run `make extract-data` on the server, which
+needs the `7z` binary.  The copied `.venv` only works if the machine has the
+same Python version and `libpython`; when it does not, `make bench` hides
+`python_compare` and `make bench-compare` fails on it.  Rebuild the venv there
+with `make venv` (`venv-cn` / `venv-ali` for a mirror) — the embedded-CPython
+bench needs that Python version to match the prebuilt binary, otherwise
+`python_compare` has to be rebuilt too.
 
 ## Differential harness
 

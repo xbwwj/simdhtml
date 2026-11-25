@@ -6,8 +6,10 @@
 #   make extract-data  derive the working set from them (7z x + index.tsv)
 #   make bench-quick   run the benchmarks (never fetches or extracts implicitly)
 #
-# The same file serves a source checkout and a prebuilt bundle: when `bin/`
-# holds bench binaries, everything runs from those and cargo is not touched.
+# Benches are built once with `make bench-build`, which stages the executables
+# under target/bench/bin; `make bench` only runs them.  Copying the whole tree
+# (data, target, .venv) to another machine is therefore enough to run the
+# benchmarks there: no cargo, no rustc, no network, no recompilation.
 
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -33,12 +35,12 @@ SWDE_HTML  := $(DATA)/swde-html
 SWDE_INDEX := $(DATA)/swde-index.tsv
 
 # ---------------------------------------------------------------------------
-# run mode: prebuilt bundle vs source checkout
+# bench binaries: built here, run anywhere
 # ---------------------------------------------------------------------------
-BENCH_BIN_DIR ?= bin
-BENCH_MODE := $(if $(wildcard $(BENCH_BIN_DIR)/parse),bundle,source)
+BENCH          := cargo bench -p simdhtml-bench
+BENCH_BIN      ?= target/bench/bin
+BENCH_SOURCES  := Cargo.toml Cargo.lock bench/Cargo.toml bench/src bench/benches crates
 
-BENCH := cargo bench -p simdhtml-bench
 FEATURES_markup         :=
 FEATURES_parse          :=
 FEATURES_classify       :=
@@ -47,26 +49,33 @@ FEATURES_extract        := --features external
 FEATURES_parse_compare  := --features external
 FEATURES_python_compare := --features python
 
-ARGS       ?=
-QUICK_ARGS := --quick --noplot
-QUICK_TARGETS := markup parse select extract
-FULL_TARGETS  := markup parse classify select parse_compare extract python_compare
-ifeq ($(BENCH_MODE),bundle)
-# The bundle ships no CPython, so the python comparison is source-only.
-FULL_TARGETS := $(filter-out python_compare,$(FULL_TARGETS))
-endif
+# `BENCH_BUILD=1` re-runs cargo before the benchmarks instead of using the
+# staged binaries as-is.
+BENCH_BUILD ?= 0
 
-# embedded CPython for the python comparison (source only; the bundle has none)
-VENV_PY := $(CURDIR)/.venv/bin/python
-ifeq ($(wildcard $(VENV_PY)),)
-PY_SITE :=
-else
-PY_SITE := $(shell $(VENV_PY) -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+BENCH_TARGETS := markup parse classify select parse_compare extract python_compare
+ARGS          ?=
+QUICK_ARGS    := --quick --noplot
+QUICK_TARGETS := markup parse select extract
+
+# The embedded-CPython comparison needs the shipped venv to work on this host
+# (same Python version and libpython); otherwise it is left out of the `bench`
+# set.  `bench-compare` always keeps it, because the scoreboard needs its rows.
+VENV_DIR ?= .venv
+VENV_PY  := $(abspath $(VENV_DIR))/bin/python
+PY_SITE := $(shell $(VENV_PY) -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null)
+ifeq ($(strip $(PY_SITE)),)
+PY_SITE       :=
+BENCH_TARGETS := $(filter-out python_compare,$(BENCH_TARGETS))
 endif
+FULL_TARGETS := $(BENCH_TARGETS)
 
 # quick-run sampling knobs (never applied to the full run)
 SIMDHTML_BENCH_LIMIT ?= 60
 SIMDHTML_BENCH_BYTES ?= 16777216
+
+# the scoreboard: the two benches behind figures/*.svg (see perf_chart.py)
+COMPARE_TARGETS ?= extract python_compare
 
 # ---------------------------------------------------------------------------
 # help / status
@@ -77,16 +86,25 @@ help:  ## list targets
 	@grep -hE '^[a-z][a-z0-9_-]*:.*?## ' $(MAKEFILE_LIST) \
 		| awk -F':.*?## ' '{ printf "  %-16s %s\n", $$1, $$2 }'
 	@echo
-	@echo "mode: $(BENCH_MODE) (override with BENCH_BIN_DIR=...)"
+	@echo "bench bins: $(BENCH_BIN)"
+	@echo "targets:    $(FULL_TARGETS)"
 
-info:  ## show mode, data and prebuilt binaries
-	@echo "mode:        $(BENCH_MODE)"
+info:  ## show data, venv and prebuilt binaries
+	@echo "bench bins:  $(BENCH_BIN)"
+	@echo "targets:     $(FULL_TARGETS)"
+	@echo "compare:     $(COMPARE_TARGETS) ($(SIMDHTML_BENCH_LIMIT) docs / $(shell echo $$(($(SIMDHTML_BENCH_BYTES) / 1048576))) MiB)"
+	@printf 'venv:        %s %s\n' "$(VENV_DIR)" "$$( \
+		$(VENV_PY) -c 'import sys, parsel, selectolax, bs4; print("python", sys.version.split()[0], "+ bench deps")' 2>/dev/null \
+		|| echo 'missing or broken: run make venv (venv-cn / venv-ali)')"
 	@echo "warc:        $(WARC) $(if $(wildcard $(WARC)),[ok],[missing: make data-cc])"
 	@echo "swde source: $(SWDE_ARCS) $(if $(wildcard $(SWDE_ARCS)/auto.7z),[ok],[missing: make data-swde])"
 	@echo "wpt:         $(WPT) $(if $(wildcard $(WPT_RES)/adoption01.dat),[ok],[missing: make data-wpt])"
 	@echo "swde html:   $(SWDE_HTML) $(if $(wildcard $(SWDE_HTML)/auto),[ok],[missing: make extract-data])"
 	@echo "swde index:  $(SWDE_INDEX) $(if $(wildcard $(SWDE_INDEX)),[ok],[missing: make extract-data])"
-	@echo "bench bins:  $(BENCH_BIN_DIR) $(if $(wildcard $(BENCH_BIN_DIR)/parse),[prebuilt],[built from source])"
+	@for t in $(BENCH_TARGETS); do \
+		printf '  %-14s %s\n' "$$t" \
+			"$$(test -x $(BENCH_BIN)/$$t && echo prebuilt || echo 'missing: make bench-build')"; \
+	done
 
 # ---------------------------------------------------------------------------
 # raw data: network / submodule only
@@ -136,38 +154,92 @@ require-extract:
 		|| { echo "missing SWDE working set: run 'make extract-data'"; exit 1; }
 
 # ---------------------------------------------------------------------------
-# benchmarks
+# venv: the bench Python deps, installed with pip (no uv, no lockfile)
+#
+#   make venv       PyPI
+#   make venv-cn    Tsinghua mirror
+#   make venv-ali   Aliyun mirror
+#
+# The venv is recreated by default: a stale one is exactly what breaks when the
+# machine's Python differs from the one that built it.  `VENV_REUSE=1` keeps the
+# existing venv and only installs the missing packages.
 # ---------------------------------------------------------------------------
-bench: require-data require-extract  ## full criterion run
+VENV_PYTHON    ?= python3
+VENV_REUSE     ?= 0
+VENV_CHECK     ?= import parsel, selectolax, bs4
+# keep in sync with pyproject.toml [dependency-groups] bench
+BENCH_PY_DEPS  ?= 'parsel>=1.10' 'selectolax>=1.0' 'beautifulsoup4>=4.12'
+PIP_ARGS       ?=
+
+venv:  ## .venv with parsel/selectolax/bs4, pip from PyPI (recreates .venv)
+venv-cn:  ## same, pip from the Tsinghua mirror (recreates .venv)
+venv-ali:  ## same, pip from the Aliyun mirror (recreates .venv)
+venv-cn: PIP_ARGS := -i https://pypi.tuna.tsinghua.edu.cn/simple
+venv-ali: PIP_ARGS := -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ \
+	--trusted-host mirrors.cloud.aliyuncs.com
+
+venv venv-cn venv-ali:
+	@echo "[venv] $(VENV_DIR) from $(if $(PIP_ARGS),$(PIP_ARGS),default PyPI)"
+	@if [ "$(VENV_REUSE)" != 1 ]; then rm -rf $(VENV_DIR); fi
+	$(VENV_PYTHON) -m venv $(VENV_DIR) \
+		|| { echo "$(VENV_PYTHON) cannot create a venv: install python3-venv / a matching libpython"; exit 1; }
+	$(VENV_PY) -m pip install --disable-pip-version-check $(PIP_ARGS) $(BENCH_PY_DEPS)
+	@$(VENV_PY) -c '$(VENV_CHECK)' \
+		|| { echo "bench deps are not importable in $(VENV_DIR)"; exit 1; }
+	@$(VENV_PY) -c 'import sys; print("[venv] python", sys.version.split()[0], "ready")'
+
+# ---------------------------------------------------------------------------
+# benchmarks: `bench-build` stages the executables, `bench` just runs them
+# ---------------------------------------------------------------------------
+bench: require-data require-extract $(if $(filter 1,$(BENCH_BUILD)),bench-build)  ## full criterion run
 	@for t in $(FULL_TARGETS); do \
 		$(MAKE) --no-print-directory bench-$$t ARGS="$(ARGS)" || exit $$?; \
 	done
 
-bench-quick: require-data require-extract  ## sampled run for iteration (no plots)
+bench-quick: require-data require-extract $(if $(filter 1,$(BENCH_BUILD)),bench-build)  ## sampled run for iteration (no plots)
 	@for t in $(QUICK_TARGETS); do \
 		SIMDHTML_BENCH_LIMIT=$(or $(SIMDHTML_BENCH_LIMIT),60) \
 		SIMDHTML_BENCH_BYTES=$(or $(SIMDHTML_BENCH_BYTES),16777216) \
 		$(MAKE) --no-print-directory bench-$$t ARGS="$(QUICK_ARGS)" || exit $$?; \
 	done
 
+# The scoreboard run: `extract` (simdsel vs scraper/dom_query) and
+# `python_compare` (parsel/selectolax/beautifulsoup4) are the only benches
+# behind figures/*.svg.  The sample is pinned to the chart口径 (60 docs /
+# 16 MiB) because bs4 costs seconds per iteration and would dominate a full
+# 500-document run; raise SIMDHTML_BENCH_LIMIT to trade time for precision.
+bench-compare: require-data require-extract $(if $(filter 1,$(BENCH_BUILD)),bench-build)  ## scoreboard run (extract + python) on the chart sample
+	@for t in $(COMPARE_TARGETS); do \
+		SIMDHTML_BENCH_LIMIT=$(SIMDHTML_BENCH_LIMIT) \
+		SIMDHTML_BENCH_BYTES=$(SIMDHTML_BENCH_BYTES) \
+		$(MAKE) --no-print-directory bench-$$t ARGS="$(ARGS)" || exit $$?; \
+	done
+
 bench-python_compare: export PYO3_PYTHON = $(VENV_PY)
 bench-python_compare: export PYTHONPATH = $(PY_SITE)
 
-bench-build:  ## build every bench target once (source mode)
-	cargo bench -p simdhtml-bench --no-run
-	cargo bench -p simdhtml-bench --no-run --features external
-	cargo bench -p simdhtml-bench --no-run --features python
+bench-build: export PYO3_PYTHON = $(VENV_PY)
+bench-build: export PYTHONPATH = $(PY_SITE)
+bench-build:  ## build the bench executables into target/bench/bin (cargo, once)
+	@mkdir -p $(BENCH_BIN)
+	@for t in $(BENCH_TARGETS); do \
+		echo "== build $$t =="; \
+		$(BENCH) --no-run --bench $$t $(FEATURES_$$t) --message-format=json \
+			| sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' \
+			| while read -r exe; do install -m 755 "$$exe" "$(BENCH_BIN)/$$t"; done; \
+		test -x "$(BENCH_BIN)/$$t" || { echo "no executable for $$t"; exit 1; }; \
+	done
+	@du -sh $(BENCH_BIN)
 
-ifeq ($(BENCH_MODE),bundle)
+# Binaries are staged by name so a copied tree needs neither cargo nor the
+# registry; the warning catches results measured from stale executables.
 bench-%:
+	@test -x "$(BENCH_BIN)/$*" \
+		|| { echo "no $(BENCH_BIN)/$*: run 'make bench-build' on the build machine"; exit 1; }
+	@test -z "$$(find $(BENCH_SOURCES) -type f -newer $(BENCH_BIN)/$* -print -quit)" \
+		|| echo "warning: sources are newer than $(BENCH_BIN)/$* (run 'make bench-build')"
 	@echo "== bench $* =="
-	@test -x "$(BENCH_BIN_DIR)/$*" \
-		|| { echo "bundle has no $(BENCH_BIN_DIR)/$*; rebuild it with 'make bundle'"; exit 1; }
-	"$(BENCH_BIN_DIR)/$*" $(ARGS)
-else
-bench-%:
-	$(BENCH) --bench $* $(FEATURES_$*) -- $(ARGS)
-endif
+	"$(BENCH_BIN)/$*" $(ARGS)
 
 # ---------------------------------------------------------------------------
 # tests
@@ -187,41 +259,6 @@ diff: require-data  ## parsel/lxml differential harness (builds the PyO3 extensi
 	uv run --no-sync --group bench python scripts/xpath_diff.py target/bench/xpath.jsonl
 
 # ---------------------------------------------------------------------------
-# bundle: prebuilt binaries + raw data + this Makefile
-# ---------------------------------------------------------------------------
-BUNDLE_OUT     ?= target/bundle
-BUNDLE_TARGETS := markup parse classify select parse_compare extract
-BUNDLE_STAMP   := $(shell date +%Y%m%d-%H%M%S)
-
-bundle: require-data  ## portable tarball for a machine without a Rust toolchain
-	@test "$(BENCH_MODE)" = source \
-		|| { echo "build the bundle from a source checkout, not from one"; exit 1; }
-	@mkdir -p $(BUNDLE_OUT)
-	cargo bench -p simdhtml-bench --no-run --features external --message-format=json \
-		| sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' >$(BUNDLE_OUT)/executables.txt
-	@stage="$(BUNDLE_OUT)/simdhtml-bundle-$(BUNDLE_STAMP)"; \
-	rm -rf "$$stage"; \
-	mkdir -p "$$stage/bin" "$$stage/data"; \
-	while read -r exe; do \
-		name="$$(basename "$$exe" | sed 's/-[0-9a-f]*$$//')"; \
-		case " $(BUNDLE_TARGETS) " in *" $$name "*) cp "$$exe" "$$stage/bin/$$name" ;; esac; \
-	done <$(BUNDLE_OUT)/executables.txt; \
-	for t in $(BUNDLE_TARGETS); do \
-		test -x "$$stage/bin/$$t" || { echo "missing $$t binary"; exit 1; }; \
-	done; \
-	cp Makefile "$$stage/"; \
-	mkdir -p "$$stage/bench"; \
-	cp -r bench/selectors "$$stage/bench/"; \
-	mkdir -p "$$stage/data/commoncrawl/warc"; \
-	cp $(WARC) "$$stage/data/commoncrawl/warc/"; \
-	mkdir -p "$$stage/data/swde/swde/sourceCode"; \
-	cp -r $(SWDE_ARCS) "$$stage/data/swde/swde/sourceCode/"; \
-	tar -C $(BUNDLE_OUT) -cf "$(BUNDLE_OUT)/simdhtml-bundle-$(BUNDLE_STAMP).tar" \
-		"simdhtml-bundle-$(BUNDLE_STAMP)"; \
-	echo "[bundle] $(BUNDLE_OUT)/simdhtml-bundle-$(BUNDLE_STAMP).tar"; \
-	du -h "$(BUNDLE_OUT)/simdhtml-bundle-$(BUNDLE_STAMP).tar"
-
-# ---------------------------------------------------------------------------
 # housekeeping
 # ---------------------------------------------------------------------------
 check:  ## cargo fmt --check + cargo clippy
@@ -237,10 +274,12 @@ clean-data:  ## remove the raw inputs
 	rm -rf $(WARC_DIR)
 	-git submodule deinit -f $(SWDE)
 	-git submodule deinit -f $(WPT)
-clean: clean-extract  ## cargo clean + derived data
+clean: clean-extract  ## cargo clean + derived data + staged binaries
+	rm -rf $(BENCH_BIN)
 	cargo clean
 
 .PHONY: help info data data-cc data-swde data-wpt extract-data extract-swde \
-	require-data require-extract bench bench-quick bench-build \
-	test test-wpt test-corpus diff bundle check fmt clippy \
+	require-data require-extract bench bench-quick bench-compare bench-build \
+	venv venv-cn venv-ali \
+	test test-wpt test-corpus diff check fmt clippy \
 	clean-extract clean-data clean

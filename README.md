@@ -79,26 +79,14 @@ make extract-data  # unpack SWDE and build its index (once, ~1 min, 8 GiB disk)
 make test          # Rust tests
 make test-wpt      # html5lib tree-construction conformance
 make test-corpus   # Common Crawl preorder-invariant test
-make bench         # full Criterion run: simdhtml/simdsel + html5ever/scraper/dom_query + Python
+make bench-build   # build the bench executables into target/bench/bin (cargo, once)
+make bench-compare # scoreboard: extract + python_compare, 60 documents (figures/*.svg)
+make bench         # full criterion run of every bench target
 make bench-quick   # sampled run for iteration (no plots)
+make venv          # .venv with parsel/selectolax/bs4, via pip (default PyPI)
+make venv-cn       # same, from the Tsinghua mirror
+make venv-ali      # same, from the Aliyun mirror
 make check         # cargo fmt --check + cargo clippy
-make info          # current mode, data and binaries
+make info          # data, venv, bench binaries and the targets that run
 ```
 
-Benchmarks stream the corpora instead of loading them: Common Crawl is read
-straight from the `.warc.gz`, SWDE from the index that `make extract-data`
-writes, so a quick run keeps ~100 documents in memory instead of 8 GiB.
-
-`make bundle` builds a tarball with the prebuilt bench binaries, this
-`Makefile`, and the raw corpora (`.warc.gz` + `.7z`) for a machine without a
-Rust toolchain:
-
-```bash
-make bundle                       # target/bundle/simdhtml-bundle-<stamp>.tar
-
-# on the target machine (needs make + p7zip):
-tar -xf simdhtml-bundle-*.tar && cd simdhtml-bundle-*/
-make data           # no-op: the raw inputs are in the tarball
-make extract-data   # unpack SWDE once
-make bench-quick    # runs bin/*, never cargo
-```
