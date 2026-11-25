@@ -20,7 +20,7 @@ pub use error::Error;
 pub use facade::{Selector, record_attrib, record_text, select_query_within_cache};
 pub use record::{MatchKind, MatchRecord};
 pub use simdhtml::{
-    AttrQuote, DOC_ROOT, Document, DocumentFlags, EncodingMode, NO_NODE, NO_TAG, Node, NodeId,
-    NodeKind, ParseOptions, RepairMode, TagKind, TagToken, Warning, WarningKind,
+    AttrQuote, DOC_ROOT, Diagnostic, DiagnosticKind, Document, DocumentFlags, EncodingMode,
+    NO_NODE, NO_TAG, Node, NodeId, NodeKind, ParseOptions, RepairMode, TagKind, TagToken,
 };
 pub use xpath::{NodeRef, RefKind, Value, XPath, XPathError};

@@ -7,8 +7,8 @@ mod spec;
 use crate::markup::{MarkupIndex, TextRun, TextRuns};
 use crate::tokenizer::Tokens;
 use crate::{
-    Document, DocumentFlags, MarkupDiagnostics, NO_NODE, NO_TAG, NodeId, NodeKind, TagKind,
-    TagToken,
+    DiagnosticKind, Document, DocumentFlags, MarkupFlags, NO_NODE, NO_TAG, NodeId, NodeKind,
+    TagKind, TagToken,
 };
 /// SVG names the specification adjusts to camelCase; the 1-based index is what
 /// [`crate::Document::tag_name_override`] stores.
@@ -202,7 +202,7 @@ pub(crate) fn build_with<'a>(
     let node_capacity = tokens.tags.len() + index.text_runs.len() + 1;
     let mut builder = TreeBuilder::new(input_len, node_capacity, tokens.tags.len());
 
-    let (normal_flags, warnings, tag_name_override, merges) =
+    let (normal_flags, diagnostics, tag_name_override, merges) =
         spec::build(&input, &tokens, index, mode, &mut builder);
 
     // "Adjust SVG attributes" / "Adjust MathML attributes": the table applies
@@ -296,8 +296,11 @@ pub(crate) fn build_with<'a>(
         tokens.tags[dest as usize].attr_range = start..end;
     }
 
-    let mut flags = normal_flags | map_markup_flags(index.diags);
-    if !warnings.is_empty() {
+    let mut flags = normal_flags | map_markup_flags(index.flags);
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.kind == DiagnosticKind::UnexpectedEndTag)
+    {
         flags |= DocumentFlags::UNEXPECTED_END_TAG;
     }
     builder.finish(input_len, &mut flags);
@@ -340,23 +343,32 @@ pub(crate) fn build_with<'a>(
         attr_name_override,
         tag_name_override,
         flags,
-        warnings,
+        diagnostics,
     }
 }
 
-fn map_markup_flags(flags: MarkupDiagnostics) -> DocumentFlags {
+fn map_markup_flags(flags: MarkupFlags) -> DocumentFlags {
     let mut out = DocumentFlags::empty();
-    if flags.contains(MarkupDiagnostics::UNBALANCED_TAG) {
+    if flags.contains(MarkupFlags::UNBALANCED_TAG) {
         out |= DocumentFlags::UNBALANCED_TAG;
     }
-    if flags.intersects(
-        MarkupDiagnostics::NEEDS_FALLBACK
-            | MarkupDiagnostics::EOF_IN_TAG
-            | MarkupDiagnostics::EOF_IN_COMMENT
-            | MarkupDiagnostics::EOF_IN_DOCTYPE
-            | MarkupDiagnostics::EOF_IN_RAW_TEXT,
-    ) {
+    if flags.contains(MarkupFlags::NEEDS_FALLBACK) {
         out |= DocumentFlags::NEEDS_FALLBACK;
+    }
+    if flags.contains(MarkupFlags::EOF_IN_TAG) {
+        out |= DocumentFlags::EOF_IN_TAG;
+    }
+    if flags.contains(MarkupFlags::EOF_IN_COMMENT) {
+        out |= DocumentFlags::EOF_IN_COMMENT;
+    }
+    if flags.contains(MarkupFlags::EOF_IN_DOCTYPE) {
+        out |= DocumentFlags::EOF_IN_DOCTYPE;
+    }
+    if flags.contains(MarkupFlags::EOF_IN_RAW_TEXT) {
+        out |= DocumentFlags::EOF_IN_RAW_TEXT;
+    }
+    if flags.contains(MarkupFlags::EOF_IN_CDATA) {
+        out |= DocumentFlags::EOF_IN_CDATA;
     }
     out
 }
@@ -599,7 +611,19 @@ mod tests {
     fn unexpected_end_is_flagged() {
         let doc = crate::Document::parse(b"</div>").unwrap();
         assert!(doc.flags.contains(DocumentFlags::UNEXPECTED_END_TAG));
-        assert_eq!(doc.warnings.len(), 1);
+        assert_eq!(doc.diagnostics.len(), 1);
+        assert_eq!(doc.diagnostics[0].kind, DiagnosticKind::UnexpectedEndTag);
+    }
+
+    #[test]
+    fn markup_eof_flags_map_one_to_one() {
+        let doc = crate::Document::parse(b"<!-- x").unwrap();
+        assert!(doc.flags.contains(DocumentFlags::EOF_IN_COMMENT));
+        assert!(!doc.flags.contains(DocumentFlags::NEEDS_FALLBACK));
+
+        let doc = crate::Document::parse(b"<![CDATA[x").unwrap();
+        assert!(doc.flags.contains(DocumentFlags::EOF_IN_CDATA));
+        assert!(doc.flags.contains(DocumentFlags::NEEDS_FALLBACK));
     }
 
     /// `RepairMode::None` keeps the tape well-formed but does not repair.

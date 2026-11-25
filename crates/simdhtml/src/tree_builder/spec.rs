@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Warning, WarningKind};
+use crate::{Diagnostic, DiagnosticKind};
 
 /// Insertion modes, named as in the specification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -547,12 +547,12 @@ pub(super) struct SpecTree<'a> {
     foster_next_insert: bool,
     /// Stack of insertion modes to restore when a `<template>` closes.
     template_modes: Vec<Mode>,
-    warnings: Vec<Warning>,
+    diagnostics: Vec<Diagnostic>,
 }
 
-/// What tree construction hands back: document flags, warnings, per-token
+/// What tree construction hands back: document flags, diagnostics, per-token
 /// adjusted SVG names, and `(destination node, source tag)` attribute merges.
-type TreeResult = (DocumentFlags, Vec<Warning>, Vec<u8>, Vec<(u32, u32)>);
+type TreeResult = (DocumentFlags, Vec<Diagnostic>, Vec<u8>, Vec<(u32, u32)>);
 
 pub(super) fn build(
     input: &[u8],
@@ -562,8 +562,8 @@ pub(super) fn build(
     builder: &mut TreeBuilder,
 ) -> TreeResult {
     if mode == RepairMode::None {
-        let (flags, warnings) = build_without_repair(input, tokens, index, builder);
-        return (flags, warnings, Vec::new(), Vec::new());
+        let (flags, diagnostics) = build_without_repair(input, tokens, index, builder);
+        return (flags, diagnostics, Vec::new(), Vec::new());
     }
     let mut tree = SpecTree {
         quirks: false,
@@ -588,7 +588,7 @@ pub(super) fn build(
         foster_next_insert: false,
         merges: Vec::new(),
         template_modes: Vec::new(),
-        warnings: Vec::new(),
+        diagnostics: Vec::new(),
     };
     tree.push_node(Kind::Document, None, 0..0, false);
     tree.stack.push(0);
@@ -748,7 +748,7 @@ pub(super) fn build(
     for (tag, name) in tree.adjusted {
         overrides[tag as usize] = name;
     }
-    (flags, tree.warnings, overrides, tree.merges)
+    (flags, tree.diagnostics, overrides, tree.merges)
 }
 
 /// `RepairMode::None`: one node per start tag, a matching end tag closes it,
@@ -758,11 +758,11 @@ fn build_without_repair(
     tokens: &Tokens,
     index: &MarkupIndex,
     builder: &mut TreeBuilder,
-) -> (DocumentFlags, Vec<Warning>) {
+) -> (DocumentFlags, Vec<Diagnostic>) {
     let mut stack: Vec<u32> = Vec::new();
     let mut texts = TextRuns::new(index).peekable();
     let mut ti = 0usize;
-    let mut warnings = Vec::new();
+    let mut diagnostics = Vec::new();
     while ti < tokens.tags.len() || texts.peek().is_some() {
         let take_tag = match texts.peek() {
             None => true,
@@ -796,14 +796,14 @@ fn build_without_repair(
                 stack.pop();
                 builder.pop_open_element(span.clone(), false);
             } else {
-                warnings.push(Warning {
-                    kind: WarningKind::UnexpectedEndTag,
+                diagnostics.push(Diagnostic {
+                    kind: DiagnosticKind::UnexpectedEndTag,
                     span,
                 });
             }
         } else {
-            warnings.push(Warning {
-                kind: WarningKind::UnexpectedEndTag,
+            diagnostics.push(Diagnostic {
+                kind: DiagnosticKind::UnexpectedEndTag,
                 span,
             });
         }
@@ -813,7 +813,7 @@ fn build_without_repair(
         stack.pop();
         builder.pop_open_element(input.len() as u32..input.len() as u32, true);
     }
-    (DocumentFlags::empty(), warnings)
+    (DocumentFlags::empty(), diagnostics)
 }
 
 impl SpecTree<'_> {
@@ -1754,15 +1754,15 @@ impl SpecTree<'_> {
                 return Step::Done;
             }
             if self.is_special(node) {
-                self.warnings.push(Warning {
-                    kind: WarningKind::UnexpectedEndTag,
+                self.diagnostics.push(Diagnostic {
+                    kind: DiagnosticKind::UnexpectedEndTag,
                     span,
                 });
                 return Step::Done;
             }
         }
-        self.warnings.push(Warning {
-            kind: WarningKind::UnexpectedEndTag,
+        self.diagnostics.push(Diagnostic {
+            kind: DiagnosticKind::UnexpectedEndTag,
             span,
         });
         Step::Done
@@ -1890,8 +1890,8 @@ impl SpecTree<'_> {
                     return Step::Done;
                 }
                 if !start {
-                    self.warnings.push(Warning {
-                        kind: WarningKind::UnexpectedEndTag,
+                    self.diagnostics.push(Diagnostic {
+                        kind: DiagnosticKind::UnexpectedEndTag,
                         span: span.clone(),
                     });
                 }
@@ -1919,8 +1919,8 @@ impl SpecTree<'_> {
                     return self.in_body(ti);
                 }
                 if !start {
-                    self.warnings.push(Warning {
-                        kind: WarningKind::UnexpectedEndTag,
+                    self.diagnostics.push(Diagnostic {
+                        kind: DiagnosticKind::UnexpectedEndTag,
                         span: span.clone(),
                     });
                 }
@@ -2653,8 +2653,8 @@ impl SpecTree<'_> {
                     self.generate_implied_end_tags_except(name);
                     self.pop_until(index);
                 } else {
-                    self.warnings.push(Warning {
-                        kind: WarningKind::UnexpectedEndTag,
+                    self.diagnostics.push(Diagnostic {
+                        kind: DiagnosticKind::UnexpectedEndTag,
                         span,
                     });
                 }

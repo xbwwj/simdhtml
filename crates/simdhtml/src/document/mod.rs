@@ -110,11 +110,12 @@ pub struct Document<'a> {
     /// adjust a fixed list (`viewbox` -> `viewBox`); one byte per attribute.
     pub attr_name_override: Vec<u8>,
 
-    /// Document diagnostics.
+    /// Summary bits for recoverable parse problems.
     pub flags: DocumentFlags,
 
-    /// Recoverable parse errors, in document order.
-    pub warnings: Vec<Warning>,
+    /// Recoverable parse problems, in document order.  Carries source spans;
+    /// [`Self::flags`] carries the O(1) summary.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One `kind` byte plus one AoS `record` per node, in preorder: node `i`'s
@@ -285,11 +286,10 @@ pub(crate) struct NodeRecordInit {
 }
 
 bitflags::bitflags! {
-    /// Document-level diagnostics.
+    /// Summary flags for recoverable parse problems.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
     pub struct DocumentFlags: u32 {
-        /// An end tag did not match any open element, or an element was
-        /// implicitly closed by tree construction.
+        /// At least one [`DiagnosticKind::UnexpectedEndTag`] was reported.
         const UNEXPECTED_END_TAG = 1 << 0;
 
         /// The markup scan reported unbalanced tag starts/ends.
@@ -303,18 +303,34 @@ bitflags::bitflags! {
 
         /// An implied end tag was emitted for a void element or an open element.
         const IMPLIED_END = 1 << 4;
+
+        /// A tag start was still open when the input ended.
+        const EOF_IN_TAG = 1 << 5;
+
+        /// A `<!--` comment was not terminated before EOF.
+        const EOF_IN_COMMENT = 1 << 6;
+
+        /// A `<!...>` / `<?...>` declaration was not terminated before EOF.
+        const EOF_IN_DOCTYPE = 1 << 7;
+
+        /// A raw text element (script/style/...) had no matching end tag.
+        const EOF_IN_RAW_TEXT = 1 << 8;
+
+        /// A `<![CDATA[` section was not terminated before EOF.
+        const EOF_IN_CDATA = 1 << 9;
     }
 }
 
-/// A non-fatal parse warning.
+/// One recoverable parse problem with its source span.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Warning {
-    pub kind: WarningKind,
+pub struct Diagnostic {
+    pub kind: DiagnosticKind,
     pub span: Range<u32>,
 }
 
+/// A recoverable parse problem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WarningKind {
+pub enum DiagnosticKind {
     /// An end tag had no matching open element.
     UnexpectedEndTag,
 }

@@ -3,8 +3,6 @@ mod text_runs;
 
 use std::ops::Range;
 
-use thiserror::Error;
-
 use crate::error::{ParseError, Result};
 use crate::simd::StructuralMasks;
 
@@ -32,7 +30,8 @@ pub struct MarkupIndex {
     /// content); `kind` says whether text there decodes character references.
     pub opaque_regions: Vec<OpaqueRegion>,
 
-    pub diags: MarkupDiagnostics,
+    /// Flags for recoverable scan problems.
+    pub flags: MarkupFlags,
 }
 
 /// The 64-byte block loop, instantiated once per target feature level.  The
@@ -165,7 +164,7 @@ pub fn scan(input: &[u8]) -> Result<MarkupIndex> {
 
     let (tag_open, tag_close, regions, mut flags) = scanner.finish();
     if !tags_are_alternating(&tag_open, &tag_close) {
-        flags |= MarkupDiagnostics::UNBALANCED_TAG;
+        flags |= MarkupFlags::UNBALANCED_TAG;
     }
 
     let text_runs = build_text_runs(input.len(), &tag_open, &tag_close, &regions);
@@ -175,15 +174,15 @@ pub fn scan(input: &[u8]) -> Result<MarkupIndex> {
         tag_close,
         text_runs,
         opaque_regions: regions,
-        diags: flags,
+        flags,
     })
 }
 
 bitflags::bitflags! {
-    /// Diagnostics of the markup scan.  The scan is permissive: malformed input
-    /// still yields an index.
+    /// Flags of the markup scan.  The scan is permissive: malformed input still
+    /// yields an index.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
-    pub struct MarkupDiagnostics: u32 {
+    pub struct MarkupFlags: u32 {
         /// The number of tag starts and tag ends differs, or they are not in
         /// ascending/alternating order.
         const UNBALANCED_TAG = 1 << 0;
@@ -201,18 +200,12 @@ bitflags::bitflags! {
         const EOF_IN_RAW_TEXT = 1 << 4;
 
         /// A `<![CDATA[` section was not terminated before EOF.
-        const EOF_IN_CDATA = 1 << 7;
+        const EOF_IN_CDATA = 1 << 5;
 
         /// The document contains a construct outside the fast path (CDATA,
         /// SVG/MathML, `<template>`, ...).
         const NEEDS_FALLBACK = 1 << 6;
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum MarkupError {
-    #[error("input is larger than u32::MAX bytes")]
-    InputTooLarge,
 }
 
 /// What the scanner is currently looking at.  The state also selects which
@@ -267,7 +260,7 @@ struct Scanner<'a> {
     tag_open: Vec<u32>,
     tag_close: Vec<u32>,
     regions: Vec<OpaqueRegion>,
-    flags: MarkupDiagnostics,
+    flags: MarkupFlags,
     state: State,
     /// Start of the opaque region that `state` is inside: the `<` of a comment
     /// or declaration, the content start of a raw text element.
@@ -295,7 +288,7 @@ impl<'a> Scanner<'a> {
             tag_open: Vec::with_capacity(tags),
             tag_close: Vec::with_capacity(tags),
             regions: Vec::new(),
-            flags: MarkupDiagnostics::empty(),
+            flags: MarkupFlags::empty(),
             state: State::Data,
             region_start: 0,
             region_kind: RegionKind::Comment,
@@ -365,7 +358,7 @@ impl<'a> Scanner<'a> {
                     self.open_region(p, RegionKind::Comment, State::Comment);
                     p + 4
                 } else if input[p..].starts_with(b"<![CDATA[") {
-                    self.flags |= MarkupDiagnostics::NEEDS_FALLBACK;
+                    self.flags |= MarkupFlags::NEEDS_FALLBACK;
                     self.open_region(p, RegionKind::Cdata, State::Cdata);
                     p + 9
                 } else {
@@ -446,7 +439,7 @@ impl<'a> Scanner<'a> {
                 plaintext: true,
             }),
             StartTagKind::Fallback => {
-                self.flags |= MarkupDiagnostics::NEEDS_FALLBACK;
+                self.flags |= MarkupFlags::NEEDS_FALLBACK;
                 None
             }
         };
@@ -581,8 +574,8 @@ impl<'a> Scanner<'a> {
         self.state = State::Data;
     }
 
-    /// Closes the region that was open at EOF and reports the diagnostics.
-    fn finish(mut self) -> (Vec<u32>, Vec<u32>, Vec<OpaqueRegion>, MarkupDiagnostics) {
+    /// Closes the region that was open at EOF and reports the scan flags.
+    fn finish(mut self) -> (Vec<u32>, Vec<u32>, Vec<OpaqueRegion>, MarkupFlags) {
         // `</script` without a `>` is raw text, not a tag.
         if let Some(pending) = self.pending_end.take() {
             self.tag_open.truncate(pending.tag_open_len);
@@ -592,12 +585,12 @@ impl<'a> Scanner<'a> {
             self.state = State::Raw;
         }
         let eof = match self.state {
-            State::Data | State::Plaintext => MarkupDiagnostics::empty(),
-            State::Tag { .. } => MarkupDiagnostics::EOF_IN_TAG,
-            State::Comment => MarkupDiagnostics::EOF_IN_COMMENT | MarkupDiagnostics::NEEDS_FALLBACK,
-            State::Bogus => MarkupDiagnostics::EOF_IN_DOCTYPE | MarkupDiagnostics::NEEDS_FALLBACK,
-            State::Cdata => MarkupDiagnostics::EOF_IN_CDATA | MarkupDiagnostics::NEEDS_FALLBACK,
-            State::Raw => MarkupDiagnostics::EOF_IN_RAW_TEXT | MarkupDiagnostics::NEEDS_FALLBACK,
+            State::Data | State::Plaintext => MarkupFlags::empty(),
+            State::Tag { .. } => MarkupFlags::EOF_IN_TAG,
+            State::Comment => MarkupFlags::EOF_IN_COMMENT,
+            State::Bogus => MarkupFlags::EOF_IN_DOCTYPE,
+            State::Cdata => MarkupFlags::EOF_IN_CDATA,
+            State::Raw => MarkupFlags::EOF_IN_RAW_TEXT,
         };
         if matches!(
             self.state,
@@ -698,7 +691,7 @@ mod tests {
         let idx = index("<html><body><p>hi</p></body></html>");
         assert_eq!(idx.tag_open, vec![0, 6, 12, 17, 21, 28]);
         assert_eq!(idx.tag_close, vec![5, 11, 14, 20, 27, 34]);
-        assert!(!idx.diags.contains(MarkupDiagnostics::UNBALANCED_TAG));
+        assert!(!idx.flags.contains(MarkupFlags::UNBALANCED_TAG));
         assert_eq!(idx.text_runs, vec![15..17]);
     }
 
@@ -722,7 +715,7 @@ mod tests {
             "{:?}",
             idx.opaque_regions
         );
-        assert!(idx.diags.contains(MarkupDiagnostics::EOF_IN_RAW_TEXT));
+        assert!(idx.flags.contains(MarkupFlags::EOF_IN_RAW_TEXT));
 
         // The same end tag with a `>` closes the element.
         let idx = index("<script>x</script >");
@@ -736,10 +729,7 @@ mod tests {
         for input in ["a<!-->b", "a<!--->b", "a<!-- x --!>b"] {
             let idx = index(input);
             assert_eq!(idx.opaque_regions.len(), 1, "{input}: {idx:?}");
-            assert!(
-                !idx.diags.contains(MarkupDiagnostics::EOF_IN_COMMENT),
-                "{input}"
-            );
+            assert!(!idx.flags.contains(MarkupFlags::EOF_IN_COMMENT), "{input}");
             let last = input.len() as u32 - 1;
             assert_eq!(
                 idx.text_runs,
@@ -770,7 +760,7 @@ mod tests {
         assert_eq!(idx.tag_open, vec![0, 27]);
         assert_eq!(idx.tag_close, vec![25, 30]);
         assert_eq!(idx.text_runs, vec![26..27]);
-        assert!(!idx.diags.contains(MarkupDiagnostics::UNBALANCED_TAG));
+        assert!(!idx.flags.contains(MarkupFlags::UNBALANCED_TAG));
     }
 
     #[test]
@@ -781,10 +771,7 @@ mod tests {
         let idx = index(&input);
         assert_eq!(idx.tag_open.len(), 4, "{idx:?}");
         assert_eq!(idx.tag_close.len(), 4, "{idx:?}");
-        assert!(
-            !idx.diags.contains(MarkupDiagnostics::UNBALANCED_TAG),
-            "{idx:?}"
-        );
+        assert!(!idx.flags.contains(MarkupFlags::UNBALANCED_TAG), "{idx:?}");
         assert_eq!(idx.text_runs, vec![19..24, 49..54]);
     }
 
@@ -805,17 +792,14 @@ mod tests {
         input.push_str(r#"<div title="a > b">text</div>"#);
         let idx = index(&input);
         assert_eq!(idx.tag_open.len(), 2, "{idx:?}");
-        assert!(
-            !idx.diags.contains(MarkupDiagnostics::UNBALANCED_TAG),
-            "{idx:?}"
-        );
+        assert!(!idx.flags.contains(MarkupFlags::UNBALANCED_TAG), "{idx:?}");
     }
 
     #[test]
     fn unterminated_tag_is_flagged() {
         let idx = index("<div class=x");
-        assert!(idx.diags.contains(MarkupDiagnostics::EOF_IN_TAG));
-        assert!(idx.diags.contains(MarkupDiagnostics::UNBALANCED_TAG));
+        assert!(idx.flags.contains(MarkupFlags::EOF_IN_TAG));
+        assert!(idx.flags.contains(MarkupFlags::UNBALANCED_TAG));
     }
 
     #[test]
@@ -858,7 +842,7 @@ mod tests {
             prop_assert_eq!(&got.tag_open, &want.tag_open, "input={:?}", input);
             prop_assert_eq!(&got.tag_close, &want.tag_close, "input={:?}", input);
             prop_assert_eq!(&got.opaque_regions, &want.regions, "input={:?}", input);
-            prop_assert_eq!(got.diags, want.flags, "input={:?}", input);
+            prop_assert_eq!(got.flags, want.flags, "input={:?}", input);
         }
     }
 
@@ -867,7 +851,7 @@ mod tests {
         tag_open: Vec<u32>,
         tag_close: Vec<u32>,
         regions: Vec<OpaqueRegion>,
-        flags: MarkupDiagnostics,
+        flags: MarkupFlags,
     }
 
     /// Raw text element names, written independently of `region.rs`.
@@ -933,7 +917,7 @@ mod tests {
                     } else if input[i..].starts_with(b"<![CDATA[") {
                         region_start = i;
                         region_kind = RegionKind::Cdata;
-                        out.flags |= MarkupDiagnostics::NEEDS_FALLBACK;
+                        out.flags |= MarkupFlags::NEEDS_FALLBACK;
                         state = S::Cdata;
                         i += 9;
                     } else if next == b'!' {
@@ -992,7 +976,7 @@ mod tests {
                             name.to_ascii_lowercase().as_slice(),
                             b"svg" | b"math" | b"template"
                         ) {
-                            out.flags |= MarkupDiagnostics::NEEDS_FALLBACK;
+                            out.flags |= MarkupFlags::NEEDS_FALLBACK;
                         }
                         if is_rawtext_name_ref(name) {
                             raw_name = name;
@@ -1111,12 +1095,12 @@ mod tests {
             state = S::Raw;
         }
         let eof = match state {
-            S::Data | S::Plaintext => MarkupDiagnostics::empty(),
-            S::Tag => MarkupDiagnostics::EOF_IN_TAG,
-            S::Comment => MarkupDiagnostics::EOF_IN_COMMENT | MarkupDiagnostics::NEEDS_FALLBACK,
-            S::Bogus => MarkupDiagnostics::EOF_IN_DOCTYPE | MarkupDiagnostics::NEEDS_FALLBACK,
-            S::Cdata => MarkupDiagnostics::EOF_IN_CDATA | MarkupDiagnostics::NEEDS_FALLBACK,
-            S::Raw => MarkupDiagnostics::EOF_IN_RAW_TEXT | MarkupDiagnostics::NEEDS_FALLBACK,
+            S::Data | S::Plaintext => MarkupFlags::empty(),
+            S::Tag => MarkupFlags::EOF_IN_TAG,
+            S::Comment => MarkupFlags::EOF_IN_COMMENT,
+            S::Bogus => MarkupFlags::EOF_IN_DOCTYPE,
+            S::Cdata => MarkupFlags::EOF_IN_CDATA,
+            S::Raw => MarkupFlags::EOF_IN_RAW_TEXT,
         };
         out.flags |= eof;
         if matches!(
@@ -1130,7 +1114,7 @@ mod tests {
             });
         }
         if !tags_are_alternating(&out.tag_open, &out.tag_close) {
-            out.flags |= MarkupDiagnostics::UNBALANCED_TAG;
+            out.flags |= MarkupFlags::UNBALANCED_TAG;
         }
         out
     }
