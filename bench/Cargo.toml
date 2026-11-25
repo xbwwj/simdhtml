@@ -18,6 +18,8 @@ external = [
 # Python-engine comparisons embed CPython through PyO3 and call parsel /
 # selectolax from Rust.  The interpreter is selected by PYO3_PYTHON.
 python = ["dep:pyo3-embed"]
+# Sampled iteration profile (60 docs / 16 MiB) instead of the full 500 docs / 64 MiB.
+quick = ["simdhtml-data/quick"]
 
 [dependencies]
 criterion = { workspace = true }
@@ -27,7 +29,7 @@ markup5ever_rcdom = { workspace = true, optional = true }
 pyo3-embed = { workspace = true, optional = true }
 scraper = { workspace = true, optional = true }
 simdhtml = { workspace = true }
-simdhtml-corpus = { workspace = true }
+simdhtml-data = { workspace = true }
 simdsel = { workspace = true }
 
 [[bench]]

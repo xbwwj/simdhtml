@@ -1,20 +1,7 @@
-#!/usr/bin/env python3
-"""Differential test of the parsel-shaped *API* against parsel.
-
-`scripts/css_diff.py` covers selector semantics on fixtures; this one covers the
-API surface around them: `get`/`getall`/`attrib`/`re`/`bool`/`str`, `xpath()`
-relative paths and scalar results, `SelectorList` list behaviour, and the
-constructor's validation.  Element results are re-serialized through parsel
-before comparing, so only API behaviour is measured, not the (documented) fact
-that we return source slices and parsel returns lxml's re-serialization.
-
-Usage:
-    .venv/bin/python scripts/parsel_api_diff.py
-"""
-
 import re as _re
 
 import parsel
+import pytest
 import simdsel
 
 HTML = (
@@ -23,7 +10,24 @@ HTML = (
     "<table><tr><td>1</td></tr></table></body></html>"
 )
 
-# name, callable(selector) -> comparable value
+
+def canon(value):
+    if isinstance(value, list):
+        return [canon(item) for item in value]
+    if isinstance(value, dict):
+        return {key: canon(item) for key, item in value.items()}
+    if isinstance(value, str) and value.startswith("<"):
+        return parsel.Selector(text=value).get()
+    return value
+
+
+def call(selector, fn):
+    try:
+        return ("ok", canon(fn(selector)))
+    except Exception as error:
+        return ("err", f"{type(error).__name__}: {str(error).splitlines()[0]}")
+
+
 CASES = [
     ("get", lambda s: s.get()),
     ("getall", lambda s: s.getall()),
@@ -75,35 +79,8 @@ CASES = [
 ]
 
 
-def canon(value):
-    """Re-serialize element results through parsel (see the module docstring)."""
-    if isinstance(value, list):
-        return [canon(item) for item in value]
-    if isinstance(value, dict):
-        return {key: canon(item) for key, item in value.items()}
-    if isinstance(value, str) and value.startswith("<"):
-        return parsel.Selector(text=value).get()
-    return value
-
-
-def call(selector, fn):
-    try:
-        return ("ok", canon(fn(selector)))
-    except Exception as error:  # noqa: BLE001 - the type is part of the comparison
-        return ("err", f"{type(error).__name__}: {str(error).splitlines()[0]}")
-
-
-def main():
-    ours, theirs = simdsel.Selector(text=HTML), parsel.Selector(text=HTML)
-    diffs = 0
-    for name, fn in CASES:
-        left, right = call(ours, fn), call(theirs, fn)
-        if left == right:
-            continue
-        diffs += 1
-        print(f"[{name}]\n  simdsel: {str(left)[:200]}\n  parsel : {str(right)[:200]}")
-    print(f"\n{len(CASES) - diffs}/{len(CASES)} cases agree")
-
-
-if __name__ == "__main__":
-    main()
+@pytest.mark.parametrize("name,fn", CASES, ids=[name for name, _ in CASES])
+def test_parsel_api(name, fn):
+    ours = call(simdsel.Selector(text=HTML), fn)
+    theirs = call(parsel.Selector(text=HTML), fn)
+    assert ours == theirs, name

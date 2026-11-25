@@ -1,8 +1,7 @@
 /target
 /dist
 /data/commoncrawl/
-/data/swde-html/
-/data/swde-index.tsv
+/data/swde/html/
 *.so
 *.pyd
 *.dylib

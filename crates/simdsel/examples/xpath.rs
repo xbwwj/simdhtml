@@ -1,9 +1,8 @@
-//! Dumps each document's tree plus XPath results as JSON, to test difference
-//! with `scripts/xpath_diff.py`.
+//! Dumps each document's tree plus XPath results as JSON for debugging.
 //!
 //! Usage: `cargo run --release --example xpath -- <cc|swde|html-dir> <exprs-file> [limit]`
 //!
-//! A dataset name streams the corpus through `simdhtml-corpus` (no extraction);
+//! A dataset name streams the corpus through `simdhtml-data` (no extraction);
 //! a directory is read as a flat set of `.html` files.
 
 use std::{
@@ -94,64 +93,9 @@ fn dump_tree(out: &mut String, doc: &Document<'_>) {
 }
 
 /// Times evaluation only: documents and expressions are compiled/parsed once.
-fn bench(docs_in: &[(String, Vec<u8>)], exprs: &[String]) {
-    let compiled: Vec<XPath> = exprs
-        .iter()
-        .map(|expr| XPath::new(expr).unwrap_or_else(|error| panic!("{expr}: {error}")))
-        .collect();
-
-    // Parse in place so the documents keep borrowing their buffers.
-    let mut docs: Vec<Document<'_>> = Vec::new();
-    let mut buffers: Vec<Vec<u8>> = Vec::new();
-
-    for (_, bytes) in docs_in {
-        if bytes.len() > 1 << 20 {
-            continue;
-        }
-        buffers.push(bytes.clone());
-    }
-
-    let mut lengths = Vec::new();
-
-    for bytes in &buffers {
-        if let Ok(doc) = Document::parse(bytes) {
-            lengths.push(bytes.len());
-            docs.push(doc);
-        }
-    }
-
-    let bytes_total: usize = lengths.iter().sum();
-    let reps = 5;
-    let mut hits = 0usize;
-    let start = std::time::Instant::now();
-
-    for _ in 0..reps {
-        for doc in &docs {
-            for path in &compiled {
-                if let Ok(Value::Nodes(nodes)) = path.eval(doc) {
-                    hits += nodes.len();
-                }
-            }
-        }
-    }
-
-    let elapsed = start.elapsed().as_secs_f64();
-    let queries = (reps * docs.len() * compiled.len()) as f64;
-
-    println!(
-        "docs {} exprs {} -> {:.0} ns/query, {:.0} queries/s, {:.1} MB/s of document bytes ({} hits)",
-        docs.len(),
-        compiled.len(),
-        elapsed * 1e9 / queries,
-        queries / elapsed,
-        (bytes_total * reps) as f64 / elapsed / 1e6,
-        hits
-    );
-}
-
 /// Load `limit` documents from a dataset name or a flat html directory.
 fn load_docs(source: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
-    use simdhtml_corpus::{Corpus, Dataset, SamplePolicy};
+    use simdhtml_data::{Corpus, Dataset, SamplePolicy};
 
     if let Some(dataset) = Dataset::from_name(source) {
         let policy = SamplePolicy {
@@ -207,11 +151,6 @@ fn main() {
         .collect();
 
     let docs = load_docs(&source, limit);
-
-    if env::var("XPATH_BENCH").is_ok() {
-        bench(&docs, &exprs);
-        return;
-    }
 
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());

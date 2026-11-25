@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo bench -p simdhtml-bench --bench select
-//! cargo bench -p simdhtml-bench --bench select -- --quick
+//! cargo bench -p simdhtml-bench --features quick --bench select -- --quick
 //! ```
 //!
 //! Two shapes:

@@ -2,12 +2,12 @@
 //!
 //! ```text
 //! cargo bench -p simdhtml-bench --bench parse
-//! cargo bench -p simdhtml-bench --bench parse -- --quick
+//! cargo bench -p simdhtml-bench --features quick --bench parse -- --quick
 //! ```
 //!
 //! `RepairMode::None` is the default and therefore the headline number; `Spec`
 //! is measured on the same bytes so the cost of the specification's tree is
-//! visible.  Inputs are streamed from the real corpora by `simdhtml-corpus`
+//! visible.  Inputs are streamed from the real corpora by `simdhtml-data`
 //! (Common Crawl `.warc.gz` and SWDE `.7z`), never synthesised.
 
 use criterion::Criterion;

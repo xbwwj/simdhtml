@@ -1,21 +1,19 @@
 # simdhtml
 
-A SIMD-accelerated HTML parser and CSS selector.
+A SIMD-accelerated HTML parser and CSS/XPath selector.
 
 - Rust crates: [`simdhtml`](./crates/simdhtml) (parser) and
-  [`simdsel`](./crates/simdsel) (CSS/XPath selection).
+  [`simdsel`](./crates/simdsel) (selection).
 - Python binding: [`simdsel-py`](./crates/simdsel-py).
 
-## Performance results
+## Performance
 
-The following figures show how fast simdhtml extracts data from HTML. The task is to extract main content from most webpages and extract structured data from specified sites. The bench currently runs on an AMD Ryzen 5600 processor with single core. You can reproduce the result on your device with `make bench`.
+The figures show extraction speed on real pages, single core on an AMD Ryzen
+5 5600.
 
-[![Main content and link extraction: Common Crawl, parse + 18 CSS selectors](./figures/main-content-and-link-extraction.svg)](./figures/main-content-and-link-extraction.svg)
+[![Common Crawl: parse + 18 CSS selectors](./figures/cc.svg)](./figures/cc.svg)
 
-[![Structured data extraction: SWDE, per-site class selectors](./figures/structured-data-extraction.svg)](./figures/structured-data-extraction.svg)
-
-We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
-`simdsel (repair)` row.
+[![SWDE: per-site structured extraction](./figures/swde.svg)](./figures/swde.svg)
 
 ## Usage
 
@@ -38,8 +36,6 @@ We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
 'Second'
 >>> [item.attrib["data-id"] for item in sel.css(".item")]
 ['1', '2']
->>> [item.css("h2::text").get() for item in sel.css(".item")]
-['First & best', 'Second']
 ```
 
 ### Rust
@@ -53,48 +49,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 <div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>
 "#;
 
-    let root = Selector::from_text(html)?;      // or from_vec(body) for owned bytes
-
-    let titles = root.css(".item h2::text")?;
-    println!("{:?}", titles.getall());          // ["First & best", "Second"]
-    println!("{:?}", titles.get());             // Some("First & best")
-
-    let links = root.css(".item a::attr(href)")?;
-    println!("{:?}", links.getall());           // ["/one", "/two"]
-
-    let items = root.css(".item")?;
-    for item in items.split() {
-        println!("{:?}", item.attrib());        // Some([("data-id", "1")])
-        println!("{:?}", item.css("h2::text")?.get()); // Some("First & best")
-    }
+    let root = Selector::from_text(html)?;
+    println!("{:?}", root.css(".item h2::text")?.getall());
+    println!("{:?}", root.css(".item a::attr(href)")?.getall());
 
     if let Value::Str(id) = XPath::new("string(//div[2]/@data-id)")?.eval(root.doc())? {
-        println!("id={id}");                    // id=2
+        println!("id={id}");
     }
-
     Ok(())
 }
 ```
 
-
 ## Development
 
-`make` is the only entry point; `make` alone lists the targets.
-
 ```bash
-make data          # fetch raw inputs: Common Crawl WARC + SWDE submodule (once)
-make extract-data  # unpack SWDE and build its index (once, ~1 min, 8 GiB disk)
-make test          # Rust tests
-make test-wpt      # html5lib tree-construction conformance
-make test-corpus   # Common Crawl preorder-invariant test
-make bench-build   # build the bench executables into target/bench/bin (cargo, once)
-make bench-compare # scoreboard: extract + python_compare, 60 documents (figures/*.svg)
-make bench         # full criterion run of every bench target
-make bench-quick   # sampled run for iteration (no plots)
-make venv          # .venv with parsel/selectolax/bs4, via pip (default PyPI)
-make venv-cn       # same, from the Tsinghua mirror
-make venv-ali      # same, from the Aliyun mirror
-make check         # cargo fmt --check + cargo clippy
-make info          # data, venv, bench binaries and the targets that run
+cargo test                 # Rust tests
+cargo xtask compat --parsel  # parsel compatibility tests
+cargo xtask data           # fetch inputs and build the SWDE working set
+cargo xtask data --clear   # remove downloaded/derived data
+cargo xtask bench --quick  # sampled benchmark
+cargo xtask bench --compare
+cargo xtask plot           # figures/cc.svg, figures/swde.svg
 ```
 
+More commands: `cargo xtask --help`. Data layout: [`data/README.md`](./data/README.md).

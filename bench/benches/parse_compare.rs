@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo bench -p simdhtml-bench --bench parse_compare --features external
-//! cargo bench -p simdhtml-bench --bench parse_compare --features external -- --quick
+//! cargo bench -p simdhtml-bench --features external,quick --bench parse_compare -- --quick
 //! ```
 
 use std::hint::black_box;

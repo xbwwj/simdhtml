@@ -1,10 +1,11 @@
 [workspace]
 members = [
-  "crates/corpus",
+  "data",
   "crates/simdhtml",
   "crates/simdsel",
   "crates/simdsel-py",
   "bench",
+  "xtask",
 ]
 default-members = [
   "crates/simdhtml",
@@ -42,5 +43,5 @@ warc = "0.4"
 # internal crates
 
 simdhtml = { path = "crates/simdhtml" }
-simdhtml-corpus = { path = "crates/corpus" }
+simdhtml-data = { path = "data" }
 simdsel = { path = "crates/simdsel" }

@@ -5,8 +5,7 @@
 //! maintained in WPT).  It compares `simdhtml` against the expected tree.
 //!
 //! ```text
-//! cargo test -p simdhtml --test wpt_tree_construction -- --nocapture
-//! SIMDHTML_REQUIRE_TESTDATA=1 cargo test -p simdhtml --test wpt_tree_construction
+//! cargo test -p simdhtml --test wpt_tree_construction -- --ignored --nocapture
 //! ```
 
 use std::fs;
@@ -499,76 +498,6 @@ fn node_label(node: &TNode) -> String {
     }
 }
 
-/// Path of the first divergence, as `body/div[2]/table/#comment[1]: want .. got ..`.
-fn first_divergence_path(expected: &[TNode], actual: &[TNode]) -> String {
-    fn walk(want: &[TNode], got: &[TNode], path: &mut Vec<String>) -> Option<String> {
-        let at = path.join("/");
-        for (index, expected) in want.iter().enumerate() {
-            let Some(actual) = got.get(index) else {
-                return Some(format!("{at}[{index}]: missing {}", node_label(expected)));
-            };
-            match (expected, actual) {
-                (
-                    TNode::Element {
-                        name: want_name,
-                        attrs: want_attrs,
-                        children: want_children,
-                    },
-                    TNode::Element {
-                        name: got_name,
-                        attrs: got_attrs,
-                        children: got_children,
-                    },
-                ) => {
-                    if want_name != got_name {
-                        return Some(format!(
-                            "{at}[{index}]: want <{want_name}> got <{got_name}>"
-                        ));
-                    }
-                    if want_attrs != got_attrs {
-                        return Some(format!(
-                            "{at}[{index}] {want_name}: attrs want {want_attrs:?} got {got_attrs:?}"
-                        ));
-                    }
-                    path.push(format!("{want_name}[{index}]"));
-                    if let Some(found) = walk(want_children, got_children, path) {
-                        return Some(found);
-                    }
-                    path.pop();
-                }
-                (TNode::Text(a), TNode::Text(b)) => {
-                    if a != b {
-                        return Some(format!("{at}[{index}]: text want {a:?} got {b:?}"));
-                    }
-                }
-                (TNode::Comment(a), TNode::Comment(b)) => {
-                    if a != b {
-                        return Some(format!("{at}[{index}]: comment want {a:?} got {b:?}"));
-                    }
-                }
-                (TNode::Doctype(a), TNode::Doctype(b)) => {
-                    if a != b {
-                        return Some(format!("{at}[{index}]: doctype want {a:?} got {b:?}"));
-                    }
-                }
-                (a, b) => {
-                    return Some(format!(
-                        "{at}[{index}]: want {} got {}",
-                        node_label(a),
-                        node_label(b)
-                    ));
-                }
-            }
-        }
-        if got.len() > want.len() {
-            return Some(format!("{at}: {} extra child(ren)", got.len() - want.len()));
-        }
-        None
-    }
-    let mut path = Vec::new();
-    walk(expected, actual, &mut path).unwrap_or_else(|| "identical subtrees?".to_owned())
-}
-
 fn divergence(expected: &[TNode], actual: &[TNode]) -> Option<Divergence> {
     for (index, want) in expected.iter().enumerate() {
         let Some(ours) = actual.get(index) else {
@@ -661,11 +590,6 @@ fn process_file(
         skipped: 0,
         passed: 0,
     };
-    let file_started = std::time::Instant::now();
-    let file_name = file
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     for test in tests {
         if test.fragment || test.script_dependent || test.expected.is_empty() {
             stats.skipped += 1;
@@ -678,21 +602,6 @@ fn process_file(
             Err(_) => Vec::new(),
         });
         let simdhtml_ok = actual == expected;
-        // `WPT_DUMP=1` prints the failing case, the expected tree and ours; it
-        // is what turned "5 new failures" into a one-line diagnosis.
-        if !simdhtml_ok && std::env::var_os("WPT_DUMP").is_some() {
-            // Whole trees are usually hundreds of nodes and the divergence is
-            // one child deep inside; print the path to it, and the full trees
-            // only on request.
-            eprintln!(
-                "FAIL data={:?}\n  at {}",
-                test.data,
-                first_divergence_path(&expected, &actual)
-            );
-            if std::env::var_os("WPT_DUMP_FULL").is_some() {
-                eprintln!("  expected={expected:?}\n  actual  ={actual:?}");
-            }
-        }
         if simdhtml_ok {
             stats.passed += 1;
         } else {
@@ -707,9 +616,6 @@ fn process_file(
             }
         }
     }
-    if std::env::var_os("WPT_TIME").is_some() {
-        eprintln!("{}: {:?}", file_name, file_started.elapsed());
-    }
     Some(stats)
 }
 
@@ -720,10 +626,10 @@ fn process_file(
 const MIN_PASS: usize = 1691;
 
 #[test]
+#[ignore = "needs data/wpt"]
 fn wpt_tree_construction() {
-    let Some(root) = simdhtml_corpus::wpt_resources() else {
-        simdhtml_corpus::skip("wpt_tree_construction", None);
-        return;
+    let Some(root) = simdhtml_data::wpt_resources() else {
+        panic!("data/wpt missing; run `cargo xtask data`");
     };
     let mut files: Vec<_> = fs::read_dir(&root)
         .expect("WPT resources directory")
@@ -742,10 +648,7 @@ fn wpt_tree_construction() {
     let total: usize = stats.iter().map(|s| s.total).sum();
     let skipped: usize = stats.iter().map(|s| s.skipped).sum();
     let passed: usize = stats.iter().map(|s| s.passed).sum();
-    if total == 0 {
-        eprintln!("skip wpt_tree_construction: no usable WPT cases");
-        return;
-    }
+    assert!(total > 0, "no usable WPT cases");
     let mut per_file: Vec<(String, usize, usize)> = stats
         .into_iter()
         .map(|s| (s.name, s.total, s.passed))
@@ -762,12 +665,12 @@ fn wpt_tree_construction() {
         println!("{name:38} {pass:4}/{n:<4}");
     }
 
-    if std::env::var_os("WPT_BUCKETS").is_some() {
-        let mut rows: Vec<(String, usize, Vec<String>)> = buckets
-            .into_iter()
-            .map(|(key, (count, examples))| (key, count, examples))
-            .collect();
-        rows.sort_by_key(|(_, count, _)| std::cmp::Reverse(*count));
+    let mut rows: Vec<(String, usize, Vec<String>)> = buckets
+        .into_iter()
+        .map(|(key, (count, examples))| (key, count, examples))
+        .collect();
+    rows.sort_by_key(|(_, count, _)| std::cmp::Reverse(*count));
+    if !rows.is_empty() {
         println!("\nfailures by first divergence ({} buckets):", rows.len());
         for (key, count, examples) in rows.iter().take(40) {
             println!("{count:5}  {key}");

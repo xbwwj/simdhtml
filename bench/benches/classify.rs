@@ -2,12 +2,12 @@
 //!
 //! ```text
 //! cargo bench -p simdhtml-bench --bench classify
-//! cargo bench -p simdhtml-bench --bench classify -- --quick
+//! cargo bench -p simdhtml-bench --features quick --bench classify -- --quick
 //! ```
 //!
 //! This is a kernel-level bench (dispatch vs scalar `classify`, and
 //! `prefix_xor`), but the bytes still come from `data/commoncrawl` and
-//! the Common Crawl and SWDE archives via `simdhtml-corpus`; no repeated
+//! the Common Crawl and SWDE archives via `simdhtml-data`; no repeated
 //! synthetic pattern.
 
 use std::hint::black_box;

@@ -2,13 +2,13 @@
 //!
 //! ```text
 //! cargo bench -p simdhtml-bench --bench extract --features external
-//! cargo bench -p simdhtml-bench --bench extract --features external -- --quick
+//! cargo bench -p simdhtml-bench --features external,quick --bench extract -- --quick
 //! ```
 //!
 //! Engines: simdsel in both repair modes, scraper (html5ever + servo
 //! selectors), and dom_query (html5ever + its own selector engine).
 //!
-//! Documents are streamed from the real corpora by `simdhtml-corpus`; CC uses
+//! Documents are streamed from the real corpora by `simdhtml-data`; CC uses
 //! the checked-in selector sets (`bench/selectors/cc`), SWDE the per-site
 //! selectors (`bench/selectors/swde`).
 

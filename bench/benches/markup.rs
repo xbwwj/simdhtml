@@ -2,12 +2,11 @@
 //!
 //! ```text
 //! cargo bench -p simdhtml-bench --bench markup
-//! cargo bench -p simdhtml-bench --bench markup -- --quick
-//! SIMDHTML_DATA_DIR=/data cargo bench -p simdhtml-bench --bench markup
+//! cargo bench -p simdhtml-bench --features quick --bench markup -- --quick
 //! ```
 //!
 //! Input is streamed from the Common Crawl `.warc.gz` and the SWDE `.7z`
-//! archives (`simdhtml-corpus`, see `data/README.md`), sampled to a bounded
+//! archives (`simdhtml-data`, see `data/README.md`), sampled to a bounded
 //! number of documents.  There is no synthetic filler pattern: the point is the
 //! tag/attribute/region distribution real pages have.
 

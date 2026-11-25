@@ -2,5 +2,5 @@
 	path = data/wpt
 	url = https://github.com/web-platform-tests/wpt.git
 [submodule "swde"]
-	path = data/swde
+	path = data/swde/source
 	url = https://github.com/woailaosang/swde.git

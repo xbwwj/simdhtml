@@ -22,6 +22,11 @@ bench = [
     "selectolax>=1.0",
     "beautifulsoup4>=4.12",
 ]
+test = [
+    "pytest>=8",
+    "parsel>=1.10",
+    "lxml>=5",
+]
 
 [tool.maturin]
 manifest-path = "crates/simdsel-py/Cargo.toml"

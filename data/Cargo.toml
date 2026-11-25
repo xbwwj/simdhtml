@@ -1,10 +1,13 @@
 [package]
-name = "simdhtml-corpus"
+name = "simdhtml-data"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Streaming benchmark corpora: Common Crawl WARC and SWDE 7z, read directly"
+description = "Benchmark/test corpora: Common Crawl WARC and SWDE working set"
 publish = false
+
+[features]
+quick = []
 
 [dependencies]
 flate2 = { workspace = true }

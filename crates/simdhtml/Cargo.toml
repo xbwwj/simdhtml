@@ -15,4 +15,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-simdhtml-corpus = { workspace = true }
+simdhtml-data = { workspace = true }

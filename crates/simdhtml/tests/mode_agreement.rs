@@ -7,14 +7,14 @@
 //! and running both modes never panics.
 //!
 //! ```text
-//! SIMDHTML_RUN_CORPUS_TESTS=1 cargo test -p simdhtml --test mode_agreement -- --nocapture
+//! cargo test -p simdhtml --test mode_agreement -- --nocapture
 //! ```
 
 use simdhtml::document::Document;
 use simdhtml::document::id::{NO_NODE, NodeId};
 use simdhtml::document::node::NodeKind;
 use simdhtml::parse::{ParseOptions, RepairMode};
-use simdhtml_corpus::{Dataset, SamplePolicy};
+use simdhtml_data::{Dataset, SamplePolicy};
 
 fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
     for raw in 0..doc.nodes.len() as u32 {
@@ -68,24 +68,15 @@ fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
 }
 
 #[test]
+#[ignore = "needs data/commoncrawl"]
 fn corpus_preorder_invariants() {
-    if std::env::var_os("SIMDHTML_RUN_CORPUS_TESTS").is_none() {
-        eprintln!("skip mode_agreement: set SIMDHTML_RUN_CORPUS_TESTS=1 to walk commoncrawl");
-        return;
-    }
-    let limit: usize = std::env::var("AGREEMENT_LIMIT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(500);
     let policy = SamplePolicy {
-        limit,
+        limit: 500,
         bytes: 256 * 1024 * 1024,
         ..SamplePolicy::default()
     };
-    let Ok(corpus) = simdhtml_corpus::Corpus::load_with(Dataset::CommonCrawl, &policy) else {
-        simdhtml_corpus::skip("mode_agreement", None);
-        return;
-    };
+    let corpus = simdhtml_data::Corpus::load_with(Dataset::CommonCrawl, &policy)
+        .unwrap_or_else(|err| panic!("{err}"));
 
     let mut parsed = 0usize;
     for source in &corpus.docs {

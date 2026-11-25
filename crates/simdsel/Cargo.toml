@@ -11,4 +11,4 @@ simdhtml = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-simdhtml-corpus = { workspace = true }
+simdhtml-data = { workspace = true }

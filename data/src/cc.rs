@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use sha1_smol::Sha1;
 use warc::{RecordType, WarcHeader, WarcReader};
 
-use crate::{Corpus, Dataset, Doc, SamplePolicy, env, http};
+use crate::{Corpus, Dataset, Doc, SamplePolicy, http, paths};
 
 const BUCKETS: [&str; 6] = [
     "<8KiB",
@@ -154,9 +154,7 @@ pub fn load(policy: &SamplePolicy) -> Result<Corpus, String> {
     }
     let docs: Vec<Doc> = docs.into_iter().flatten().collect();
 
-    let query_sets = env::selectors_dir()
-        .map(|dir| crate::read_selector_sets(&dir.join("cc")))
-        .unwrap_or_default();
+    let query_sets = crate::read_selector_sets(&paths::selectors_dir().join("cc"));
 
     Ok(Corpus {
         name: Dataset::CommonCrawl.label().to_string(),
@@ -166,11 +164,9 @@ pub fn load(policy: &SamplePolicy) -> Result<Corpus, String> {
 }
 
 fn find_warc() -> Result<PathBuf, String> {
-    let Some(dir) = env::warc_dir() else {
-        return Err("no data directory; run `make data-cc`".to_string());
-    };
+    let dir = paths::warc_dir();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map_err(|err| format!("{}: {err}; run `make data-cc`", dir.display()))?
+        .map_err(|err| format!("{}: {err}; run `cargo xtask data`", dir.display()))?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {
@@ -179,8 +175,10 @@ fn find_warc() -> Result<PathBuf, String> {
         })
         .collect();
     files.sort();
-    files
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("no .warc.gz under {}; run `make data-cc`", dir.display()))
+    files.into_iter().next().ok_or_else(|| {
+        format!(
+            "no .warc.gz under {}; run `cargo xtask data`",
+            dir.display()
+        )
+    })
 }

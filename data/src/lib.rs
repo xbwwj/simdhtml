@@ -1,21 +1,16 @@
 // Benchmark/test inputs.
 //
 // Common Crawl is streamed from data/commoncrawl/warc/*.warc.gz; SWDE is read
-// through data/swde-index.tsv, which `make extract-data` writes next to the
-// tree it unpacks.  Only sampled documents are kept, so a quick run holds a few
-// MiB instead of the 8 GiB SWDE tree.
-//
-// Layout and overrides are in data/README.md.
+// from the bounded working set under data/swde/html.
 
 mod cc;
-pub mod env;
 mod http;
+pub mod paths;
 mod sample;
 mod swde;
 
-pub use env::{
-    data_dir, require_testdata, selectors_dir, skip, swde_archive_dir, swde_dir, swde_html_dir,
-    swde_index, warc_dir, wpt_resources,
+pub use paths::{
+    data_dir, selectors_dir, skip, swde_html_dir, swde_source_dir, warc_dir, wpt_resources,
 };
 pub use sample::SamplePolicy;
 
@@ -95,7 +90,7 @@ pub struct Corpus {
 impl Corpus {
     #[must_use]
     pub fn load(dataset: Dataset) -> Option<Self> {
-        let policy = SamplePolicy::from_env();
+        let policy = SamplePolicy::active();
         match Self::load_with(dataset, &policy) {
             Ok(corpus) if !corpus.docs.is_empty() => {
                 println!(

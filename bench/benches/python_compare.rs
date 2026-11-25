@@ -12,8 +12,8 @@
 //! the other bench targets; this file is only the Python side.
 //!
 //! The Python packages are installed by:
-//!     make venv        (or venv-cn / venv-ali for a PyPI mirror)
-//! and `make bench-compare` makes the venv importable through `PYTHONPATH`.
+//!     uv sync --group bench
+//! and `cargo xtask bench --compare` sets the venv for the embedding.
 
 use std::hint::black_box;
 
@@ -156,7 +156,7 @@ fn main() {
         for engine in PyEngine::ALL {
             if let Err(err) = engine.parse(py, "<p>x</p>") {
                 panic!(
-                    "{} is not importable: {err}\nprepare the venv with: make venv (venv-cn / venv-ali for a mirror)",
+                    "{} is not importable: {err}\nprepare the venv with: uv sync --group bench",
                     engine.name()
                 );
             }
