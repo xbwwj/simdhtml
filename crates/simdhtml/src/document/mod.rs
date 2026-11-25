@@ -6,12 +6,15 @@ use encoding_rs::Encoding;
 use crate::character_reference::decode_character_references;
 use crate::tokenizer::{AttrQuote, TagToken};
 
-/// A node index in a flattened document.
-pub type NodeId = u32;
+mod id;
+mod node;
 
-/// Sentinel used for "no node".
+pub use self::node::{Node, NodeKind};
+
+pub type NodeId = u32;
+pub type TagId = u32;
+
 pub const NO_NODE: NodeId = u32::MAX;
-/// Sentinel used for "no tag".
 pub const NO_TAG: u32 = u32::MAX;
 
 pub(crate) const MAX_DEPTH: u16 = 1024;
@@ -19,7 +22,31 @@ pub(crate) const MAX_DEPTH: u16 = 1024;
 /// The document node: always node `0`, and the only node without a parent.
 pub const DOC_ROOT: NodeId = 0;
 
-pub type TagId = u32;
+/// Set on text nodes whose bytes came from rawtext/RCDATA.
+pub const RAW_TEXT_BIT: u8 = 0b100;
+
+/// Set on text nodes whose data needs input-stream newline preprocessing.
+pub const NORMALIZE_NEWLINES_BIT: u8 = 0b1000_0000;
+
+/// Set on [`NodeKind::Comment`] nodes that are doctypes.
+pub const DOCTYPE_BIT: u8 = 0b0100_0000;
+
+pub const NS_HTML: u8 = 0;
+pub const NS_SVG: u8 = 1;
+pub const NS_MATHML: u8 = 2;
+
+/// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`)
+/// the element is MathML, but its children belong to HTML.
+pub const NS_MATH_TEXT_POINT: u8 = 3;
+
+/// An SVG element whose children are HTML (`foreignObject`, `desc`, `title`).
+pub const NS_SVG_HTML_POINT: u8 = 4;
+
+// Namespaces live in bits 3-5 of the kind byte: no extra memory, same column.
+const NS_SHIFT: u32 = 3;
+const NS_MASK: u8 = 0b111 << NS_SHIFT;
+
+const KIND_MASK: u8 = 0b011;
 
 /// A parsed HTML document. It borrows the input when that already was UTF-8 and
 /// owns the transcoded bytes otherwise.
@@ -101,119 +128,6 @@ pub struct NodeTape {
     /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].  This is the scan column.
     pub kind: Vec<u8>,
     pub record: Vec<NodeRecord>,
-}
-
-/// Per-node fields other than [`NodeTape::kind`].
-#[derive(Clone, Debug)]
-pub struct NodeRecord {
-    parent: NodeId,
-    first_child: NodeId,
-    next_sibling: NodeId,
-    subtree_end: NodeId,
-    span: Range<u32>,
-    tag_token: TagId,
-    outer_end: u32,
-}
-
-/// Applies HTML's newline preprocessing: `\r\n` and `\r` become `\n`.
-#[must_use]
-pub fn normalize_newlines(text: Cow<'_, str>) -> Cow<'_, str> {
-    if !text.as_bytes().contains(&b'\r') {
-        return text;
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\r' {
-            if chars.peek() == Some(&'\n') {
-                chars.next();
-            }
-            out.push('\n');
-        } else {
-            out.push(ch);
-        }
-    }
-    Cow::Owned(out)
-}
-
-/// Replaces U+0000 with U+FFFD, as every HTML tokenizer state does.
-///
-/// The data model has no NUL: it is replaced when the character is emitted, so
-/// doing it on extraction keeps the parser's spans valid and costs one byte
-/// scan on documents that contain no NUL (the overwhelming majority).
-#[must_use]
-pub fn replace_nulls(text: Cow<'_, str>) -> Cow<'_, str> {
-    if !text.as_bytes().contains(&0) {
-        return text;
-    }
-    Cow::Owned(text.replace('\0', "\u{fffd}"))
-}
-
-/// Set on text nodes whose bytes came from rawtext/RCDATA.
-pub const RAW_TEXT_BIT: u8 = 0b100;
-
-/// Set on text nodes whose data needs input-stream newline preprocessing.
-pub const NORMALIZE_NEWLINES_BIT: u8 = 0b1000_0000;
-
-/// Set on [`NodeKind::Comment`] nodes that are doctypes.
-pub const DOCTYPE_BIT: u8 = 0b0100_0000;
-
-pub const NS_HTML: u8 = 0;
-pub const NS_SVG: u8 = 1;
-pub const NS_MATHML: u8 = 2;
-
-/// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`)
-/// the element is MathML, but its children belong to HTML.
-pub const NS_MATH_TEXT_POINT: u8 = 3;
-
-/// An SVG element whose children are HTML (`foreignObject`, `desc`, `title`).
-pub const NS_SVG_HTML_POINT: u8 = 4;
-
-// Namespaces live in bits 3-5 of the kind byte: no extra memory, same column.
-const NS_SHIFT: u32 = 3;
-const NS_MASK: u8 = 0b111 << NS_SHIFT;
-
-const KIND_MASK: u8 = 0b011;
-
-impl NodeKind {
-    #[inline]
-    const fn bits(self) -> u8 {
-        match self {
-            Self::Document => 0,
-            Self::Element => 1,
-            Self::Text => 2,
-            Self::Comment => 3,
-        }
-    }
-
-    #[inline]
-    const fn from_bits(bits: u8) -> Self {
-        match bits & KIND_MASK {
-            1 => Self::Element,
-            2 => Self::Text,
-            3 => Self::Comment,
-            _ => Self::Document,
-        }
-    }
-}
-
-/// Everything needed to append one node; lives on the builder stack only.
-pub(crate) struct NodeRecordInit {
-    pub kind: NodeKind,
-    pub parent: NodeId,
-    pub first_child: NodeId,
-    pub next_sibling: NodeId,
-    pub subtree_end: NodeId,
-    pub span: Range<u32>,
-    pub tag_token: TagId,
-    pub outer_end: u32,
-    pub raw_text: bool,
-    /// Set on [`NodeKind::Comment`] nodes that came from a doctype.
-    pub doctype: bool,
-    /// Apply newline preprocessing to this text node's data.
-    pub normalize_newlines: bool,
-    /// Element namespace ([`NS_HTML`], [`NS_SVG`], [`NS_MATH`]); 0 for text.
-    pub ns: u8,
 }
 
 impl NodeTape {
@@ -305,150 +219,69 @@ impl NodeTape {
     }
 }
 
-/// A borrowed view of one node: two words, created on demand, one column load
-/// per accessor.
-#[derive(Clone, Copy, Debug)]
-pub struct Node<'a> {
-    tape: &'a NodeTape,
-    id: NodeId,
+/// Per-node fields other than [`NodeTape::kind`].
+#[derive(Clone, Debug)]
+pub struct NodeRecord {
+    parent: NodeId,
+    first_child: NodeId,
+    next_sibling: NodeId,
+    subtree_end: NodeId,
+    span: Range<u32>,
+    tag_token: TagId,
+    outer_end: u32,
 }
 
-impl Node<'_> {
-    #[must_use]
-    #[inline]
-    pub fn kind(&self) -> NodeKind {
-        NodeKind::from_bits(self.tape.kind[self.tape.idx(self.id)])
+/// Applies HTML's newline preprocessing: `\r\n` and `\r` become `\n`.
+#[must_use]
+pub fn normalize_newlines(text: Cow<'_, str>) -> Cow<'_, str> {
+    if !text.as_bytes().contains(&b'\r') {
+        return text;
     }
-
-    #[must_use]
-    #[inline]
-    pub fn is_element(&self) -> bool {
-        self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Element.bits()
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn is_text(&self) -> bool {
-        self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Text.bits()
-    }
-
-    /// Element namespace; integration points report their foreign namespace.
-    #[must_use]
-    #[inline]
-    pub fn namespace(&self) -> u8 {
-        match self.tape.namespace_of(self.id) {
-            NS_MATH_TEXT_POINT => NS_MATHML,
-            NS_SVG_HTML_POINT => NS_SVG,
-            other => other,
-        }
-    }
-
-    /// Whether this node is a comment, PI or bogus comment.
-    #[must_use]
-    #[inline]
-    pub fn is_comment(&self) -> bool {
-        self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Comment.bits()
-    }
-
-    /// Whether this node is a comment that came from a doctype.
-    #[must_use]
-    #[inline]
-    pub fn is_doctype(&self) -> bool {
-        self.tape.kind[self.tape.idx(self.id)] & DOCTYPE_BIT != 0
-    }
-
-    /// Whether this text node is the content of a raw text element (never decoded).
-    #[must_use]
-    #[inline]
-    pub fn is_raw_text(&self) -> bool {
-        self.tape.kind[self.tape.idx(self.id)] & RAW_TEXT_BIT != 0
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn parent(&self) -> NodeId {
-        self.tape.record[self.tape.idx(self.id)].parent
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn first_child(&self) -> NodeId {
-        self.tape.record[self.tape.idx(self.id)].first_child
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn next_sibling(&self) -> NodeId {
-        self.tape.record[self.tape.idx(self.id)].next_sibling
-    }
-
-    #[must_use]
-    pub fn prev_element_sibling(&self) -> NodeId {
-        let parent = self.parent();
-        if parent == NO_NODE {
-            return NO_NODE;
-        }
-        let mut prev = NO_NODE;
-        let mut child = self.tape.record[self.tape.idx(parent)].first_child;
-        while child != NO_NODE && child != self.id {
-            if self.tape.kind[self.tape.idx(child)] & KIND_MASK == NodeKind::Element.bits() {
-                prev = child;
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
             }
-            child = self.tape.record[self.tape.idx(child)].next_sibling;
-        }
-        prev
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn subtree_end(&self) -> NodeId {
-        self.tape.record[self.tape.idx(self.id)].subtree_end
-    }
-
-    #[must_use]
-    pub fn depth(&self) -> u16 {
-        let mut depth = 0;
-        let mut id = self.id;
-        loop {
-            let parent = self.tape.record[self.tape.idx(id)].parent;
-            if parent == NO_NODE || depth == MAX_DEPTH {
-                return depth;
-            }
-            depth += 1;
-            id = parent;
+            out.push('\n');
+        } else {
+            out.push(ch);
         }
     }
-
-    #[must_use]
-    #[inline]
-    pub fn span(&self) -> Range<u32> {
-        self.tape.record[self.tape.idx(self.id)].span.clone()
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn tag_token(&self) -> u32 {
-        self.tape.record[self.tape.idx(self.id)].tag_token
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn outer_end(&self) -> u32 {
-        self.tape.record[self.tape.idx(self.id)].outer_end
-    }
+    Cow::Owned(out)
 }
 
-/// Broad node category: the two low bits of the kind column.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum NodeKind {
-    Document = 0,
-    Element = 1,
-    Text = 2,
-    /// Comments, processing instructions, bogus comments and doctypes; the
-    /// doctype flag lives in [`DOCTYPE_BIT`] because the category only has two
-    /// bits.
-    Comment = 3,
+/// Replaces U+0000 with U+FFFD, as every HTML tokenizer state does.
+///
+/// The data model has no NUL: it is replaced when the character is emitted, so
+/// doing it on extraction keeps the parser's spans valid and costs one byte
+/// scan on documents that contain no NUL (the overwhelming majority).
+#[must_use]
+pub fn replace_nulls(text: Cow<'_, str>) -> Cow<'_, str> {
+    if !text.as_bytes().contains(&0) {
+        return text;
+    }
+    Cow::Owned(text.replace('\0', "\u{fffd}"))
+}
+
+/// Everything needed to append one node; lives on the builder stack only.
+pub(crate) struct NodeRecordInit {
+    pub kind: NodeKind,
+    pub parent: NodeId,
+    pub first_child: NodeId,
+    pub next_sibling: NodeId,
+    pub subtree_end: NodeId,
+    pub span: Range<u32>,
+    pub tag_token: TagId,
+    pub outer_end: u32,
+    pub raw_text: bool,
+    /// Set on [`NodeKind::Comment`] nodes that came from a doctype.
+    pub doctype: bool,
+    /// Apply newline preprocessing to this text node's data.
+    pub normalize_newlines: bool,
+    /// Element namespace ([`NS_HTML`], [`NS_SVG`], [`NS_MATH`]); 0 for text.
+    pub ns: u8,
 }
 
 bitflags::bitflags! {

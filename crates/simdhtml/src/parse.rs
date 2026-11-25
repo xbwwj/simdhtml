@@ -1,8 +1,15 @@
 use encoding_rs::Encoding;
 
 use crate::document::Document;
-use crate::encoding;
 use crate::error::{ParseError, Result};
+use crate::{encoding, markup, tokenizer, tree_builder};
+
+/// Everything that changes how bytes become a [`Document`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParseOptions {
+    pub repair: RepairMode,
+    pub encoding: EncodingMode,
+}
 
 /// How the input bytes are turned into UTF-8.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -10,9 +17,11 @@ pub enum EncodingMode {
     /// Sniff first 1024 bytes, decide using BOM and `<meta>`.
     #[default]
     Sniff,
+
     /// Caller already knows the charset (e.g. from Content-Type).
     /// BOM will still win, `<meta>` is ignored.
     Explicit(&'static Encoding),
+
     /// The input is already UTF-8. Non UTF-8 bytes now become an error.
     Utf8,
 }
@@ -24,16 +33,10 @@ pub enum RepairMode {
     /// the default [`RepairMode::None`] is sufficient.
     #[default]
     None,
+
     /// HTML spec's tree-construction algorith, including implied tags,
     /// foster parenting, the adoption agency, templates and foreign content.
     Spec,
-}
-
-/// Everything that changes how bytes become a [`Document`].
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ParseOptions {
-    pub repair: RepairMode,
-    pub encoding: EncodingMode,
 }
 
 impl<'a> Document<'a> {
@@ -84,11 +87,13 @@ impl Document<'static> {
 }
 
 fn parse_inner(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Document<'_>> {
-    let index = crate::markup::scan(&decoded.bytes)?;
-    let tokens = crate::tokenizer::tokenize(&decoded.bytes, &index);
-    let mut doc = crate::tree_builder::build_with(decoded.bytes, &index, tokens, repair);
+    let index = markup::scan(&decoded.bytes)?;
+    let tokens = tokenizer::tokenize(&decoded.bytes, &index);
+    let mut doc = tree_builder::build_with(decoded.bytes, &index, tokens, repair);
+
     doc.encoding = decoded.encoding;
     doc.had_encoding_errors = decoded.errors;
+
     Ok(doc)
 }
 
