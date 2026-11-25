@@ -592,7 +592,7 @@ bench = [
     { name = "parsel", specifier = ">=1.10" },
     { name = "selectolax", specifier = ">=1.0" },
 ]
-dev = [{ name = "maturin", specifier = ">=1.7,<2.0" }]
+dev = [{ name = "maturin", specifier = ">=1.9,<2.0" }]
 test = [
     { name = "lxml", specifier = ">=5" },
     { name = "parsel", specifier = ">=1.10" },

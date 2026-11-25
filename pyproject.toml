@@ -1,22 +1,34 @@
 [build-system]
-requires = ["maturin>=1.7,<2.0"]
+requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "simdsel"
 version = "0.1.0"
-description = "Fast HTML parsing and CSS selection (parsel-compatible subset)"
-readme = "README.md"
+description = "Fast HTML parsing and CSS/XPath selection (parsel-compatible subset)"
+readme = "crates/simdsel-py/README.md"
 requires-python = ">=3.9"
-license = { text = "MIT OR Apache-2.0" }
-authors = [{ name = "simdsel authors" }]
+license = "MIT OR Apache-2.0"
+authors = [{ name = "Xubai Wang", email = "xubaiwwj@gmail.com" }]
+keywords = ["html", "parser", "css", "xpath", "scraping", "simd", "parsel"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Text Processing :: Markup :: HTML",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
 ]
 
+[project.urls]
+Homepage = "https://github.com/xbwwj/simdhtml"
+Repository = "https://github.com/xbwwj/simdhtml"
+Issues = "https://github.com/xbwwj/simdhtml/issues"
+Benchmarks = "https://github.com/xbwwj/simdhtml#benchmarks"
+
 [dependency-groups]
-dev = ["maturin>=1.7,<2.0"]
+dev = ["maturin>=1.9,<2.0"]
 bench = [
     "parsel>=1.10",
     "selectolax>=1.0",
