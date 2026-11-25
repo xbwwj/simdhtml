@@ -147,13 +147,12 @@ mod tests {
             .filter(|(_, n)| n.is_element())
             .map(|(i, n)| {
                 format!(
-                    "{}:{}:{}..{}:end{}:depth{}",
+                    "{}:{}:{}..{}:end{}",
                     i,
                     doc.tag_name(n.tag_token()),
                     n.span().start,
                     n.span().end,
-                    n.subtree_end(),
-                    n.depth()
+                    n.subtree_end()
                 )
             })
             .collect()
@@ -165,12 +164,12 @@ mod tests {
         assert_eq!(
             elements(&d),
             vec![
-                "1:html:0..0:end9:depth1",
-                "2:head:0..0:end3:depth2",
-                "3:body:0..0:end9:depth2",
-                "4:div:0..5:end9:depth3",
-                "5:p:5..8:end7:depth4",
-                "7:p:14..17:end9:depth4",
+                "1:html:0..0:end9",
+                "2:head:0..0:end3",
+                "3:body:0..0:end9",
+                "4:div:0..5:end9",
+                "5:p:5..8:end7",
+                "7:p:14..17:end9",
             ]
         );
         assert_eq!(text_content(&d, 4), "hiyo");

@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     NO_NODE, NS_MATHML, NS_SVG, NodeId,
-    document::{DOCTYPE_BIT, KIND_MASK, MAX_DEPTH, NodeTape, RAW_TEXT_BIT},
+    document::{DOCTYPE_BIT, KIND_MASK, NodeTape, RAW_TEXT_BIT},
 };
 
 use super::{NS_MATH_TEXT_POINT, NS_SVG_HTML_POINT};
@@ -104,20 +104,6 @@ impl Node<'_> {
     #[inline]
     pub fn subtree_end(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].subtree_end
-    }
-
-    #[must_use]
-    pub fn depth(&self) -> u16 {
-        let mut depth = 0;
-        let mut id = self.id;
-        loop {
-            let parent = self.tape.record[self.tape.idx(id)].parent;
-            if parent == NO_NODE || depth == MAX_DEPTH {
-                return depth;
-            }
-            depth += 1;
-            id = parent;
-        }
     }
 
     #[must_use]

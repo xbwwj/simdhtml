@@ -17,8 +17,6 @@ pub type TagId = u32;
 pub const NO_NODE: NodeId = u32::MAX;
 pub const NO_TAG: u32 = u32::MAX;
 
-pub(crate) const MAX_DEPTH: u16 = 1024;
-
 /// The document node: always node `0`, and the only node without a parent.
 pub const DOC_ROOT: NodeId = 0;
 
@@ -295,29 +293,26 @@ bitflags::bitflags! {
         /// The markup scan reported unbalanced tag starts/ends.
         const UNBALANCED_TAG = 1 << 1;
 
-        /// The open-element stack exceeded the configured limit.
-        const DEPTH_LIMIT = 1 << 2;
-
         /// The document uses a construct outside the fast path.
-        const NEEDS_FALLBACK = 1 << 3;
+        const NEEDS_FALLBACK = 1 << 2;
 
         /// An implied end tag was emitted for a void element or an open element.
-        const IMPLIED_END = 1 << 4;
+        const IMPLIED_END = 1 << 3;
 
         /// A tag start was still open when the input ended.
-        const EOF_IN_TAG = 1 << 5;
+        const EOF_IN_TAG = 1 << 4;
 
         /// A `<!--` comment was not terminated before EOF.
-        const EOF_IN_COMMENT = 1 << 6;
+        const EOF_IN_COMMENT = 1 << 5;
 
         /// A `<!...>` / `<?...>` declaration was not terminated before EOF.
-        const EOF_IN_DOCTYPE = 1 << 7;
+        const EOF_IN_DOCTYPE = 1 << 6;
 
         /// A raw text element (script/style/...) had no matching end tag.
-        const EOF_IN_RAW_TEXT = 1 << 8;
+        const EOF_IN_RAW_TEXT = 1 << 7;
 
         /// A `<![CDATA[` section was not terminated before EOF.
-        const EOF_IN_CDATA = 1 << 9;
+        const EOF_IN_CDATA = 1 << 8;
     }
 }
 

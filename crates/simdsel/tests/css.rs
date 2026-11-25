@@ -69,18 +69,6 @@ fn missing_attrs() {
 }
 
 #[test]
-fn deep_limit() {
-    let deep = "<div>".repeat(2000);
-    let root = root(&deep);
-
-    assert!(
-        root.doc()
-            .flags
-            .contains(simdsel::DocumentFlags::DEPTH_LIMIT)
-    );
-}
-
-#[test]
 fn projection_gat_modes() {
     let root = root(HTML);
 

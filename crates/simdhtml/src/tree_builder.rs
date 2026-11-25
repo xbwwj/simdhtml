@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::RepairMode;
-use crate::document::{MAX_DEPTH, NodeRecordInit, NodeTape};
+use crate::document::{NodeRecordInit, NodeTape};
 
 mod spec;
 use crate::markup::{MarkupIndex, TextRun, TextRuns};
@@ -303,7 +303,7 @@ pub(crate) fn build_with<'a>(
     {
         flags |= DocumentFlags::UNEXPECTED_END_TAG;
     }
-    builder.finish(input_len, &mut flags);
+    builder.finish(input_len);
     let source_tag_count = tokens.tags.len();
     let mut tag_code: Vec<u8> = tokens.tag_code.iter().map(|&c| c as u8).collect();
     for name in &builder.implied_literals {
@@ -381,7 +381,6 @@ struct TreeBuilder {
     implied_tags: Vec<TagToken>,
     implied_literals: Vec<Option<&'static str>>,
     source_tag_count: usize,
-    depth_limit_hit: bool,
 }
 
 impl TreeBuilder {
@@ -416,7 +415,6 @@ impl TreeBuilder {
             implied_tags: Vec::new(),
             implied_literals: Vec::new(),
             source_tag_count: tag_count,
-            depth_limit_hit: false,
         }
     }
 
@@ -461,9 +459,6 @@ impl TreeBuilder {
 
     fn insert_element(&mut self, tag_token: u32, span: Range<u32>, ns: u8) -> NodeId {
         let parent = *self.stack.last().expect("root is always open");
-        if self.stack.len() > MAX_DEPTH as usize {
-            self.depth_limit_hit = true;
-        }
         let id = self.node_tape.push(NodeRecordInit {
             kind: NodeKind::Element,
             ns,
@@ -540,7 +535,7 @@ impl TreeBuilder {
         self.last_child[frame] = child;
     }
 
-    fn finish(&mut self, input_len: u32, flags: &mut DocumentFlags) {
+    fn finish(&mut self, input_len: u32) {
         let subtree_end = self.node_tape.len() as NodeId;
         for &node in self.stack.iter().rev() {
             if self.node_tape.subtree_end_of(node) == NO_NODE {
@@ -552,9 +547,6 @@ impl TreeBuilder {
         self.node_tape.set_outer_end(0, input_len);
         if self.node_tape.subtree_end_of(0) == NO_NODE {
             self.node_tape.set_subtree_end(0, subtree_end);
-        }
-        if self.depth_limit_hit {
-            *flags |= DocumentFlags::DEPTH_LIMIT;
         }
     }
 }
