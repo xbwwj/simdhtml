@@ -8,4 +8,5 @@ publish = false
 
 [dependencies]
 flate2 = { workspace = true }
+sha1_smol = { workspace = true }
 warc = { workspace = true }

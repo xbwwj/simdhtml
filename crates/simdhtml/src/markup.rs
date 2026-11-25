@@ -111,8 +111,6 @@ unsafe fn scan_blocks_avx2(scanner: &mut Scanner<'_>, input: &[u8]) {
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn scan_blocks_neon(scanner: &mut Scanner<'_>, input: &[u8]) {
-    // SAFETY: this function has NEON enabled, which is what the kernels
-    // require; the loop's own memory accesses are the scanner's safe ones.
     scan_blocks_body!(
         scanner,
         input,
@@ -149,7 +147,6 @@ fn scan_blocks(scanner: &mut Scanner<'_>, input: &[u8]) {
     #[cfg(target_arch = "aarch64")]
     {
         if crate::simd::neon_available() {
-            // SAFETY: NEON is part of the base aarch64 ISA.
             unsafe { scan_blocks_neon(scanner, input) };
             return;
         }

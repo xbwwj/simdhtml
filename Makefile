@@ -221,25 +221,35 @@ bench-python_compare: export PYTHONPATH = $(PY_SITE)
 bench-build: export PYO3_PYTHON = $(VENV_PY)
 bench-build: export PYTHONPATH = $(PY_SITE)
 bench-build:  ## build the bench executables into target/bench/bin (cargo, once)
-	@mkdir -p $(BENCH_BIN)
 	@for t in $(BENCH_TARGETS); do \
-		echo "== build $$t =="; \
-		$(BENCH) --no-run --bench $$t $(FEATURES_$$t) --message-format=json \
-			| sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' \
-			| while read -r exe; do install -m 755 "$$exe" "$(BENCH_BIN)/$$t"; done; \
-		test -x "$(BENCH_BIN)/$$t" || { echo "no executable for $$t"; exit 1; }; \
+		$(MAKE) --no-print-directory build-bench-$$t || exit $$?; \
 	done
 	@du -sh $(BENCH_BIN)
 
+# Separate targets so `$(FEATURES_$*)` is expanded with the real benchmark
+# name; inside the shell loop `$(FEATURES_$$t)` would not expand.
+build-bench-%: export PYO3_PYTHON = $(VENV_PY)
+build-bench-%: export PYTHONPATH = $(PY_SITE)
+build-bench-%:
+	@echo "== build $* =="
+	@mkdir -p $(BENCH_BIN)
+	$(BENCH) --no-run --bench $* $(FEATURES_$*) --message-format=json \
+		| sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' \
+		| while read -r exe; do install -m 755 "$$exe" "$(BENCH_BIN)/$*"; done
+	@test -x "$(BENCH_BIN)/$*" || { echo "no executable for $*"; exit 1; }
+
 # Binaries are staged by name so a copied tree needs neither cargo nor the
 # registry; the warning catches results measured from stale executables.
+# `--bench` is what `cargo bench` would have passed; without it criterion runs
+# the process once without measuring.  CARGO_TARGET_DIR pins the result
+# directory to target/criterion, which perf_chart.py reads.
 bench-%:
 	@test -x "$(BENCH_BIN)/$*" \
 		|| { echo "no $(BENCH_BIN)/$*: run 'make bench-build' on the build machine"; exit 1; }
 	@test -z "$$(find $(BENCH_SOURCES) -type f -newer $(BENCH_BIN)/$* -print -quit)" \
 		|| echo "warning: sources are newer than $(BENCH_BIN)/$* (run 'make bench-build')"
 	@echo "== bench $* =="
-	"$(BENCH_BIN)/$*" $(ARGS)
+	CARGO_TARGET_DIR=$(abspath target) "$(BENCH_BIN)/$*" --bench $(ARGS)
 
 # ---------------------------------------------------------------------------
 # tests
