@@ -2,7 +2,7 @@
 
 **A gigabytes fast HTML parser and selector, powered by Rust and SIMD.**
 
-Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings native SIMD speed to the HTML extraction pipeline—10x faster than parsel and 150x faster than bs4.
+Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings native SIMD speed to the HTML extraction pipeline—10x faster than parsel, the scrapy default.
 
 - **Fast**: Over 4000 page/s/core in real-world workloads, 7x-150x faster than commonly used parsers.
 - **Drop-in Replacement**: Migrate from parsel <!--or bs4--> by changing a single line of code.
