@@ -1,28 +1,18 @@
 //! CSS selector AST, parsing, and set-at-a-time matching.
 
-mod ast;
-mod cache;
-mod eval;
-mod parser;
-mod select;
-
-pub use ast::{
-    AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
-    SelectorList,
-};
-pub use cache::QueryCache;
-pub use eval::root_element;
-pub use parser::{SelectorError, parse_selector};
-pub use select::{
-    Count, Html, MatchError, Projection, Records, Texts, extract, select, select_as,
-    select_as_within, select_as_within_cache, select_count, select_count_within, select_within,
-    select_within_cache,
-};
+pub mod ast;
+pub mod cache;
+pub mod eval;
+pub mod parser;
+pub mod select;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use simdhtml::{Document, NodeId, ParseOptions, RepairMode};
+    use super::parser::parse_selector;
+    use super::select::{extract, select, select_within};
+    use simdhtml::document::Document;
+    use simdhtml::document::id::NodeId;
+    use simdhtml::parse::{ParseOptions, RepairMode};
 
     fn doc(html: &str) -> Document<'_> {
         Document::parse_with(
@@ -101,12 +91,13 @@ mod tests {
         // The parser synthesises html/head/body, so the scope root is looked up
         // by name.
         let root = d
-            .node_tape
+            .nodes
             .iter()
             .position(|node| {
                 node.is_element() && d.tag_name(node.tag_token()).eq_ignore_ascii_case("div")
             })
-            .expect("div") as simdhtml::NodeId;
+            .map(NodeId::from)
+            .expect("div");
         let recs = select_within(&d, &sel, &[root]).unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(doc_tag(&d, recs[0].node), "span");

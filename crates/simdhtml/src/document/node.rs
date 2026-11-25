@@ -1,11 +1,8 @@
 use std::ops::Range;
 
-use crate::{
-    NO_NODE, NS_MATHML, NS_SVG, NodeId,
-    document::{DOCTYPE_BIT, KIND_MASK, NodeTape, RAW_TEXT_BIT},
-};
-
-use super::{NS_MATH_TEXT_POINT, NS_SVG_HTML_POINT};
+use super::id::{NO_NODE, NodeId, TagId};
+use super::namespace::Namespace;
+use super::tape::{DOCTYPE_BIT, KIND_MASK, NodeTape, RAW_TEXT_BIT};
 
 /// A borrowed view of specific node in the document.
 #[derive(Clone, Copy, Debug)]
@@ -36,10 +33,10 @@ impl Node<'_> {
     /// Element namespace; integration points report their foreign namespace.
     #[must_use]
     #[inline]
-    pub fn namespace(&self) -> u8 {
+    pub fn namespace(&self) -> Namespace {
         match self.tape.namespace_of(self.id) {
-            NS_MATH_TEXT_POINT => NS_MATHML,
-            NS_SVG_HTML_POINT => NS_SVG,
+            Namespace::MATH_TEXT_POINT => Namespace::MATHML,
+            Namespace::SVG_HTML_POINT => Namespace::SVG,
             other => other,
         }
     }
@@ -114,7 +111,7 @@ impl Node<'_> {
 
     #[must_use]
     #[inline]
-    pub fn tag_token(&self) -> u32 {
+    pub fn tag_token(&self) -> TagId {
         self.tape.record[self.tape.idx(self.id)].tag_token
     }
 
@@ -150,7 +147,7 @@ impl NodeKind {
     }
 
     #[inline]
-    const fn from_bits(bits: u8) -> Self {
+    pub(crate) const fn from_bits(bits: u8) -> Self {
         match bits & KIND_MASK {
             1 => Self::Element,
             2 => Self::Text,

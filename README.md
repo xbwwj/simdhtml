@@ -45,7 +45,7 @@ We also reached 98% HTML compliance in `RepairMode::Spec`, which is the
 ### Rust
 
 ```rust
-use simdsel::{Selector, Value, XPath};
+use simdsel::prelude::{Selector, Value, XPath};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let html = r#"

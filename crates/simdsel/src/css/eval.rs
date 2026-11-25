@@ -1,7 +1,8 @@
 use std::cell::OnceCell;
-use std::ops::Range;
 
-use simdhtml::{DOC_ROOT, Document, NO_NODE, NodeId, NodeKind};
+use simdhtml::document::Document;
+use simdhtml::document::id::{DOC_ROOT, NO_NODE, NO_TAG, NodeId};
+use simdhtml::document::node::NodeKind;
 
 use crate::bitset::BitSet;
 use crate::record::{MatchKind, MatchRecord};
@@ -11,7 +12,7 @@ use super::ast::{
     SelectorList,
 };
 use super::cache::{ChildIndex, QueryCache};
-use super::select::MatchError;
+use crate::error::{CssErrorKind, Error};
 
 const MAX_DEPTH: usize = 64;
 
@@ -67,7 +68,7 @@ pub(super) struct Eval<'a> {
 
 impl<'a> Eval<'a> {
     pub(super) fn new(doc: &'a Document<'_>, cache: &'a QueryCache) -> Self {
-        let n = doc.node_tape.len();
+        let n = doc.nodes.len();
 
         let mut root_element = None;
         let mut child = doc.node(DOC_ROOT).first_child();
@@ -133,7 +134,7 @@ impl<'a> Eval<'a> {
         &self,
         selector: &SelectorList,
         roots: Option<&[NodeId]>,
-    ) -> Result<BitSet, MatchError> {
+    ) -> Result<BitSet, Error> {
         self.set_scope(roots);
         let mut mask = self.selector_mask(selector, 0)?;
         if let Some(roots) = roots
@@ -146,20 +147,26 @@ impl<'a> Eval<'a> {
                 let node = self.doc.node(root);
                 if node.kind() == NodeKind::Document {
                     for id in 1..self.n as u32 {
-                        allowed.set(id);
+                        allowed.set(NodeId::new(id));
                     }
                 } else if node.is_element() {
                     // Chained selectors search descendants, not the root itself.
                     if include_scope {
                         allowed.set(root);
                     }
-                    for id in root + 1..node.subtree_end().min(self.n as u32) {
+                    for id in
+                        root.get() + 1..node.subtree_end().min(NodeId::new(self.n as u32)).get()
+                    {
+                        let id = NodeId::new(id);
                         allowed.set(id);
                     }
                 } else if node.parent() != NO_NODE {
                     let parent = self.doc.node(node.parent());
                     if parent.is_element() {
-                        for id in node.parent() + 1..parent.subtree_end().min(self.n as u32) {
+                        for id in node.parent().get() + 1
+                            ..parent.subtree_end().min(NodeId::new(self.n as u32)).get()
+                        {
+                            let id = NodeId::new(id);
                             allowed.set(id);
                         }
                     }
@@ -200,7 +207,7 @@ impl<'a> Eval<'a> {
         &self,
         selector: &SelectorList,
         roots: Option<&[NodeId]>,
-    ) -> Result<Vec<MatchRecord>, MatchError> {
+    ) -> Result<Vec<MatchRecord>, Error> {
         let mask = self.mask_for(selector, roots)?;
         Ok(self.records_for(selector, &mask))
     }
@@ -209,7 +216,7 @@ impl<'a> Eval<'a> {
         &self,
         selector: &SelectorList,
         roots: Option<&[NodeId]>,
-    ) -> Result<usize, MatchError> {
+    ) -> Result<usize, Error> {
         let mask = self.mask_for(selector, roots)?;
         if common_pseudo(selector).is_some() {
             Ok(self.records_for(selector, &mask).len())
@@ -218,9 +225,9 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet, MatchError> {
+    fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet, Error> {
         if depth > MAX_DEPTH {
-            return Err(MatchError::DepthLimit);
+            return Err(Error::Css(CssErrorKind::DepthLimit));
         }
         let mut out = BitSet::new(self.n);
         for complex in &selector.complexes {
@@ -232,9 +239,9 @@ impl<'a> Eval<'a> {
 
     /// Evaluates a complex selector left-to-right: the final bitset equals the
     /// rightmost compound's matches, without per-element ancestor walks.
-    fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet, MatchError> {
+    fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet, Error> {
         if depth > MAX_DEPTH {
-            return Err(MatchError::DepthLimit);
+            return Err(Error::Css(CssErrorKind::DepthLimit));
         }
         // No combinator: the compound mask is the answer.
         if complex.combinators.is_empty() {
@@ -269,15 +276,19 @@ impl<'a> Eval<'a> {
         set: &[NodeId],
         combinator: Combinator,
         include_self: bool,
-    ) -> Vec<Range<NodeId>> {
+    ) -> Vec<(NodeId, NodeId)> {
         let mut windows = Vec::new();
         match combinator {
             Combinator::Descendant => {
                 for &id in set {
-                    let end = self.doc.node(id).subtree_end().min(self.n as NodeId);
+                    let end = self
+                        .doc
+                        .node(id)
+                        .subtree_end()
+                        .min(NodeId::new(self.n as u32));
                     let start = if include_self { id } else { id + 1 };
                     if start < end {
-                        windows.push(start..end);
+                        windows.push((start, end));
                     }
                 }
             }
@@ -285,7 +296,7 @@ impl<'a> Eval<'a> {
                 for &id in set {
                     let mut child = self.doc.node(id).first_child();
                     while child != NO_NODE {
-                        windows.push(child..child + 1);
+                        windows.push((child, child + 1));
                         child = self.doc.node(child).next_sibling();
                     }
                 }
@@ -297,7 +308,7 @@ impl<'a> Eval<'a> {
                         next = self.doc.node(next).next_sibling();
                     }
                     if next != NO_NODE {
-                        windows.push(next..next + 1);
+                        windows.push((next, next + 1));
                     }
                 }
             }
@@ -305,7 +316,7 @@ impl<'a> Eval<'a> {
                 for &id in set {
                     let mut next = self.doc.node(id).next_sibling();
                     while next != NO_NODE {
-                        windows.push(next..next + 1);
+                        windows.push((next, next + 1));
                         next = self.doc.node(next).next_sibling();
                     }
                 }
@@ -317,9 +328,9 @@ impl<'a> Eval<'a> {
     fn compound_points_in_windows(
         &self,
         compound: &Compound,
-        windows: &[Range<NodeId>],
+        windows: &[(NodeId, NodeId)],
         depth: usize,
-    ) -> Result<Vec<NodeId>, MatchError> {
+    ) -> Result<Vec<NodeId>, Error> {
         let candidates = compound
             .tag
             .as_ref()
@@ -327,8 +338,9 @@ impl<'a> Eval<'a> {
             .or_else(|| self.attr_candidates(compound));
         let skip_tag = compound.tag.is_some();
         let mut points = Vec::new();
-        for window in windows {
-            for id in window.clone() {
+        for &(start, end) in windows {
+            for id in start.get()..end.get() {
+                let id = NodeId::new(id);
                 if candidates.as_ref().is_some_and(|c| !c.get(id)) {
                     continue;
                 }
@@ -358,16 +370,16 @@ impl<'a> Eval<'a> {
             return mask;
         }
         let mut mask = BitSet::new(self.n);
-        let code = simdhtml::tag_code_of(name.as_bytes());
+        let code = simdhtml::tag_code::code_of(name.as_bytes());
         if code == 0 {
             // No dedicated code: fall back to folding and comparing name spans.
             key_mask(
                 self.doc,
-                &self.doc.tag_name_start,
-                &self.doc.tag_name_len,
+                &self.doc.tags.name_start,
+                &self.doc.tags.name_len,
                 self.doc.tags.len(),
                 name,
-                |i| self.doc.tag_element[i],
+                |i| self.doc.tags.element[i],
                 &mut mask,
             );
         } else {
@@ -386,13 +398,13 @@ impl<'a> Eval<'a> {
         let mut mask = BitSet::new(self.n);
         key_mask(
             self.doc,
-            &self.doc.attr_name_start,
-            &self.doc.attr_name_len,
-            self.doc.attr_name_start.len(),
+            &self.doc.attrs.name_start,
+            &self.doc.attrs.name_len,
+            self.doc.attrs.name_start.len(),
             name,
             |a| {
-                let tag = self.doc.attr_tag[a] as usize;
-                self.doc.tag_element[tag]
+                let tag = self.doc.attrs.tag[a].index();
+                self.doc.tags.element[tag]
             },
             &mut mask,
         );
@@ -440,9 +452,9 @@ impl<'a> Eval<'a> {
 
     /// Evaluates one compound into a bitset: type selectors use the lazy tag
     /// index, attribute keys the query-side index, pseudos filter afterwards.
-    fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet, MatchError> {
+    fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet, Error> {
         if depth > MAX_DEPTH {
-            return Err(MatchError::DepthLimit);
+            return Err(Error::Css(CssErrorKind::DepthLimit));
         }
         if compound.pseudos.is_empty()
             && let Some(mask) = self.cache.get_compound(compound)
@@ -465,11 +477,11 @@ impl<'a> Eval<'a> {
             }
         } else {
             for id in 0..self.n {
-                if !self.doc.node(id as NodeId).is_element() {
+                if !self.doc.node(NodeId::new(id as u32)).is_element() {
                     continue;
                 }
-                if self.matches_static(id as NodeId, compound, false) {
-                    mask.set(id as NodeId);
+                if self.matches_static(NodeId::new(id as u32), compound, false) {
+                    mask.set(NodeId::new(id as u32));
                 }
             }
         }
@@ -545,7 +557,7 @@ impl<'a> Eval<'a> {
     /// Case-insensitive tag-name test against source spelling.
     fn is_tag(&self, id: NodeId, name: &[u8]) -> bool {
         let tag = self.doc.node(id).tag_token();
-        if tag == simdhtml::NO_TAG {
+        if tag == NO_TAG {
             return false;
         }
         let actual = self.doc.tag_name(tag);
@@ -636,9 +648,9 @@ impl<'a> Eval<'a> {
         pseudo: &Pseudo,
         tag: Option<&str>,
         depth: usize,
-    ) -> Result<(), MatchError> {
+    ) -> Result<(), Error> {
         if depth > MAX_DEPTH {
-            return Err(MatchError::DepthLimit);
+            return Err(Error::Css(CssErrorKind::DepthLimit));
         }
         match pseudo {
             Pseudo::FirstChild => self.filter_position(mask, Position::FirstChild),
@@ -697,7 +709,7 @@ impl<'a> Eval<'a> {
         Ok(())
     }
 
-    fn complex_list_mask(&self, list: &[Complex], depth: usize) -> Result<BitSet, MatchError> {
+    fn complex_list_mask(&self, list: &[Complex], depth: usize) -> Result<BitSet, Error> {
         let mut out = BitSet::new(self.n);
         for complex in list {
             out.or_assign(&self.complex_mask(complex, depth)?);
@@ -705,11 +717,7 @@ impl<'a> Eval<'a> {
         Ok(out)
     }
 
-    fn relative_mask(
-        &self,
-        relative: &RelativeSelector,
-        depth: usize,
-    ) -> Result<BitSet, MatchError> {
+    fn relative_mask(&self, relative: &RelativeSelector, depth: usize) -> Result<BitSet, Error> {
         let nested = self.complex_mask(&relative.complex, depth)?;
         Ok(match relative.relation {
             Combinator::Descendant => self.ancestors(&nested),
@@ -733,12 +741,12 @@ impl<'a> Eval<'a> {
     ) -> Option<(u32, u32)> {
         let node = self.doc.node(id);
         let parent = node.parent();
-        if parent == id || parent as usize >= self.n {
+        if parent == id || parent.index() >= self.n {
             return Some((0, 0));
         }
         let want = of_type.then(|| {
             let tag = node.tag_token();
-            (self.doc.tag_code[tag as usize], self.doc.tag_name(tag))
+            (self.doc.tags.code[tag.index()], self.doc.tag_name(tag))
         });
         let (mut at, mut total) = (0u32, 0u32);
         let mut child = self.doc.node(parent).first_child();
@@ -756,7 +764,7 @@ impl<'a> Eval<'a> {
                         if *code == 0 {
                             self.doc.tag_name(tag).eq_ignore_ascii_case(name)
                         } else {
-                            self.doc.tag_code[tag as usize] == *code
+                            self.doc.tags.code[tag.index()] == *code
                         }
                     }
                 };
@@ -807,8 +815,8 @@ impl<'a> Eval<'a> {
         }
         let index = self.child_index();
         let filter = |id: NodeId| {
-            let at = index.element_index[id as usize];
-            let total = index.element_child_count[self.doc.node(id).parent() as usize];
+            let at = index.element_index[id.index()];
+            let total = index.element_child_count[self.doc.node(id).parent().index()];
             position.keep(at, total)
         };
         self.filter(mask, filter);
@@ -912,18 +920,18 @@ impl<'a> Eval<'a> {
     fn ancestors(&self, set: &BitSet) -> BitSet {
         let mut prefix = vec![0u32; self.n + 1];
         for id in 0..self.n {
-            prefix[id + 1] = prefix[id] + u32::from(set.get(id as NodeId));
+            prefix[id + 1] = prefix[id] + u32::from(set.get(NodeId::from(id)));
         }
 
         let mut out = BitSet::new(self.n);
         for id in 0..self.n {
-            let node = self.doc.node(id as NodeId);
+            let node = self.doc.node(NodeId::from(id));
             if !node.is_element() {
                 continue;
             }
-            let end = (node.subtree_end() as usize).min(self.n);
+            let end = (node.subtree_end().index()).min(self.n);
             if prefix[end] > prefix[id + 1] {
-                out.set(id as NodeId);
+                out.set(NodeId::from(id));
             }
         }
         out
@@ -1005,8 +1013,8 @@ impl<'a> Eval<'a> {
             }
             PseudoElement::Attr(name) => {
                 if let Some(attr) = crate::dom::find_attr(self.doc, record.node, name) {
-                    let start = self.doc.attr_value_start[attr as usize];
-                    let span = start..start + self.doc.attr_value_len[attr as usize];
+                    let start = self.doc.attrs.value_start[attr as usize];
+                    let span = start..start + self.doc.attrs.value_len[attr as usize];
                     out.push(MatchRecord {
                         node: record.node,
                         kind: MatchKind::Attr,
@@ -1054,12 +1062,12 @@ fn key_mask_scalar(
 fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
     #[cfg(target_arch = "x86_64")]
     {
-        if doc.tag_code.len() >= 64 && simdhtml::simd::avx512_available() {
+        if doc.tags.code.len() >= 64 && simdhtml::simd::avx512_available() {
             // SAFETY: AVX-512 checked above; the kernel bounds-checks its tail.
             unsafe { tag_code_mask_avx512(doc, code, mask) };
             return;
         }
-        if doc.tag_code.len() >= 32 && simdhtml::simd::avx2_available() {
+        if doc.tags.code.len() >= 32 && simdhtml::simd::avx2_available() {
             // SAFETY: AVX2 checked above; the kernel bounds-checks its tail.
             unsafe { tag_code_mask_avx2(doc, code, mask) };
             return;
@@ -1067,7 +1075,7 @@ fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        if doc.tag_code.len() >= 16 && simdhtml::simd::neon_available() {
+        if doc.tags.code.len() >= 16 && simdhtml::simd::neon_available() {
             // SAFETY: NEON is part of the base aarch64 ISA.
             unsafe { tag_code_mask_neon(doc, code, mask) };
             return;
@@ -1077,9 +1085,9 @@ fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
 }
 
 fn tag_code_mask_scalar(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
-    for (i, &c) in doc.tag_code.iter().enumerate() {
+    for (i, &c) in doc.tags.code.iter().enumerate() {
         if c == code {
-            let node = doc.tag_element[i];
+            let node = doc.tags.element[i];
             if node != NO_NODE {
                 mask.set(node);
             }
@@ -1094,7 +1102,7 @@ unsafe fn tag_code_mask_avx512(doc: &Document<'_>, code: u8, mask: &mut BitSet) 
         __m512i, _mm512_cmpeq_epi8_mask, _mm512_loadu_si512, _mm512_set1_epi8,
     };
     unsafe {
-        let codes = &doc.tag_code;
+        let codes = &doc.tags.code;
         let needle = _mm512_set1_epi8(code as i8);
         let mut i = 0usize;
         while i + 64 <= codes.len() {
@@ -1102,7 +1110,7 @@ unsafe fn tag_code_mask_avx512(doc: &Document<'_>, code: u8, mask: &mut BitSet) 
             let mut bits = _mm512_cmpeq_epi8_mask(v, needle);
             while bits != 0 {
                 let j = bits.trailing_zeros() as usize;
-                let node = doc.tag_element[i + j];
+                let node = doc.tags.element[i + j];
                 if node != NO_NODE {
                     mask.set(node);
                 }
@@ -1112,7 +1120,7 @@ unsafe fn tag_code_mask_avx512(doc: &Document<'_>, code: u8, mask: &mut BitSet) 
         }
         for (k, item) in codes.iter().enumerate().skip(i) {
             if *item == code {
-                let node = doc.tag_element[k];
+                let node = doc.tags.element[k];
                 if node != NO_NODE {
                     mask.set(node);
                 }
@@ -1129,7 +1137,7 @@ unsafe fn tag_code_mask_neon(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
     use simdhtml::simd::neon::movemask_u16;
 
     unsafe {
-        let codes = &doc.tag_code;
+        let codes = &doc.tags.code;
         let needle = vdupq_n_u8(code);
         let mut i = 0usize;
         while i + 16 <= codes.len() {
@@ -1137,7 +1145,7 @@ unsafe fn tag_code_mask_neon(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
             let mut bits = movemask_u16(vceqq_u8(v, needle));
             while bits != 0 {
                 let j = bits.trailing_zeros() as usize;
-                let node = doc.tag_element[i + j];
+                let node = doc.tags.element[i + j];
                 if node != NO_NODE {
                     mask.set(node);
                 }
@@ -1147,7 +1155,7 @@ unsafe fn tag_code_mask_neon(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
         }
         for (k, item) in codes.iter().enumerate().skip(i) {
             if *item == code {
-                let node = doc.tag_element[k];
+                let node = doc.tags.element[k];
                 if node != NO_NODE {
                     mask.set(node);
                 }
@@ -1163,7 +1171,7 @@ unsafe fn tag_code_mask_avx2(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
         __m256i, _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_set1_epi8,
     };
     unsafe {
-        let codes = &doc.tag_code;
+        let codes = &doc.tags.code;
         let needle = _mm256_set1_epi8(code as i8);
         let mut i = 0usize;
         while i + 32 <= codes.len() {
@@ -1171,7 +1179,7 @@ unsafe fn tag_code_mask_avx2(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
             let mut bits = _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, needle)) as u32;
             while bits != 0 {
                 let j = bits.trailing_zeros() as usize;
-                let node = doc.tag_element[i + j];
+                let node = doc.tags.element[i + j];
                 if node != NO_NODE {
                     mask.set(node);
                 }
@@ -1181,7 +1189,7 @@ unsafe fn tag_code_mask_avx2(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
         }
         for (k, item) in codes.iter().enumerate().skip(i) {
             if *item == code {
-                let node = doc.tag_element[k];
+                let node = doc.tags.element[k];
                 if node != NO_NODE {
                     mask.set(node);
                 }

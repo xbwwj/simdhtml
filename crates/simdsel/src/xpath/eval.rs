@@ -1,4 +1,4 @@
-use super::XPathError;
+use super::XPathErrorKind;
 use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
 use super::value::{NodeRef, RefKind, Value};
 use crate::dom::{attr_name, attr_range};
@@ -9,7 +9,7 @@ use crate::dom::{attr_name, attr_range};
 pub(super) fn text_run(doc: &Document<'_>, id: NodeId) -> Option<NodeId> {
     let parent = doc.node(id).parent();
     let mut last = id;
-    while let Some(next) = (last + 1 < doc.node_tape.len() as NodeId).then_some(last + 1) {
+    while let Some(next) = (last + 1 < NodeId::new(doc.nodes.len() as u32)).then_some(last + 1) {
         let node = doc.node(next);
         if !node.is_text() || node.parent() != parent {
             break;
@@ -22,19 +22,21 @@ pub(super) fn text_run(doc: &Document<'_>, id: NodeId) -> Option<NodeId> {
 /// Whether this text node is outside the root element: XPath's root node has no
 /// text children, though the tape keeps that text.
 fn outside_root(doc: &Document<'_>, id: NodeId) -> bool {
-    doc.node(id).parent() == 0
+    doc.node(id).parent() == DOC_ROOT
 }
 
 /// Is this text node the continuation of a run whose first node is its
 /// preceding sibling?
 fn text_continuation(doc: &Document<'_>, id: NodeId) -> bool {
-    if id == 0 {
+    if id == DOC_ROOT {
         return false;
     }
     let previous = doc.node(id - 1);
     previous.is_text() && previous.parent() == doc.node(id).parent()
 }
-use simdhtml::{Document, NodeId, NodeKind};
+use simdhtml::document::Document;
+use simdhtml::document::id::{DOC_ROOT, NO_NODE, NodeId};
+use simdhtml::document::node::NodeKind;
 
 /// Evaluation context: the context node plus its position and set size, which
 /// `position()` and `last()` read.
@@ -46,7 +48,7 @@ struct Ctx {
 }
 
 /// Evaluates a compiled expression against `doc`.
-pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathError> {
+pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathErrorKind> {
     evaluate_at(doc, expr, NodeRef::document())
 }
 
@@ -56,12 +58,12 @@ pub(super) fn evaluate_at(
     doc: &Document<'_>,
     expr: &Expr,
     node: NodeRef,
-) -> Result<Value, XPathError> {
+) -> Result<Value, XPathErrorKind> {
     let mut evaluator = Evaluator {
         doc,
         visits: 0,
         // 256 visits per node bounds `//a//b`-style products.
-        budget: (doc.node_tape.len() as u64 + 1) * 256,
+        budget: (doc.nodes.len() as u64 + 1) * 256,
     };
     let ctx = Ctx {
         node,
@@ -78,7 +80,7 @@ struct Evaluator<'d, 'a> {
 }
 
 impl Evaluator<'_, '_> {
-    fn eval(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Value, XPathError> {
+    fn eval(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Value, XPathErrorKind> {
         match expr {
             Expr::Path(path) => Ok(Value::Nodes(self.path(path, ctx)?)),
             Expr::Filter {
@@ -87,7 +89,7 @@ impl Evaluator<'_, '_> {
             } => {
                 let value = self.eval(primary, ctx)?;
                 let Value::Nodes(nodes) = value else {
-                    return Err(XPathError::Eval(
+                    return Err(XPathErrorKind::Eval(
                         "a predicate can only filter a node-set".to_owned(),
                     ));
                 };
@@ -109,14 +111,14 @@ impl Evaluator<'_, '_> {
         }
     }
 
-    fn nodes(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathError> {
+    fn nodes(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathErrorKind> {
         match self.eval(expr, ctx)? {
             Value::Nodes(nodes) => Ok(nodes),
-            _ => Err(XPathError::Eval("expected a node-set".to_owned())),
+            _ => Err(XPathErrorKind::Eval("expected a node-set".to_owned())),
         }
     }
 
-    fn path(&mut self, path: &Path, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathError> {
+    fn path(&mut self, path: &Path, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathErrorKind> {
         let mut set = match &path.base {
             Some(base) => self.nodes(base, ctx)?,
             None if path.absolute => vec![NodeRef::document()],
@@ -170,18 +172,19 @@ impl Evaluator<'_, '_> {
         &mut self,
         contexts: &[NodeRef],
         name: &str,
-    ) -> Result<Option<Vec<NodeRef>>, XPathError> {
-        let code = simdhtml::tag_code_of(name.as_bytes());
+    ) -> Result<Option<Vec<NodeRef>>, XPathErrorKind> {
+        let code = simdhtml::tag_code::code_of(name.as_bytes());
         if code == 0 {
             return Ok(None);
         }
         let mut ids: Vec<NodeId> = self
             .doc
-            .tag_element
+            .tags
+            .element
             .iter()
             .enumerate()
             .filter_map(|(tag, &element)| {
-                (element != simdhtml::NO_NODE && self.doc.tag_code[tag] == code).then_some(element)
+                (element != NO_NODE && self.doc.tags.code[tag] == code).then_some(element)
             })
             .collect();
         ids.sort_unstable();
@@ -201,7 +204,7 @@ impl Evaluator<'_, '_> {
         }
         self.visits += (ids.len() + contexts.len() + out.len()) as u64;
         if self.visits > self.budget {
-            return Err(XPathError::TooComplex);
+            return Err(XPathErrorKind::TooComplex);
         }
         Ok(Some(out))
     }
@@ -211,7 +214,7 @@ impl Evaluator<'_, '_> {
         &mut self,
         mut nodes: Vec<NodeRef>,
         predicates: &[Expr],
-    ) -> Result<Vec<NodeRef>, XPathError> {
+    ) -> Result<Vec<NodeRef>, XPathErrorKind> {
         for predicate in predicates {
             let size = nodes.len();
             let mut kept = Vec::with_capacity(size);
@@ -239,7 +242,7 @@ impl Evaluator<'_, '_> {
 
     /// Nodes on `axis`, in axis order (reverse document order for `ancestor`
     /// and `preceding-sibling`, as the specification requires for positions).
-    fn axis(&mut self, axis: Axis, node: NodeRef) -> Result<Vec<NodeRef>, XPathError> {
+    fn axis(&mut self, axis: Axis, node: NodeRef) -> Result<Vec<NodeRef>, XPathErrorKind> {
         let out = match axis {
             Axis::Self_ => vec![node],
             Axis::Child => self.children(node),
@@ -288,7 +291,7 @@ impl Evaluator<'_, '_> {
                 } else {
                     let mut out = Vec::new();
                     let mut sibling = self.doc.node(node.node_id()).next_sibling();
-                    while sibling != simdhtml::NO_NODE {
+                    while sibling != NO_NODE {
                         out.push(self.ref_of(sibling));
                         sibling = self.doc.node(sibling).next_sibling();
                     }
@@ -302,7 +305,7 @@ impl Evaluator<'_, '_> {
                     let parent = self.doc.node(node.node_id()).parent();
                     let mut out = Vec::new();
                     let mut child = self.doc.node(parent).first_child();
-                    while child != simdhtml::NO_NODE && child != node.node_id() {
+                    while child != NO_NODE && child != node.node_id() {
                         out.push(self.ref_of(child));
                         child = self.doc.node(child).next_sibling();
                     }
@@ -313,7 +316,7 @@ impl Evaluator<'_, '_> {
         };
         self.visits += out.len() as u64;
         if self.visits > self.budget {
-            return Err(XPathError::TooComplex);
+            return Err(XPathErrorKind::TooComplex);
         }
         Ok(out)
     }
@@ -324,7 +327,7 @@ impl Evaluator<'_, '_> {
         }
         let mut out = Vec::new();
         let mut child = self.doc.node(node.node_id()).first_child();
-        while child != simdhtml::NO_NODE {
+        while child != NO_NODE {
             out.push(self.ref_of(child));
             child = self.doc.node(child).next_sibling();
         }
@@ -339,9 +342,11 @@ impl Evaluator<'_, '_> {
         if !matches!(node.kind(), RefKind::Element | RefKind::Document) {
             return Vec::new();
         }
-        let start = node.node_id() + 1;
-        let end = self.doc.node(node.node_id()).subtree_end();
-        (start..end).map(|id| self.ref_of(id)).collect()
+        let start = node.node_id().get() + 1;
+        let end = self.doc.node(node.node_id()).subtree_end().get();
+        (start..end)
+            .map(|id| self.ref_of(NodeId::new(id)))
+            .collect()
     }
 
     fn ref_of(&self, id: NodeId) -> NodeRef {
@@ -429,7 +434,7 @@ impl Evaluator<'_, '_> {
         left: &Expr,
         right: &Expr,
         ctx: &Ctx,
-    ) -> Result<Value, XPathError> {
+    ) -> Result<Value, XPathErrorKind> {
         match op {
             BinOp::Or => {
                 let left = self.eval(left, ctx)?.to_boolean();
@@ -467,7 +472,7 @@ impl Evaluator<'_, '_> {
 
     /// XPath 1.0 section 3.4 comparison rules, including the existential
     /// semantics of `=`/`!=` on node-sets.
-    fn compare(&self, op: BinOp, left: &Value, right: &Value) -> Result<bool, XPathError> {
+    fn compare(&self, op: BinOp, left: &Value, right: &Value) -> Result<bool, XPathErrorKind> {
         let equality = matches!(op, BinOp::Eq | BinOp::Ne);
         match (left, right) {
             (Value::Nodes(left), Value::Nodes(right)) if equality => Ok(left.iter().any(|a| {
@@ -528,7 +533,7 @@ impl Evaluator<'_, '_> {
         super::value::parse_number(&node.string_value(self.doc))
     }
 
-    fn call(&mut self, func: Func, args: &[Expr], ctx: &Ctx) -> Result<Value, XPathError> {
+    fn call(&mut self, func: Func, args: &[Expr], ctx: &Ctx) -> Result<Value, XPathErrorKind> {
         match func {
             Func::Position => {
                 require_arity(func, args, 0)?;
@@ -702,7 +707,8 @@ impl Evaluator<'_, '_> {
                 };
                 let mut out = Vec::new();
                 if !tokens.is_empty() {
-                    for id in 0..self.doc.node_tape.len() as u32 {
+                    for id in 0..self.doc.nodes.len() as u32 {
+                        let id = NodeId::new(id);
                         if !self.doc.node(id).is_element() {
                             continue;
                         }
@@ -758,17 +764,17 @@ impl Evaluator<'_, '_> {
                         && value.starts_with(wanted)
                         && value.as_bytes()[wanted.len()] == b'-');
             }
-            if record.kind() == simdhtml::NodeKind::Document {
+            if record.kind() == NodeKind::Document {
                 break;
             }
             let parent = record.parent();
-            current = (parent != simdhtml::NO_NODE).then_some(parent);
+            current = (parent != NO_NODE).then_some(parent);
         }
         false
     }
 }
 
-fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPathError> {
+fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPathErrorKind> {
     if args.len() == expected {
         Ok(())
     } else {
@@ -776,8 +782,8 @@ fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPath
     }
 }
 
-fn arity_error(func: Func, got: usize) -> XPathError {
-    XPathError::Eval(format!("{func:?} called with {got} arguments"))
+fn arity_error(func: Func, got: usize) -> XPathErrorKind {
+    XPathErrorKind::Eval(format!("{func:?} called with {got} arguments"))
 }
 
 /// Sorts into document order and removes duplicates.

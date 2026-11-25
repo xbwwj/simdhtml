@@ -1,22 +1,15 @@
 use std::borrow::Cow;
 
-use simdhtml::{Document, NodeId};
-use thiserror::Error;
+use simdhtml::document::Document;
+use simdhtml::document::id::NodeId;
 
 use crate::bitset::BitSet;
+use crate::error::Error;
 use crate::record::{MatchKind, MatchRecord};
 
 use super::ast::SelectorList;
 use super::cache::QueryCache;
 use super::eval::{Eval, common_pseudo};
-
-/// Selector evaluation error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-pub enum MatchError {
-    #[error("depth limit")]
-    /// Nested `:not`/`:is`/`:has` exceeded the recursion limit.
-    DepthLimit,
-}
 
 /// A typed projection of a selector result: the same match mask materialized as
 /// records, strings, text or a count.  The lifetime lets borrowed results point
@@ -28,13 +21,13 @@ pub trait Projection {
     ///
     /// # Errors
     ///
-    /// [`MatchError::DepthLimit`] if pseudo-element projection recurses past the
-    /// limit.
+    /// [`Error::Css`] with [`CssErrorKind::DepthLimit`] if pseudo-element
+    /// projection recurses past the limit.
     fn finish<'a>(
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError>;
+    ) -> Result<Self::Output<'a>, Error>;
 }
 
 /// Raw `MatchRecord` projection.
@@ -47,7 +40,7 @@ impl Projection for Records {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
+    ) -> Result<Self::Output<'a>, Error> {
         {
             let cache = QueryCache::root();
             Ok(Eval::new(doc, &cache).records_for(selector, &mask))
@@ -65,7 +58,7 @@ impl Projection for Count {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
+    ) -> Result<Self::Output<'a>, Error> {
         if common_pseudo(selector).is_some() {
             {
                 let cache = QueryCache::root();
@@ -87,7 +80,7 @@ impl Projection for Html {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
+    ) -> Result<Self::Output<'a>, Error> {
         let cache = QueryCache::root();
         Ok(Eval::new(doc, &cache)
             .records_for(selector, &mask)
@@ -107,7 +100,7 @@ impl Projection for Texts {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, MatchError> {
+    ) -> Result<Self::Output<'a>, Error> {
         let cache = QueryCache::root();
         Ok(Eval::new(doc, &cache)
             .records_for(selector, &mask)
@@ -128,8 +121,9 @@ impl Projection for Texts {
 ///
 /// # Errors
 ///
-/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRecord>, MatchError> {
+/// Returns [`Error::Css`] with [`CssErrorKind::DepthLimit`] for pathologically nested
+/// pseudo classes.
+pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRecord>, Error> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     ctx.select(selector, None)
@@ -145,7 +139,7 @@ pub fn select_within(
     doc: &Document<'_>,
     selector: &SelectorList,
     roots: &[NodeId],
-) -> Result<Vec<MatchRecord>, MatchError> {
+) -> Result<Vec<MatchRecord>, Error> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     ctx.select(selector, Some(roots))
@@ -161,7 +155,7 @@ pub fn select_within_cache(
     selector: &SelectorList,
     roots: &[NodeId],
     cache: &QueryCache,
-) -> Result<Vec<MatchRecord>, MatchError> {
+) -> Result<Vec<MatchRecord>, Error> {
     Eval::new(doc, cache).select(selector, Some(roots))
 }
 
@@ -175,7 +169,7 @@ pub fn select_as_within_cache<'a, P: Projection>(
     selector: &SelectorList,
     roots: &[NodeId],
     cache: &QueryCache,
-) -> Result<P::Output<'a>, MatchError> {
+) -> Result<P::Output<'a>, Error> {
     let ctx = Eval::new(doc, cache);
     let mask = ctx.mask_for(selector, Some(roots))?;
     P::finish(doc, selector, mask)
@@ -186,8 +180,9 @@ pub fn select_as_within_cache<'a, P: Projection>(
 ///
 /// # Errors
 ///
-/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
-pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize, MatchError> {
+/// Returns [`Error::Css`] with [`CssErrorKind::DepthLimit`] for pathologically nested
+/// pseudo classes.
+pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize, Error> {
     {
         let cache = QueryCache::root();
         Eval::new(doc, &cache).count(selector, None)
@@ -203,7 +198,7 @@ pub fn select_count_within(
     doc: &Document<'_>,
     selector: &SelectorList,
     roots: &[NodeId],
-) -> Result<usize, MatchError> {
+) -> Result<usize, Error> {
     {
         let cache = QueryCache::root();
         Eval::new(doc, &cache).count(selector, Some(roots))
@@ -214,11 +209,12 @@ pub fn select_count_within(
 ///
 /// # Errors
 ///
-/// Returns [`MatchError::DepthLimit`] for pathologically nested pseudo classes.
+/// Returns [`Error::Css`] with [`CssErrorKind::DepthLimit`] for pathologically nested
+/// pseudo classes.
 pub fn select_as<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,
-) -> Result<P::Output<'a>, MatchError> {
+) -> Result<P::Output<'a>, Error> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     let mask = ctx.mask_for(selector, None)?;
@@ -234,7 +230,7 @@ pub fn select_as_within<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,
     roots: &[NodeId],
-) -> Result<P::Output<'a>, MatchError> {
+) -> Result<P::Output<'a>, Error> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     let mask = ctx.mask_for(selector, Some(roots))?;

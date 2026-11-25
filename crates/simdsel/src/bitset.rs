@@ -1,4 +1,4 @@
-use simdhtml::NodeId;
+use simdhtml::document::id::NodeId;
 
 /// A bitset whose bit `i` corresponds to node id `i`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,20 +27,20 @@ impl BitSet {
     }
 
     pub fn set(&mut self, id: NodeId) {
-        let id = id as usize;
+        let id = id.index();
         debug_assert!(id < self.len);
         self.words[id / 64] |= 1u64 << (id % 64);
     }
 
     pub fn clear(&mut self, id: NodeId) {
-        let id = id as usize;
+        let id = id.index();
         debug_assert!(id < self.len);
         self.words[id / 64] &= !(1u64 << (id % 64));
     }
 
     #[must_use]
     pub fn get(&self, id: NodeId) -> bool {
-        let id = id as usize;
+        let id = id.index();
         debug_assert!(id < self.len);
         (self.words[id / 64] >> (id % 64)) & 1 != 0
     }
@@ -97,7 +97,7 @@ impl BitSet {
                     } else {
                         let offset = bits.trailing_zeros();
                         bits &= bits - 1;
-                        Some(base + offset)
+                        Some(NodeId::new(base + offset))
                     }
                 })
             })
@@ -117,33 +117,40 @@ impl BitSet {
 mod tests {
     use super::*;
 
+    fn id(index: u32) -> NodeId {
+        NodeId::new(index)
+    }
+
     #[test]
     fn set_get_iter() {
         let mut b = BitSet::new(130);
-        b.set(0);
-        b.set(63);
-        b.set(64);
-        b.set(129);
-        assert_eq!(b.iter_set().collect::<Vec<_>>(), vec![0, 63, 64, 129]);
+        b.set(id(0));
+        b.set(id(63));
+        b.set(id(64));
+        b.set(id(129));
+        assert_eq!(
+            b.iter_set().collect::<Vec<_>>(),
+            vec![id(0), id(63), id(64), id(129)]
+        );
         assert_eq!(b.count_ones(), 4);
-        assert!(b.get(64));
-        assert!(!b.get(65));
+        assert!(b.get(id(64)));
+        assert!(!b.get(id(65)));
     }
 
     #[test]
     fn boolean_ops() {
         let mut a = BitSet::new(70);
         let mut b = BitSet::new(70);
-        a.set(1);
-        a.set(65);
-        b.set(65);
+        a.set(id(1));
+        a.set(id(65));
+        b.set(id(65));
         a.and_assign(&b);
-        assert_eq!(a.iter_set().collect::<Vec<_>>(), vec![65]);
+        assert_eq!(a.iter_set().collect::<Vec<_>>(), vec![id(65)]);
         a.or_assign(&b);
         assert_eq!(a.count_ones(), 1);
         a.not_assign();
         assert_eq!(a.count_ones(), 69);
-        assert!(!a.get(65));
-        assert!(a.get(0) && a.get(69));
+        assert!(!a.get(id(65)));
+        assert!(a.get(id(0)) && a.get(id(69)));
     }
 }

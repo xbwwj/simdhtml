@@ -1,16 +1,13 @@
-mod region;
-mod text_runs;
+pub mod region;
+pub(crate) mod text_runs;
 
 use std::ops::Range;
 
 use crate::error::{ParseError, Result};
 use crate::simd::StructuralMasks;
 
-use self::region::{StartTagKind, eq_ignore_ascii_case, start_tag_kind};
+use self::region::{OpaqueRegion, RegionKind, StartTagKind, eq_ignore_ascii_case, start_tag_kind};
 use self::text_runs::build_text_runs;
-
-pub use self::region::{OpaqueRegion, RegionKind};
-pub(crate) use self::text_runs::{TextRun, TextRuns};
 
 /// Markup scan output: positions, not tokens (the simdjson `structural_index`
 /// idea).  No bitmaps survive the scan.

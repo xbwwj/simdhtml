@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use crate::encoding;
-
 /// Fatal parse errors.
 ///
 /// Recoverable problems are reported per-document in [`Document::flags`] and
@@ -10,8 +8,8 @@ use crate::encoding;
 pub enum ParseError {
     #[error("input exceeds u32::MAX bytes")]
     InputTooLarge,
-    #[error("{0}")]
-    InvalidUtf8(encoding::Utf8Error),
+    #[error("input is not valid UTF-8")]
+    InvalidUtf8,
 }
 
 pub type Result<T, E = ParseError> = ::core::result::Result<T, E>;

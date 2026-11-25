@@ -10,15 +10,19 @@
 //! SIMDHTML_RUN_CORPUS_TESTS=1 cargo test -p simdhtml --test mode_agreement -- --nocapture
 //! ```
 
-use simdhtml::{Document, NO_NODE, NodeKind, ParseOptions, RepairMode};
+use simdhtml::document::Document;
+use simdhtml::document::id::{NO_NODE, NodeId};
+use simdhtml::document::node::NodeKind;
+use simdhtml::parse::{ParseOptions, RepairMode};
 use simdhtml_corpus::{Dataset, SamplePolicy};
 
 fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
-    for id in 0..doc.node_tape.len() as u32 {
+    for raw in 0..doc.nodes.len() as u32 {
+        let id = NodeId::new(raw);
         let node = doc.node(id);
         let end = node.subtree_end();
         assert!(
-            end as usize <= doc.node_tape.len(),
+            end.index() <= doc.nodes.len(),
             "{}: node {id} subtree_end {end} out of range",
             path.display()
         );

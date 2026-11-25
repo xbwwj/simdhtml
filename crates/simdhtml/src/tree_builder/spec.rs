@@ -1,5 +1,8 @@
 use super::*;
-use crate::{Diagnostic, DiagnosticKind};
+use crate::document::flags::{Diagnostic, DiagnosticKind};
+use crate::document::namespace::Namespace;
+
+use super::tag_sets::*;
 
 /// Insertion modes, named as in the specification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,7 +80,7 @@ pub(super) struct Node {
     /// Namespace of an element, decided here and handed to the tape: rebuilding
     /// it on the tape would duplicate the integration-point rules and cannot see
     /// `annotation-xml`'s `encoding` attribute.
-    ns: u8,
+    ns: Namespace,
     span: Range<u32>,
     /// Source offset just past the element's end tag (or the point where it
     /// was implicitly closed), used for `outer_html`.
@@ -286,40 +289,6 @@ fn lower_into<'b>(buf: &'b mut [u8; 32], input: &[u8], tokens: &Tokens, tag: u32
     &buf[..len]
 }
 
-const CLOSES_P: &[&[u8]] = &[
-    b"address",
-    b"article",
-    b"aside",
-    b"blockquote",
-    b"center",
-    b"details",
-    b"dialog",
-    b"dir",
-    b"div",
-    b"dl",
-    b"fieldset",
-    b"figcaption",
-    b"figure",
-    b"footer",
-    b"header",
-    b"hgroup",
-    b"main",
-    b"menu",
-    b"nav",
-    b"ol",
-    b"p",
-    b"pre",
-    b"search",
-    b"section",
-    b"summary",
-    b"ul",
-];
-
-/// Elements that bound a scope search (`parse-state.txt`).
-/// Extra scope boundary names on top of the base set, per scope kind.
-const BUTTON_EXTRA: &[&[u8]] = &[b"button"];
-const LIST_ITEM_EXTRA: &[&[u8]] = &[b"ol", b"ul"];
-
 /// Entry of the "list of active formatting elements".
 #[derive(Clone, Copy, Debug)]
 enum Afe {
@@ -327,186 +296,13 @@ enum Afe {
     Element(u32),
 }
 
-/// Formatting elements the adoption agency algorithm applies to.
-const FORMATTING: &[&[u8]] = &[
-    b"a", b"b", b"big", b"code", b"em", b"font", b"i", b"nobr", b"s", b"small", b"strike",
-    b"strong", b"tt", b"u",
-];
-
-/// End tags with their own `in body` entry: pop with implied end tags.
-const BLOCK_END: &[&[u8]] = &[
-    b"address",
-    b"article",
-    b"aside",
-    b"blockquote",
-    b"button",
-    b"center",
-    b"details",
-    b"dialog",
-    b"dir",
-    b"div",
-    b"dl",
-    b"fieldset",
-    b"figcaption",
-    b"figure",
-    b"footer",
-    b"header",
-    b"hgroup",
-    b"listing",
-    b"main",
-    b"menu",
-    b"nav",
-    b"ol",
-    b"pre",
-    b"search",
-    b"section",
-    b"summary",
-    b"ul",
-];
-
-/// Elements the specification calls "special" (furthest-block search).
-const SPECIAL: &[&[u8]] = &[
-    b"address",
-    b"applet",
-    b"area",
-    b"article",
-    b"aside",
-    b"base",
-    b"basefont",
-    b"bgsound",
-    b"blockquote",
-    b"body",
-    b"br",
-    b"button",
-    b"caption",
-    b"center",
-    b"col",
-    b"colgroup",
-    b"dd",
-    b"details",
-    b"dir",
-    b"div",
-    b"dl",
-    b"dt",
-    b"embed",
-    b"fieldset",
-    b"figcaption",
-    b"figure",
-    b"footer",
-    b"form",
-    b"frame",
-    b"frameset",
-    b"h1",
-    b"h2",
-    b"h3",
-    b"h4",
-    b"h5",
-    b"h6",
-    b"head",
-    b"header",
-    b"hgroup",
-    b"hr",
-    b"html",
-    b"iframe",
-    b"img",
-    b"input",
-    b"keygen",
-    b"li",
-    b"link",
-    b"listing",
-    b"main",
-    b"marquee",
-    b"menu",
-    b"meta",
-    b"nav",
-    b"noembed",
-    b"noframes",
-    b"noscript",
-    b"object",
-    b"ol",
-    b"p",
-    b"param",
-    b"plaintext",
-    b"pre",
-    b"script",
-    b"search",
-    b"section",
-    b"select",
-    b"source",
-    b"style",
-    b"summary",
-    b"table",
-    b"tbody",
-    b"td",
-    b"template",
-    b"textarea",
-    b"tfoot",
-    b"th",
-    b"thead",
-    b"title",
-    b"tr",
-    b"track",
-    b"ul",
-    b"wbr",
-    b"xmp",
-];
-
-/// HTML start tags that leave foreign content (`in foreign content`, "any other
-/// start tag" breakout list).
-const BREAKOUT: &[&[u8]] = &[
-    b"b",
-    b"big",
-    b"blockquote",
-    b"body",
-    b"br",
-    b"center",
-    b"code",
-    b"dd",
-    b"div",
-    b"dl",
-    b"dt",
-    b"em",
-    b"embed",
-    b"h1",
-    b"h2",
-    b"h3",
-    b"h4",
-    b"h5",
-    b"h6",
-    b"head",
-    b"hr",
-    b"i",
-    b"img",
-    b"li",
-    b"listing",
-    b"menu",
-    b"meta",
-    b"nobr",
-    b"ol",
-    b"p",
-    b"pre",
-    b"ruby",
-    b"s",
-    b"small",
-    b"span",
-    b"strong",
-    b"strike",
-    b"sub",
-    b"sup",
-    b"table",
-    b"tt",
-    b"u",
-    b"ul",
-    b"var",
-];
-
 pub(super) struct SpecTree<'a> {
     input: &'a [u8],
     tokens: &'a Tokens,
     /// Markup scan regions, sorted by start.  A raw text element's region may reach
     /// past the end tag that tree construction found (`</script` without a
     /// `>`), and those bytes are *dropped*, so the rescan needs the region end.
-    regions: &'a [crate::OpaqueRegion],
+    regions: &'a [crate::markup::region::OpaqueRegion],
     nodes: Vec<Node>,
     stack: Vec<u32>,
     mode: Mode,
@@ -533,7 +329,7 @@ pub(super) struct SpecTree<'a> {
     /// List of active formatting elements.
     afe: Vec<Afe>,
     /// Namespace for each open element's *children*, parallel to `stack`.
-    ns: Vec<u8>,
+    ns: Vec<Namespace>,
     /// Pending characters for the "in table text" mode.
     table_text: Vec<(Range<u32>, bool)>,
     /// Mode to restore when the pending table text is flushed.
@@ -582,7 +378,7 @@ pub(super) fn build(
         skip_until: 0,
         adjusted: Vec::new(),
         afe: Vec::new(),
-        ns: vec![crate::NS_HTML],
+        ns: vec![Namespace::HTML],
         table_text: Vec::new(),
         table_text_return: Mode::InTable,
         foster_next_insert: false,
@@ -606,8 +402,12 @@ pub(super) fn build(
         .opaque_regions
         .iter()
         .filter_map(|region| match region.kind {
-            crate::RegionKind::Comment => Some((region.span.start, region.span.end, false)),
-            crate::RegionKind::Doctype => Some((region.span.start, region.span.end, true)),
+            crate::markup::region::RegionKind::Comment => {
+                Some((region.span.start, region.span.end, false))
+            }
+            crate::markup::region::RegionKind::Doctype => {
+                Some((region.span.start, region.span.end, true))
+            }
             _ => None,
         })
         .collect();
@@ -618,7 +418,7 @@ pub(super) fn build(
     let mut cdatas: Vec<(u32, u32)> = index
         .opaque_regions
         .iter()
-        .filter(|region| region.kind == crate::RegionKind::Cdata)
+        .filter(|region| region.kind == crate::markup::region::RegionKind::Cdata)
         .map(|region| (region.span.start, region.span.end))
         .collect();
     cdatas.sort_unstable();
@@ -780,7 +580,11 @@ fn build_without_repair(
         let name_end = name_start + tokens.tag_name_len[ti] as usize;
         let name = &input[name_start..name_end];
         if matches!(token.kind, TagKind::Start) {
-            builder.start_tag(tag, span.clone(), super::raw_mode_namespace(name));
+            builder.start_tag(
+                TagId::new(tag),
+                span.clone(),
+                super::raw_mode_namespace(name),
+            );
             if SpecTree::is_void(name) {
                 builder.pop_open_element(span.end..span.end, false);
             } else {
@@ -835,7 +639,7 @@ impl SpecTree<'_> {
             last_child: NO_LINK,
             next_sibling: NO_LINK,
             prev_sibling: NO_LINK,
-            ns: crate::NS_HTML,
+            ns: Namespace::HTML,
             end: span.end,
             span,
             raw_text,
@@ -880,7 +684,7 @@ impl SpecTree<'_> {
             self.is_html_integration_point(parent)
         };
         let mut element_ns = if parent_is_html_point {
-            crate::NS_HTML
+            Namespace::HTML
         } else {
             parent_ns
         };
@@ -889,12 +693,12 @@ impl SpecTree<'_> {
         // expected tree prints `svg svg`).
         if let Some(own) = own_name {
             if own == b"svg" {
-                element_ns = crate::NS_SVG;
+                element_ns = Namespace::SVG;
             } else if own == b"math" {
-                element_ns = crate::NS_MATHML;
+                element_ns = Namespace::MATHML;
             }
         }
-        if element_ns == crate::NS_SVG
+        if element_ns == Namespace::SVG
             && let (Name::Token(tag), Some(own)) = (name, own_name)
             && let Some(index) = super::svg_tag_adjustment_lower(own)
         {
@@ -1185,11 +989,11 @@ impl SpecTree<'_> {
     /// keeps `<p><svg><desc><p>` from closing the outer p.
     fn is_scope_boundary(&self, index: usize, extra: &[&[u8]]) -> bool {
         let id = self.stack[index];
-        let ns = self.ns.get(index).copied().unwrap_or(crate::NS_HTML);
+        let ns = self.ns.get(index).copied().unwrap_or(Namespace::HTML);
         let named = |names: &[&[u8]]| names.iter().any(|name| self.is(id, name));
         let base = match ns {
-            crate::NS_SVG => named(&[b"foreignobject", b"desc", b"title"]),
-            crate::NS_MATHML => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
+            Namespace::SVG => named(&[b"foreignobject", b"desc", b"title"]),
+            Namespace::MATHML => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
             _ => named(&[
                 b"applet",
                 b"caption",
@@ -1251,11 +1055,11 @@ impl SpecTree<'_> {
         if SPECIAL.iter().any(|name| self.is(id, name)) {
             return true;
         }
-        let ns = self.ns.get(index).copied().unwrap_or(crate::NS_HTML);
+        let ns = self.ns.get(index).copied().unwrap_or(Namespace::HTML);
         let named = |names: &[&[u8]]| names.iter().any(|name| self.is(id, name));
         match ns {
-            crate::NS_SVG => named(&[b"foreignobject", b"desc", b"title"]),
-            crate::NS_MATHML => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
+            Namespace::SVG => named(&[b"foreignobject", b"desc", b"title"]),
+            Namespace::MATHML => named(&[b"mi", b"mo", b"mn", b"ms", b"mtext", b"annotation-xml"]),
             _ => false,
         }
     }
@@ -1723,7 +1527,7 @@ impl SpecTree<'_> {
             // immediately below the position of furthestBlock."
             if let Some(pos) = self.stack_pos(furthest) {
                 self.stack.insert(pos + 1, new);
-                self.ns.insert(pos + 1, crate::NS_HTML);
+                self.ns.insert(pos + 1, Namespace::HTML);
             }
             // Step 20: the outer loop repeats (eight iterations at most).
         }
@@ -2153,7 +1957,7 @@ impl SpecTree<'_> {
                     match head {
                         Some(id) => {
                             self.stack.push(id);
-                            self.ns.push(crate::NS_HTML);
+                            self.ns.push(Namespace::HTML);
                             let step = self.in_head(ti);
                             // "Remove that node from the stack of open
                             // elements" - it is not necessarily the current
@@ -3361,10 +3165,10 @@ impl SpecTree<'_> {
         Step::Done
     }
 
-    /// The insertion namespace implied by the open elements (`NS_SVG`/`NS_MATH`,
+    /// The insertion namespace implied by the open elements (`Namespace::SVG`/`Namespace::MATHML`,
     /// or HTML), following integration points.
-    fn current_namespace(&self) -> u8 {
-        self.ns.last().copied().unwrap_or(crate::NS_HTML)
+    fn current_namespace(&self) -> Namespace {
+        self.ns.last().copied().unwrap_or(Namespace::HTML)
     }
 
     /// Whether the current node is inside SVG/MathML (CDATA sections are only
@@ -3416,7 +3220,7 @@ impl SpecTree<'_> {
         // CDATA sections are recognized when the *adjusted current node* is in a
         // foreign namespace, and an integration point is still a foreign
         // element there (`<svg><foreignObject><![CDATA[x]]>` is text).
-        self.current_namespace() != crate::NS_HTML
+        self.current_namespace() != Namespace::HTML
     }
 
     /// The breakout loop's condition: an element that is neither an integration
@@ -3442,12 +3246,12 @@ impl SpecTree<'_> {
             .position(|&open| open == id)
             .and_then(|index| self.ns.get(index).copied())
             .unwrap_or_else(|| self.current_namespace());
-        if ns == crate::NS_SVG {
+        if ns == Namespace::SVG {
             return [&b"foreignobject"[..], b"desc", b"title"]
                 .iter()
                 .any(|name| self.is(id, name));
         }
-        if ns != crate::NS_MATHML {
+        if ns != Namespace::MATHML {
             return false;
         }
         if !self.is(id, b"annotation-xml") {
@@ -3560,7 +3364,7 @@ impl SpecTree<'_> {
             return bytes.iter().any(|b| !is_space(b));
         }
         let raw = std::str::from_utf8(bytes).expect("Document input is valid UTF-8");
-        let decoded = crate::decode_character_references(raw, false);
+        let decoded = crate::character_reference::decode_character_references(raw, false);
         decoded
             .chars()
             .any(|c| c != '\0' && !matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}'))
@@ -3921,7 +3725,7 @@ impl SpecTree<'_> {
             Kind::Element => {
                 match node.name.expect("element has a name") {
                     Name::Token(tag) => {
-                        builder.start_tag(tag, node.span.clone(), node.ns);
+                        builder.start_tag(TagId::new(tag), node.span.clone(), node.ns);
                     }
                     Name::Implied(name) => {
                         builder.insert_implied_element(name, node.span.clone(), node.ns);

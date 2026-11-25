@@ -11,7 +11,8 @@ use criterion::Criterion;
 use html5ever_039::driver::parse_document;
 use html5ever_039::tendril::TendrilSink;
 use markup5ever_rcdom::RcDom;
-use simdhtml::{Document, ParseOptions, RepairMode};
+use simdhtml::document::Document;
+use simdhtml::parse::{ParseOptions, RepairMode};
 use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bytes_group, env};
 
@@ -39,7 +40,7 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
                             },
                         )
                         .expect("parse")
-                        .node_tape
+                        .nodes
                         .len(),
                     );
                 }
@@ -60,7 +61,7 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
                             },
                         )
                         .expect("parse")
-                        .node_tape
+                        .nodes
                         .len(),
                     );
                 }

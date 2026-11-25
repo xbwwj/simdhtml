@@ -1,7 +1,8 @@
 use std::cell::{OnceCell, RefCell};
 
 use rustc_hash::FxHashMap;
-use simdhtml::{Document, NodeId};
+use simdhtml::document::Document;
+use simdhtml::document::id::NodeId;
 
 use crate::bitset::BitSet;
 
@@ -18,7 +19,7 @@ pub(super) struct ChildIndex {
 /// Document-derived query cache: tag/attribute/compound masks and a child index.
 /// It never borrows or owns the document, so it is only valid for the document
 /// it was built from.  The one-shot API creates a throwaway one per call;
-/// [`crate::Selector`] shares one across a selector chain.
+/// [`crate::facade::Selector`] shares one across a selector chain.
 #[derive(Debug, Default)]
 pub struct QueryCache {
     child_index: OnceCell<ChildIndex>,
@@ -63,12 +64,12 @@ impl QueryCache {
     /// increasing id order.
     pub(super) fn child_index(&self, doc: &Document<'_>, n: usize) -> &ChildIndex {
         self.child_index.get_or_init(|| {
-            let node = |id: u32| doc.node(id);
+            let node = |id: u32| doc.node(NodeId::new(id));
             let mut child_start = vec![0u32; n + 1];
             for id in 1..n as u32 {
                 let parent = node(id).parent();
-                if (parent as usize) < n {
-                    child_start[parent as usize] += 1;
+                if parent.index() < n {
+                    child_start[parent.index()] += 1;
                 }
             }
             // Prefix sum: counts become start offsets.
@@ -80,20 +81,20 @@ impl QueryCache {
             }
             child_start[n] = sum;
 
-            let mut children = vec![0u32; sum as usize];
+            let mut children = vec![NodeId::new(0); sum as usize];
             let mut cursor = child_start.clone();
             let mut element_child_count = vec![0u32; n];
             let mut element_index = vec![0u32; n];
             for id in 1..n as u32 {
                 let parent = node(id).parent();
-                if parent as usize >= n {
+                if parent.index() >= n {
                     continue;
                 }
-                children[cursor[parent as usize] as usize] = id;
-                cursor[parent as usize] += 1;
+                children[cursor[parent.index()] as usize] = NodeId::new(id);
+                cursor[parent.index()] += 1;
                 if node(id).is_element() {
-                    element_child_count[parent as usize] += 1;
-                    element_index[id as usize] = element_child_count[parent as usize];
+                    element_child_count[parent.index()] += 1;
+                    element_index[id as usize] = element_child_count[parent.index()];
                 }
             }
 

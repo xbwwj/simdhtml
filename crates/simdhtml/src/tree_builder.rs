@@ -1,17 +1,23 @@
 use std::ops::Range;
 
-use crate::RepairMode;
-use crate::document::{NodeRecordInit, NodeTape};
+use crate::document::Document;
+use crate::document::attr::AttrTable;
+use crate::document::flags::{DiagnosticKind, DocumentFlags};
+use crate::document::id::{DOC_ROOT, NO_NODE, NO_TAG, NodeId, TagId};
+use crate::document::namespace::Namespace;
+use crate::document::node::NodeKind;
+use crate::document::tag::TagTable;
+use crate::document::tape::{NodeRecordInit, NodeTape};
+use crate::markup::MarkupFlags;
+use crate::parse::RepairMode;
 
 mod spec;
-use crate::markup::{MarkupIndex, TextRun, TextRuns};
-use crate::tokenizer::Tokens;
-use crate::{
-    DiagnosticKind, Document, DocumentFlags, MarkupFlags, NO_NODE, NO_TAG, NodeId, NodeKind,
-    TagKind, TagToken,
-};
+mod tag_sets;
+use crate::markup::MarkupIndex;
+use crate::markup::text_runs::{TextRun, TextRuns};
+use crate::tokenizer::{TagKind, TagToken, Tokens};
 /// SVG names the specification adjusts to camelCase; the 1-based index is what
-/// [`crate::Document::tag_name_override`] stores.
+/// [`crate::document::Document::tag_name_override`] stores.
 pub(crate) const SVG_TAG_NAMES: [(&str, &str); 37] = [
     ("altglyph", "altGlyph"),
     ("altglyphdef", "altGlyphDef"),
@@ -123,8 +129,8 @@ pub(crate) const ADJUSTED_ATTR_NAMES: [(&str, &str); 59] = [
 
 /// Index+1 for an adjusted attribute name, given the element's namespace: the
 /// SVG table applies to SVG elements only, the MathML entry to MathML only.
-pub(crate) fn adjusted_attr_index(name: &[u8], ns: u8) -> Option<u8> {
-    let (table, offset): (&[(&str, &str)], usize) = if ns == crate::NS_MATHML {
+pub(crate) fn adjusted_attr_index(name: &[u8], ns: Namespace) -> Option<u8> {
+    let (table, offset): (&[(&str, &str)], usize) = if ns == Namespace::MATHML {
         (
             &ADJUSTED_ATTR_NAMES[SVG_ATTRIBUTE_COUNT..],
             SVG_ATTRIBUTE_COUNT,
@@ -182,13 +188,13 @@ fn cdata_inner(input: &[u8], span: &Range<u32>) -> Option<Range<u32>> {
 /// How a start tag's name affects namespace assignment.  `Spec` decides the
 /// namespace itself and hands one byte per node to the tape; the no-repair mode
 /// has no integration points.
-fn raw_mode_namespace(name: &[u8]) -> u8 {
+fn raw_mode_namespace(name: &[u8]) -> Namespace {
     if name.eq_ignore_ascii_case(b"svg") {
-        crate::NS_SVG
+        Namespace::SVG
     } else if name.eq_ignore_ascii_case(b"math") {
-        crate::NS_MATHML
+        Namespace::MATHML
     } else {
-        crate::NS_HTML
+        Namespace::HTML
     }
 }
 
@@ -214,8 +220,8 @@ pub(crate) fn build_with<'a>(
         if element == NO_NODE {
             continue;
         }
-        let ns = builder.node_tape.namespace_of(element);
-        if ns != crate::NS_SVG && ns != crate::NS_MATHML {
+        let ns = builder.nodes.namespace_of(element);
+        if ns != Namespace::SVG && ns != Namespace::MATHML {
             continue;
         }
         for attr in tokens.tags[tag_index].attr_range.clone() {
@@ -233,6 +239,7 @@ pub(crate) fn build_with<'a>(
     // followed by the missing ones.
     let source_tag_count_now = tokens.tags.len();
     for (dest_node, src) in merges {
+        let dest_node = NodeId::new(dest_node);
         // The destination is a node id: for an implied `html`/`body` element
         // there is no tag token of its own, so find the tag token that created
         // it (`tag_element` also covers the implied ones).
@@ -273,10 +280,10 @@ pub(crate) fn build_with<'a>(
             continue;
         }
         let start = tokens.attr_tag.len() as u32;
-        let mut all: Vec<u32> = dest_range.collect();
+        let mut all: Vec<u32> = dest_range.clone().collect();
         all.extend(missing);
         for attr in all {
-            tokens.attr_tag.push(dest);
+            tokens.attr_tag.push(TagId::new(dest));
             tokens
                 .attr_name_start
                 .push(tokens.attr_name_start[attr as usize]);
@@ -318,30 +325,36 @@ pub(crate) fn build_with<'a>(
         tokens.tag_name_start.push(0);
         tokens.tag_name_len.push(0);
     }
-    Document {
-        input,
-        encoding: encoding_rs::UTF_8,
-        had_encoding_errors: false,
-        node_tape: builder.node_tape,
-        tags: tokens.tags,
-        tag_element,
-        tag_name_start: tokens.tag_name_start,
-        tag_name_len: tokens.tag_name_len,
-        tag_code,
-        source_tag_count: source_tag_count as u32,
+    let tags = TagTable {
+        tokens: tokens.tags,
+        element: tag_element,
+        name_override: tag_name_override,
+        name_start: tokens.tag_name_start,
+        name_len: tokens.tag_name_len,
+        code: tag_code,
+        source_count: source_tag_count as u32,
         implied_names: builder
             .implied_literals
             .into_iter()
             .map(|name| name.expect("implied name"))
             .collect(),
-        attr_tag: tokens.attr_tag,
-        attr_name_start: tokens.attr_name_start,
-        attr_name_len: tokens.attr_name_len,
-        attr_value_start: tokens.attr_value_start,
-        attr_value_len: tokens.attr_value_len,
-        attr_quote: tokens.attr_quote,
-        attr_name_override,
-        tag_name_override,
+    };
+    let attrs = AttrTable {
+        tag: tokens.attr_tag,
+        name_start: tokens.attr_name_start,
+        name_len: tokens.attr_name_len,
+        value_start: tokens.attr_value_start,
+        value_len: tokens.attr_value_len,
+        quote: tokens.attr_quote,
+        name_override: attr_name_override,
+    };
+    Document {
+        input,
+        encoding: encoding_rs::UTF_8,
+        had_encoding_errors: false,
+        nodes: builder.nodes,
+        tags,
+        attrs,
         flags,
         diagnostics,
     }
@@ -374,7 +387,7 @@ fn map_markup_flags(flags: MarkupFlags) -> DocumentFlags {
 }
 
 struct TreeBuilder {
-    node_tape: NodeTape,
+    nodes: NodeTape,
     stack: Vec<NodeId>,
     last_child: Vec<NodeId>,
     tag_element: Vec<NodeId>,
@@ -385,10 +398,10 @@ struct TreeBuilder {
 
 impl TreeBuilder {
     fn new(input_len: u32, node_capacity: usize, tag_count: usize) -> Self {
-        let mut node_tape = NodeTape::with_capacity(node_capacity);
-        node_tape.push(NodeRecordInit {
+        let mut nodes = NodeTape::with_capacity(node_capacity);
+        nodes.push(NodeRecordInit {
             kind: NodeKind::Document,
-            ns: crate::NS_HTML,
+            ns: Namespace::HTML,
             parent: NO_NODE,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
@@ -401,14 +414,14 @@ impl TreeBuilder {
             normalize_newlines: false,
         });
         let mut stack = Vec::with_capacity(64);
-        stack.push(0);
+        stack.push(DOC_ROOT);
         // Only open elements need a "last child" cursor.  Keeping these
         // parallel to the open stack (instead of one slot per node) avoids two
         // O(nodes) vector pushes and random writes for every text node.
         let mut last_child = Vec::with_capacity(64);
         last_child.push(NO_NODE);
         Self {
-            node_tape,
+            nodes,
             stack,
             last_child,
             tag_element: vec![NO_NODE; tag_count],
@@ -418,13 +431,13 @@ impl TreeBuilder {
         }
     }
 
-    fn start_tag(&mut self, tag_token: u32, span: Range<u32>, ns: u8) {
+    fn start_tag(&mut self, tag_token: TagId, span: Range<u32>, ns: Namespace) {
         let id = self.insert_element(tag_token, span, ns);
-        self.tag_element[tag_token as usize] = id;
+        self.tag_element[tag_token.index()] = id;
     }
 
-    fn insert_implied_element(&mut self, name: &'static str, span: Range<u32>, ns: u8) {
-        let tag_token = (self.source_tag_count + self.implied_tags.len()) as u32;
+    fn insert_implied_element(&mut self, name: &'static str, span: Range<u32>, ns: Namespace) {
+        let tag_token = TagId::new((self.source_tag_count + self.implied_tags.len()) as u32);
         let id = self.insert_element(tag_token, span.clone(), ns);
         self.implied_tags.push(TagToken {
             span,
@@ -444,22 +457,22 @@ impl TreeBuilder {
             return;
         };
         debug_assert!(
-            id != 0,
+            id != DOC_ROOT,
             "tree construction must not close the Document node"
         );
-        let subtree_end = self.node_tape.len() as NodeId;
-        self.node_tape.set_subtree_end(id, subtree_end);
+        let subtree_end = NodeId::new(self.nodes.len() as u32);
+        self.nodes.set_subtree_end(id, subtree_end);
         // An element's `outer_end` is only written here, once, so there is
         // nothing to keep the maximum with: reading the old value was a random
         // access into the tape for a node far behind the write head.
-        self.node_tape
+        self.nodes
             .set_outer_end(id, if implied { span.start } else { span.end });
         self.last_child.pop();
     }
 
-    fn insert_element(&mut self, tag_token: u32, span: Range<u32>, ns: u8) -> NodeId {
+    fn insert_element(&mut self, tag_token: TagId, span: Range<u32>, ns: Namespace) -> NodeId {
         let parent = *self.stack.last().expect("root is always open");
-        let id = self.node_tape.push(NodeRecordInit {
+        let id = self.nodes.push(NodeRecordInit {
             kind: NodeKind::Element,
             ns,
             parent,
@@ -482,16 +495,16 @@ impl TreeBuilder {
     /// Appends a comment or doctype node at the current position.
     fn insert_comment(&mut self, span: Range<u32>, is_doctype: bool) {
         let parent = *self.stack.last().expect("root is always open");
-        let id = self.node_tape.len() as NodeId;
-        self.node_tape.push(NodeRecordInit {
+        let id = NodeId::new(self.nodes.len() as u32);
+        self.nodes.push(NodeRecordInit {
             kind: NodeKind::Comment,
             doctype: is_doctype,
             normalize_newlines: false,
-            ns: 0,
+            ns: Namespace::HTML,
             parent,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
-            subtree_end: id + 1,
+            subtree_end: NodeId::new(id.get() + 1),
             span: span.clone(),
             tag_token: NO_TAG,
             outer_end: span.end,
@@ -503,16 +516,16 @@ impl TreeBuilder {
     /// Appends a text node.
     fn insert_characters(&mut self, run: TextRun) {
         let parent = *self.stack.last().expect("root is always open");
-        let id = self.node_tape.len() as NodeId;
+        let id = NodeId::new(self.nodes.len() as u32);
         let span = run.span;
         let raw = run.raw_text;
-        self.node_tape.push(NodeRecordInit {
+        self.nodes.push(NodeRecordInit {
             kind: NodeKind::Text,
-            ns: crate::NS_HTML,
+            ns: Namespace::HTML,
             parent,
             first_child: NO_NODE,
             next_sibling: NO_NODE,
-            subtree_end: id + 1,
+            subtree_end: NodeId::new(id.get() + 1),
             span: span.clone(),
             tag_token: NO_TAG,
             outer_end: span.end,
@@ -528,44 +541,45 @@ impl TreeBuilder {
         let frame = self.stack.len() - 1;
         let previous_last = self.last_child[frame];
         if previous_last == NO_NODE {
-            self.node_tape.set_first_child(parent, child);
+            self.nodes.set_first_child(parent, child);
         } else {
-            self.node_tape.set_next_sibling(previous_last, child);
+            self.nodes.set_next_sibling(previous_last, child);
         }
         self.last_child[frame] = child;
     }
 
     fn finish(&mut self, input_len: u32) {
-        let subtree_end = self.node_tape.len() as NodeId;
+        let subtree_end = NodeId::new(self.nodes.len() as u32);
         for &node in self.stack.iter().rev() {
-            if self.node_tape.subtree_end_of(node) == NO_NODE {
-                self.node_tape.set_subtree_end(node, subtree_end);
+            if self.nodes.subtree_end_of(node) == NO_NODE {
+                self.nodes.set_subtree_end(node, subtree_end);
             }
-            let outer_end = self.node_tape.outer_end_of(node).max(input_len);
-            self.node_tape.set_outer_end(node, outer_end);
+            let outer_end = self.nodes.outer_end_of(node).max(input_len);
+            self.nodes.set_outer_end(node, outer_end);
         }
-        self.node_tape.set_outer_end(0, input_len);
-        if self.node_tape.subtree_end_of(0) == NO_NODE {
-            self.node_tape.set_subtree_end(0, subtree_end);
+        self.nodes.set_outer_end(DOC_ROOT, input_len);
+        if self.nodes.subtree_end_of(DOC_ROOT) == NO_NODE {
+            self.nodes.set_subtree_end(DOC_ROOT, subtree_end);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ParseOptions;
+    use crate::parse::ParseOptions;
 
     use super::*;
 
     /// Validates the preorder tape invariants that everything downstream
     /// (selector windows, `subtree_end` ranges, text runs) relies on.
-    fn assert_preorder(doc: &crate::Document<'_>) {
-        let n = doc.node_tape.len() as u32;
+    fn assert_preorder(doc: &crate::document::Document<'_>) {
+        let n = doc.nodes.len();
         assert!(n > 0);
-        for id in 0..n {
+        for raw in 0..n {
+            let id = NodeId::new(raw as u32);
             let node = doc.node(id);
-            if id == 0 {
-                assert_eq!(node.parent(), crate::NO_NODE);
+            if raw == 0 {
+                assert_eq!(node.parent(), NO_NODE);
                 continue;
             }
             assert!(
@@ -587,7 +601,7 @@ mod tests {
             // Children are contiguous and in id order.
             let mut child = node.first_child();
             let mut last = None;
-            while child != crate::NO_NODE {
+            while child != NO_NODE {
                 assert_eq!(doc.node(child).parent(), id);
                 assert!(child > id && child < node.subtree_end());
                 if let Some(last) = last {
@@ -601,7 +615,7 @@ mod tests {
 
     #[test]
     fn unexpected_end_is_flagged() {
-        let doc = crate::Document::parse(b"</div>").unwrap();
+        let doc = crate::document::Document::parse(b"</div>").unwrap();
         assert!(doc.flags.contains(DocumentFlags::UNEXPECTED_END_TAG));
         assert_eq!(doc.diagnostics.len(), 1);
         assert_eq!(doc.diagnostics[0].kind, DiagnosticKind::UnexpectedEndTag);
@@ -609,11 +623,11 @@ mod tests {
 
     #[test]
     fn markup_eof_flags_map_one_to_one() {
-        let doc = crate::Document::parse(b"<!-- x").unwrap();
+        let doc = crate::document::Document::parse(b"<!-- x").unwrap();
         assert!(doc.flags.contains(DocumentFlags::EOF_IN_COMMENT));
         assert!(!doc.flags.contains(DocumentFlags::NEEDS_FALLBACK));
 
-        let doc = crate::Document::parse(b"<![CDATA[x").unwrap();
+        let doc = crate::document::Document::parse(b"<![CDATA[x").unwrap();
         assert!(doc.flags.contains(DocumentFlags::EOF_IN_CDATA));
         assert!(doc.flags.contains(DocumentFlags::NEEDS_FALLBACK));
     }
@@ -633,8 +647,8 @@ mod tests {
             "<a><b><c>",
         ];
         for input in cases {
-            let none = crate::Document::parse(input.as_bytes()).unwrap();
-            let spec = crate::Document::parse_with(
+            let none = crate::document::Document::parse(input.as_bytes()).unwrap();
+            let spec = crate::document::Document::parse_with(
                 input.as_bytes(),
                 ParseOptions {
                     repair: RepairMode::Spec,
@@ -646,20 +660,20 @@ mod tests {
             assert_preorder(&spec);
         }
 
-        fn nth(doc: &crate::Document<'_>, name: &str, n: usize) -> crate::NodeId {
-            doc.node_tape
+        fn nth(doc: &crate::document::Document<'_>, name: &str, n: usize) -> NodeId {
+            doc.nodes
                 .iter()
                 .enumerate()
                 .filter(|(_, node)| node.is_element() && doc.tag_name(node.tag_token()) == name)
                 .nth(n)
-                .map(|(id, _)| id as crate::NodeId)
+                .map(|(id, _)| NodeId::new(id as u32))
                 .expect("element")
         }
 
         // Unrepaired `<p>a<p>b` nests the second `<p>`; `Spec` makes them siblings.
         let input = "<p>a<p>b";
-        let none = crate::Document::parse(input.as_bytes()).unwrap();
-        let spec = crate::Document::parse_with(
+        let none = crate::document::Document::parse(input.as_bytes()).unwrap();
+        let spec = crate::document::Document::parse_with(
             input.as_bytes(),
             ParseOptions {
                 repair: RepairMode::Spec,
@@ -680,8 +694,8 @@ mod tests {
 
         // No implied `tbody` without repair.
         let input = "<table><tr><td>x</td></tr></table>";
-        let none = crate::Document::parse(input.as_bytes()).unwrap();
-        let spec = crate::Document::parse_with(
+        let none = crate::document::Document::parse(input.as_bytes()).unwrap();
+        let spec = crate::document::Document::parse_with(
             input.as_bytes(),
             ParseOptions {
                 repair: RepairMode::Spec,
@@ -689,8 +703,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(none.implied_names.is_empty());
-        assert!(spec.implied_names.contains(&"tbody"));
+        assert!(none.tags.implied_names.is_empty());
+        assert!(spec.tags.implied_names.contains(&"tbody"));
     }
 
     #[test]
@@ -709,7 +723,7 @@ mod tests {
                 state ^= state << 17;
                 input.push(alphabet[(state as usize) % alphabet.len()]);
             }
-            let doc = crate::Document::parse(&input).unwrap();
+            let doc = crate::document::Document::parse(&input).unwrap();
             assert_preorder(&doc);
         }
     }

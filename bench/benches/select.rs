@@ -17,10 +17,10 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion};
-use simdhtml::Document;
+use simdhtml::document::Document;
 use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bytes_group, env};
-use simdsel::Selector;
+use simdsel::prelude::Selector;
 
 /// Per-document selectors, when the corpus carries them (SWDE).
 fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {

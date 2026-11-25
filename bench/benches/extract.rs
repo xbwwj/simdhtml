@@ -15,10 +15,11 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkGroup, Criterion, measurement::WallTime};
-use simdhtml::{Document, ParseOptions, RepairMode};
+use simdhtml::document::Document;
+use simdhtml::parse::{ParseOptions, RepairMode};
 use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bytes_group, env};
-use simdsel::Selector;
+use simdsel::prelude::Selector;
 
 /// Per-document selectors, when the corpus carries them (SWDE).
 fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {

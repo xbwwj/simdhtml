@@ -244,10 +244,8 @@ fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize) -> Option
     (from..=last).find(|&at| haystack[at..at + needle.len()].eq_ignore_ascii_case(needle))
 }
 
-pub use simdutf8::compat::Utf8Error;
-
 /// Validates `bytes` as UTF-8.
-pub fn validate_utf8(bytes: &[u8]) -> Result<(), Utf8Error> {
+pub(crate) fn validate_utf8(bytes: &[u8]) -> Result<(), simdutf8::compat::Utf8Error> {
     simdutf8::compat::from_utf8(bytes).map(|_| ())
 }
 

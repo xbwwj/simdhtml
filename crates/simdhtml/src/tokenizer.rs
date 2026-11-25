@@ -1,6 +1,7 @@
 use std::ops::Range;
 
-use crate::MarkupIndex;
+use crate::document::id::TagId;
+use crate::markup::MarkupIndex;
 use crate::tag_code::TagCode;
 
 /// A parsed tag: span, kind and the attribute range it owns.
@@ -34,7 +35,7 @@ pub(crate) struct Tokens {
     pub tag_name_start: Vec<u32>,
     pub tag_name_len: Vec<u16>,
     pub tag_code: Vec<TagCode>,
-    pub attr_tag: Vec<u32>,
+    pub attr_tag: Vec<TagId>,
     pub attr_name_start: Vec<u32>,
     pub attr_name_len: Vec<u16>,
     pub attr_value_start: Vec<u32>,
@@ -72,7 +73,7 @@ pub(crate) fn tokenize(input: &[u8], index: &MarkupIndex) -> Tokens {
 /// Parses one `<...>` span.  End tags ignore attributes.
 fn parse_tag(input: &[u8], start: usize, end: usize, out: &mut Tokens) -> TagToken {
     let span = start as u32..(end + 1) as u32;
-    let tag_index = out.tags.len() as u32;
+    let tag_index = TagId::new(out.tags.len() as u32);
 
     if input.get(start + 1) == Some(&b'/') {
         let name_start = start + 2;
@@ -249,7 +250,7 @@ fn is_name_delimiter(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MarkupIndex;
+    use crate::markup::MarkupIndex;
 
     fn tok(input: &str) -> (Tokens, MarkupIndex) {
         let index = crate::markup::scan(input.as_bytes()).unwrap();

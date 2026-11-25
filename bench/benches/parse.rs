@@ -11,7 +11,8 @@
 //! (Common Crawl `.warc.gz` and SWDE `.7z`), never synthesised.
 
 use criterion::Criterion;
-use simdhtml::{Document, ParseOptions, RepairMode};
+use simdhtml::document::Document;
+use simdhtml::parse::{ParseOptions, RepairMode};
 use simdhtml_bench::corpus::{Corpus, Dataset};
 use simdhtml_bench::{bench_parse, bytes_group, env};
 
@@ -32,7 +33,7 @@ fn bench_corpus(c: &mut Criterion, corpus: &Corpus) {
                     },
                 )
                 .expect("parse")
-                .node_tape
+                .nodes
                 .len()
             });
         }

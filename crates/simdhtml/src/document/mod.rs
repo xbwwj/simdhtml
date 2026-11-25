@@ -1,50 +1,26 @@
 use std::borrow::Cow;
-use std::ops::Range;
 
 use encoding_rs::Encoding;
 
 use crate::character_reference::decode_character_references;
-use crate::tokenizer::{AttrQuote, TagToken};
 
-mod id;
-mod node;
+pub mod attr;
+pub mod flags;
+pub mod id;
+pub mod namespace;
+pub mod node;
+pub mod tag;
+pub mod tape;
+pub mod text;
 
-pub use self::node::{Node, NodeKind};
-
-pub type NodeId = u32;
-pub type TagId = u32;
-
-pub const NO_NODE: NodeId = u32::MAX;
-pub const NO_TAG: u32 = u32::MAX;
-
-/// The document node: always node `0`, and the only node without a parent.
-pub const DOC_ROOT: NodeId = 0;
-
-/// Set on text nodes whose bytes came from rawtext/RCDATA.
-pub const RAW_TEXT_BIT: u8 = 0b100;
-
-/// Set on text nodes whose data needs input-stream newline preprocessing.
-pub const NORMALIZE_NEWLINES_BIT: u8 = 0b1000_0000;
-
-/// Set on [`NodeKind::Comment`] nodes that are doctypes.
-pub const DOCTYPE_BIT: u8 = 0b0100_0000;
-
-pub const NS_HTML: u8 = 0;
-pub const NS_SVG: u8 = 1;
-pub const NS_MATHML: u8 = 2;
-
-/// A MathML text integration point (`mi`, `mo`, `mn`, `ms`, `mtext`)
-/// the element is MathML, but its children belong to HTML.
-pub const NS_MATH_TEXT_POINT: u8 = 3;
-
-/// An SVG element whose children are HTML (`foreignObject`, `desc`, `title`).
-pub const NS_SVG_HTML_POINT: u8 = 4;
-
-// Namespaces live in bits 3-5 of the kind byte: no extra memory, same column.
-const NS_SHIFT: u32 = 3;
-const NS_MASK: u8 = 0b111 << NS_SHIFT;
-
-const KIND_MASK: u8 = 0b011;
+use self::attr::AttrTable;
+use self::flags::{Diagnostic, DocumentFlags};
+use self::id::{NO_TAG, NodeId, TagId};
+use self::namespace::Namespace;
+use self::node::Node;
+use self::tag::TagTable;
+use self::tape::NodeTape;
+use self::text::{normalize_newlines, replace_nulls};
 
 /// A parsed HTML document. It borrows the input when that already was UTF-8 and
 /// owns the transcoded bytes otherwise.
@@ -56,57 +32,11 @@ pub struct Document<'a> {
     /// Whether invalid bytes were replaced during decoding.
     pub had_encoding_errors: bool,
 
-    // PERF: one `Vec` per column costs a fixed number of allocations per
-    // document, which shows on small ones; a single arena carved into columns
-    // would remove them.
     /// All nodes in preorder: a `kind` column plus an AoS record.
-    pub node_tape: NodeTape,
+    pub nodes: NodeTape,
 
-    /// Tag tokens in source order, followed by the ones implied by tree
-    /// construction.
-    pub tags: Vec<TagToken>,
-
-    /// Element node created for each start tag token, indexed like `tags`.
-    pub tag_element: Vec<NodeId>,
-
-    /// Adjusted tag name index per tag token (`0` = keep the source spelling).
-    ///
-    /// Foreign content camel-cases a fixed set of SVG names (`foreignobject`);
-    /// one byte per token keeps that out of the hot columns.
-    pub tag_name_override: Vec<u8>,
-
-    /// Tag name span, one entry per tag token.  Implied tags carry a zero-length
-    /// span and a name in `implied_names`.
-    pub tag_name_start: Vec<u32>,
-    pub tag_name_len: Vec<u16>,
-
-    /// Byte-sized tag code per tag token, aligned with `tags` and `tag_element`
-    /// (`0` = no dedicated code; compare spans).  One byte per token turns a
-    /// query-side tag match into a mask scan instead of a gather over name spans.
-    pub tag_code: Vec<u8>,
-
-    // FIXME: implied tags are appended after the source tags; merging them in
-    // one pass would keep tag order aligned with tree order.
-    /// Number of source tag tokens; later tag indices were implied by tree
-    /// construction.
-    pub source_tag_count: u32,
-    /// Names of the tags implied by tree construction, indexed by
-    /// `tag - source_tag_count`.
-    pub implied_names: Vec<&'static str>,
-
-    // Attribute columns: name/value spans plus quoting style, one entry per
-    // attribute in source order.
-    pub attr_tag: Vec<TagId>,
-    pub attr_name_start: Vec<u32>,
-    pub attr_name_len: Vec<u16>,
-    pub attr_value_start: Vec<u32>,
-    pub attr_value_len: Vec<u32>,
-    pub attr_quote: Vec<AttrQuote>,
-
-    /// Adjusted attribute-name index per attribute (`0` = keep the source
-    /// spelling, which [`Document::attr_name`] lowercases).  Foreign elements
-    /// adjust a fixed list (`viewbox` -> `viewBox`); one byte per attribute.
-    pub attr_name_override: Vec<u8>,
+    pub tags: TagTable,
+    pub attrs: AttrTable,
 
     /// Summary bits for recoverable parse problems.
     pub flags: DocumentFlags,
@@ -116,253 +46,40 @@ pub struct Document<'a> {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// One `kind` byte plus one AoS `record` per node, in preorder: node `i`'s
-/// descendants are exactly `[i + 1, subtree_end[i])`.
-///
-/// The split exists for bulk passes that only ask "is this an element?" and so
-/// stream 1 byte per node; every other field stays in one record because
-/// matching and text walking read several of them per node.
-#[derive(Clone, Debug, Default)]
-pub struct NodeTape {
-    /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].  This is the scan column.
-    pub kind: Vec<u8>,
-    pub record: Vec<NodeRecord>,
-}
-
-impl NodeTape {
-    /// Creates an empty store with room for `capacity` nodes.
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
-        Self {
-            kind: Vec::with_capacity(capacity),
-            record: Vec::with_capacity(capacity),
-        }
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.record.len()
-    }
-
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Node<'_>> + ExactSizeIterator + '_ {
-        (0..self.len() as NodeId).map(move |id| Node { tape: self, id })
-    }
-
-    pub(crate) fn push(&mut self, init: NodeRecordInit) -> NodeId {
-        let id = self.record.len() as NodeId;
-        self.kind.push(
-            init.kind.bits()
-                | if init.raw_text { RAW_TEXT_BIT } else { 0 }
-                | if init.doctype { DOCTYPE_BIT } else { 0 }
-                | if init.normalize_newlines {
-                    NORMALIZE_NEWLINES_BIT
-                } else {
-                    0
-                }
-                | if init.normalize_newlines {
-                    NORMALIZE_NEWLINES_BIT
-                } else {
-                    0
-                }
-                | ((init.ns << NS_SHIFT) & NS_MASK),
-        );
-        self.record.push(NodeRecord {
-            parent: init.parent,
-            first_child: init.first_child,
-            next_sibling: init.next_sibling,
-            subtree_end: init.subtree_end,
-            span: init.span,
-            tag_token: init.tag_token,
-            outer_end: init.outer_end,
-        });
-        id
-    }
-
-    #[inline]
-    fn idx(&self, id: NodeId) -> usize {
-        debug_assert!((id as usize) < self.len(), "node id out of bounds");
-        id as usize
-    }
-
-    /// Element namespace; [`NS_HTML`] for text and document nodes.
-    #[must_use]
-    pub fn namespace_of(&self, id: NodeId) -> u8 {
-        (self.kind[self.idx(id)] & NS_MASK) >> NS_SHIFT
-    }
-
-    pub(crate) fn outer_end_of(&self, id: NodeId) -> u32 {
-        self.record[self.idx(id)].outer_end
-    }
-
-    pub(crate) fn subtree_end_of(&self, id: NodeId) -> NodeId {
-        self.record[self.idx(id)].subtree_end
-    }
-
-    pub(crate) fn set_subtree_end(&mut self, id: NodeId, end: NodeId) {
-        let i = self.idx(id);
-        self.record[i].subtree_end = end;
-    }
-
-    pub(crate) fn set_outer_end(&mut self, id: NodeId, end: u32) {
-        let i = self.idx(id);
-        self.record[i].outer_end = end;
-    }
-
-    pub(crate) fn set_first_child(&mut self, id: NodeId, child: NodeId) {
-        let i = self.idx(id);
-        self.record[i].first_child = child;
-    }
-
-    pub(crate) fn set_next_sibling(&mut self, id: NodeId, next: NodeId) {
-        let i = self.idx(id);
-        self.record[i].next_sibling = next;
-    }
-}
-
-/// Per-node fields other than [`NodeTape::kind`].
-#[derive(Clone, Debug)]
-pub struct NodeRecord {
-    parent: NodeId,
-    first_child: NodeId,
-    next_sibling: NodeId,
-    subtree_end: NodeId,
-    span: Range<u32>,
-    tag_token: TagId,
-    outer_end: u32,
-}
-
-/// Applies HTML's newline preprocessing: `\r\n` and `\r` become `\n`.
-#[must_use]
-pub fn normalize_newlines(text: Cow<'_, str>) -> Cow<'_, str> {
-    if !text.as_bytes().contains(&b'\r') {
-        return text;
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\r' {
-            if chars.peek() == Some(&'\n') {
-                chars.next();
-            }
-            out.push('\n');
-        } else {
-            out.push(ch);
-        }
-    }
-    Cow::Owned(out)
-}
-
-/// Replaces U+0000 with U+FFFD, as every HTML tokenizer state does.
-///
-/// The data model has no NUL: it is replaced when the character is emitted, so
-/// doing it on extraction keeps the parser's spans valid and costs one byte
-/// scan on documents that contain no NUL (the overwhelming majority).
-#[must_use]
-pub fn replace_nulls(text: Cow<'_, str>) -> Cow<'_, str> {
-    if !text.as_bytes().contains(&0) {
-        return text;
-    }
-    Cow::Owned(text.replace('\0', "\u{fffd}"))
-}
-
-/// Everything needed to append one node; lives on the builder stack only.
-pub(crate) struct NodeRecordInit {
-    pub kind: NodeKind,
-    pub parent: NodeId,
-    pub first_child: NodeId,
-    pub next_sibling: NodeId,
-    pub subtree_end: NodeId,
-    pub span: Range<u32>,
-    pub tag_token: TagId,
-    pub outer_end: u32,
-    pub raw_text: bool,
-    /// Set on [`NodeKind::Comment`] nodes that came from a doctype.
-    pub doctype: bool,
-    /// Apply newline preprocessing to this text node's data.
-    pub normalize_newlines: bool,
-    /// Element namespace ([`NS_HTML`], [`NS_SVG`], [`NS_MATH`]); 0 for text.
-    pub ns: u8,
-}
-
-bitflags::bitflags! {
-    /// Summary flags for recoverable parse problems.
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
-    pub struct DocumentFlags: u32 {
-        /// At least one [`DiagnosticKind::UnexpectedEndTag`] was reported.
-        const UNEXPECTED_END_TAG = 1 << 0;
-
-        /// The markup scan reported unbalanced tag starts/ends.
-        const UNBALANCED_TAG = 1 << 1;
-
-        /// The document uses a construct outside the fast path.
-        const NEEDS_FALLBACK = 1 << 2;
-
-        /// An implied end tag was emitted for a void element or an open element.
-        const IMPLIED_END = 1 << 3;
-
-        /// A tag start was still open when the input ended.
-        const EOF_IN_TAG = 1 << 4;
-
-        /// A `<!--` comment was not terminated before EOF.
-        const EOF_IN_COMMENT = 1 << 5;
-
-        /// A `<!...>` / `<?...>` declaration was not terminated before EOF.
-        const EOF_IN_DOCTYPE = 1 << 6;
-
-        /// A raw text element (script/style/...) had no matching end tag.
-        const EOF_IN_RAW_TEXT = 1 << 7;
-
-        /// A `<![CDATA[` section was not terminated before EOF.
-        const EOF_IN_CDATA = 1 << 8;
-    }
-}
-
-/// One recoverable parse problem with its source span.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Diagnostic {
-    pub kind: DiagnosticKind,
-    pub span: Range<u32>,
-}
-
-/// A recoverable parse problem.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DiagnosticKind {
-    /// An end tag had no matching open element.
-    UnexpectedEndTag,
-}
-
 impl Document<'_> {
     /// Borrowed view of one node.
     #[must_use]
     #[inline]
     pub fn node(&self, id: NodeId) -> Node<'_> {
         Node {
-            tape: &self.node_tape,
+            tape: &self.nodes,
             id,
         }
     }
 
     #[must_use]
-    pub fn tag_name(&self, tag: u32) -> &str {
-        if tag >= self.source_tag_count {
-            return self.implied_names[(tag - self.source_tag_count) as usize];
+    pub fn tag_name(&self, tag: TagId) -> &str {
+        if tag.get() >= self.tags.source_count {
+            return self.tags.implied_names[(tag.get() - self.tags.source_count) as usize];
         }
-        if let Some(&index) = self.tag_name_override.get(tag as usize)
+        if let Some(&index) = self.tags.name_override.get(tag.index())
             && index != 0
         {
             return crate::tree_builder::adjusted_tag_name(index);
         }
-        let start = self.tag_name_start[tag as usize] as usize;
-        let len = self.tag_name_len[tag as usize] as usize;
+        let start = self.tags.name_start[tag.index()] as usize;
+        let len = self.tags.name_len[tag.index()] as usize;
         std::str::from_utf8(&self.input[start..start + len]).expect("Document input is valid UTF-8")
     }
 
     /// Element name as the HTML tree model stores it (ASCII lowercase, except
     /// for adjusted foreign names).
-    pub fn tag_name_lower(&self, tag: u32) -> std::borrow::Cow<'_, str> {
-        if tag < self.source_tag_count
+    pub fn tag_name_lower(&self, tag: TagId) -> std::borrow::Cow<'_, str> {
+        if tag.get() < self.tags.source_count
             && self
-                .tag_name_override
-                .get(tag as usize)
+                .tags
+                .name_override
+                .get(tag.index())
                 .is_some_and(|&index| index != 0)
         {
             // Adjusted foreign names keep their specified case.
@@ -380,13 +97,13 @@ impl Document<'_> {
     /// for adjusted foreign names).
     #[must_use]
     pub fn attr_name(&self, attr: u32) -> Cow<'_, str> {
-        if let Some(&index) = self.attr_name_override.get(attr as usize)
+        if let Some(&index) = self.attrs.name_override.get(attr as usize)
             && index != 0
         {
             return Cow::Borrowed(crate::tree_builder::adjusted_attr_name(index));
         }
-        let start = self.attr_name_start[attr as usize] as usize;
-        let len = self.attr_name_len[attr as usize] as usize;
+        let start = self.attrs.name_start[attr as usize] as usize;
+        let len = self.attrs.name_len[attr as usize] as usize;
         let raw = &self.input[start..start + len];
         if raw.iter().any(|b| b.is_ascii_uppercase()) {
             Cow::Owned(String::from_utf8_lossy(raw).to_ascii_lowercase())
@@ -429,14 +146,14 @@ impl Document<'_> {
                     // `annotation-xml` is an integration point only with an
                     // HTML `encoding`.
                     let annotation_xml = name.as_str() == "annotation-xml"
-                        && self.tags[tag as usize].attr_range.clone().any(|attr| {
-                            let start = self.attr_name_start[attr as usize] as usize;
-                            let len = self.attr_name_len[attr as usize] as usize;
+                        && self.tags.token(tag).attr_range.clone().any(|attr| {
+                            let start = self.attrs.name_start[attr as usize] as usize;
+                            let len = self.attrs.name_len[attr as usize] as usize;
                             if !self.input[start..start + len].eq_ignore_ascii_case(b"encoding") {
                                 return false;
                             }
-                            let vs = self.attr_value_start[attr as usize] as usize;
-                            let vl = self.attr_value_len[attr as usize] as usize;
+                            let vs = self.attrs.value_start[attr as usize] as usize;
+                            let vl = self.attrs.value_len[attr as usize] as usize;
                             let value = &self.input[vs..vs + vl];
                             value.eq_ignore_ascii_case(b"text/html")
                                 || value.eq_ignore_ascii_case(b"application/xhtml+xml")
@@ -446,7 +163,7 @@ impl Document<'_> {
             };
             // Raw text is the tokenizer's own state, where NUL becomes U+FFFD;
             // `in body` and integration points drop it instead.
-            let replace = if parent_ns == NS_HTML {
+            let replace = if parent_ns == Namespace::HTML {
                 node.is_raw_text()
             } else {
                 !at_point
@@ -459,16 +176,5 @@ impl Document<'_> {
         } else {
             decoded
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn node_store_is_33_bytes_per_node() {
-        // `NodeKind` + `RAW_TEXT_BIT` column, plus one record per node.
-        assert_eq!(1 + std::mem::size_of::<NodeRecord>(), 33);
     }
 }

@@ -51,7 +51,7 @@ impl<'a> Document<'a> {
             EncodingMode::Sniff => encoding::decode(input),
             EncodingMode::Explicit(encoding) => encoding::decode_with(input, encoding),
             EncodingMode::Utf8 => {
-                encoding::validate_utf8(input).map_err(ParseError::InvalidUtf8)?;
+                encoding::validate_utf8(input).map_err(|_| ParseError::InvalidUtf8)?;
                 encoding::Decoded {
                     bytes: std::borrow::Cow::Borrowed(input),
                     encoding: encoding_rs::UTF_8,
@@ -74,7 +74,7 @@ impl Document<'static> {
             EncodingMode::Sniff => encoding::decode_owned(input),
             EncodingMode::Explicit(encoding) => encoding::decode_with_owned(input, encoding),
             EncodingMode::Utf8 => {
-                encoding::validate_utf8(&input).map_err(ParseError::InvalidUtf8)?;
+                encoding::validate_utf8(&input).map_err(|_| ParseError::InvalidUtf8)?;
                 encoding::Decoded {
                     bytes: std::borrow::Cow::Owned(input),
                     encoding: encoding_rs::UTF_8,
@@ -100,7 +100,12 @@ fn parse_inner(decoded: encoding::Decoded<'_>, repair: RepairMode) -> Result<Doc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AttrQuote, DocumentFlags, NS_HTML, NodeId, NodeKind, decode_character_references};
+    use crate::character_reference::decode_character_references;
+    use crate::document::flags::DocumentFlags;
+    use crate::document::id::NodeId;
+    use crate::document::namespace::Namespace;
+    use crate::document::node::NodeKind;
+    use crate::tokenizer::AttrQuote;
 
     fn doc(input: &'static str) -> Document<'static> {
         Document::parse_with(
@@ -132,7 +137,8 @@ mod tests {
             return doc.text(id).into_owned();
         }
         let mut out = String::new();
-        for child in id..node.subtree_end() {
+        for child in id.get()..node.subtree_end().get() {
+            let child = NodeId::new(child);
             if doc.node(child).is_text() {
                 out.push_str(&doc.text(child));
             }
@@ -141,7 +147,7 @@ mod tests {
     }
 
     fn elements(doc: &Document<'_>) -> Vec<String> {
-        doc.node_tape
+        doc.nodes
             .iter()
             .enumerate()
             .filter(|(_, n)| n.is_element())
@@ -172,17 +178,17 @@ mod tests {
                 "7:p:14..17:end9",
             ]
         );
-        assert_eq!(text_content(&d, 4), "hiyo");
-        assert_eq!(outer(&d, 4), b"<div><p>hi</p><p>yo</p></div>");
-        assert_eq!(outer(&d, 5), b"<p>hi</p>");
-        assert_eq!(d.text(6), "hi");
+        assert_eq!(text_content(&d, NodeId::new(4)), "hiyo");
+        assert_eq!(outer(&d, NodeId::new(4)), b"<div><p>hi</p><p>yo</p></div>");
+        assert_eq!(outer(&d, NodeId::new(5)), b"<p>hi</p>");
+        assert_eq!(d.text(NodeId::new(6)), "hi");
     }
 
     #[test]
     fn void_elements_and_optional_end_tags() {
         let d = doc("<ul><li>a<li>b</ul><br>");
         let names: Vec<_> = d
-            .node_tape
+            .nodes
             .iter()
             .filter(|n| n.is_element())
             .map(|n| d.tag_name(n.tag_token()).to_string())
@@ -191,45 +197,45 @@ mod tests {
         assert!(d.flags.contains(DocumentFlags::IMPLIED_END));
 
         let br = d
-            .node_tape
+            .nodes
             .iter()
             .position(|n| n.is_element() && d.tag_name(n.tag_token()) == "br")
             .unwrap();
-        assert_eq!(outer(&d, br as NodeId), b"<br>");
+        assert_eq!(outer(&d, NodeId::new(br as u32)), b"<br>");
     }
 
     #[test]
     fn attributes_and_entities_are_lazy() {
         let d = doc(r#"<a href="/x?a=1&amp;b=2" title="a &lt; b" disabled>x</a>"#);
         let anchor = d
-            .node_tape
+            .nodes
             .iter()
             .position(|n| n.is_element() && d.tag_name(n.tag_token()) == "a")
             .expect("anchor");
-        let tag = d.node(anchor as NodeId).tag_token();
-        let range = d.tags[tag as usize].attr_range.clone();
+        let tag = d.node(NodeId::new(anchor as u32)).tag_token();
+        let range = d.tags.token(tag).attr_range.clone();
         assert_eq!(range.len(), 3);
         let value = |a: u32| {
-            let start = d.attr_value_start[a as usize] as usize;
-            let end = start + d.attr_value_len[a as usize] as usize;
+            let start = d.attrs.value_start[a as usize] as usize;
+            let end = start + d.attrs.value_len[a as usize] as usize;
             let raw = std::str::from_utf8(&d.input[start..end]).unwrap();
             decode_character_references(raw, true).into_owned()
         };
         assert_eq!(value(range.start), "/x?a=1&b=2");
         assert_eq!(value(range.start + 1), "a < b");
-        assert_eq!(d.attr_quote[range.start as usize + 2], AttrQuote::Empty);
-        let text = d.node_tape.iter().position(|n| n.is_text()).expect("text");
-        assert_eq!(&*d.text(text as NodeId), "x");
+        assert_eq!(d.attrs.quote[range.start as usize + 2], AttrQuote::Empty);
+        let text = d.nodes.iter().position(|n| n.is_text()).expect("text");
+        assert_eq!(&*d.text(NodeId::new(text as u32)), "x");
     }
 
     #[test]
     fn duplicate_attributes_keep_first_wins() {
         let d = doc(r#"<a href="first" HREF="second">x</a>"#);
-        let range = d.tags[0].attr_range.clone();
+        let range = d.tags.tokens[0].attr_range.clone();
         assert_eq!(range.len(), 2);
         let name = |a: u32| {
-            let start = d.attr_name_start[a as usize] as usize;
-            let end = start + d.attr_name_len[a as usize] as usize;
+            let start = d.attrs.name_start[a as usize] as usize;
+            let end = start + d.attrs.name_len[a as usize] as usize;
             &d.input[start..end]
         };
         let first = range
@@ -242,20 +248,21 @@ mod tests {
     #[test]
     fn raw_text_is_not_entity_decoded() {
         let d = doc("<script>a &amp; b</script><p>x &amp; y</p>");
-        let script_text = d.node_tape.iter().position(|n| n.is_text()).unwrap();
-        assert_eq!(&*d.text(script_text as NodeId), "a &amp; b");
-        let p_text = d.node_tape.iter().rposition(|n| n.is_text()).unwrap();
-        assert_eq!(&*d.text(p_text as NodeId), "x & y");
+        let script_text = d.nodes.iter().position(|n| n.is_text()).unwrap();
+        assert_eq!(&*d.text(NodeId::new(script_text as u32)), "a &amp; b");
+        let p_text = d.nodes.iter().rposition(|n| n.is_text()).unwrap();
+        assert_eq!(&*d.text(NodeId::new(p_text as u32)), "x & y");
     }
 
     #[test]
     fn implied_end_outer_html_is_original() {
         let d = doc("<ul><li>a<li>b</ul>");
         let find = |name: &str| {
-            d.node_tape
+            d.nodes
                 .iter()
                 .position(|n| n.is_element() && d.tag_name(n.tag_token()) == name)
-                .expect("element") as NodeId
+                .map(|id| NodeId::new(id as u32))
+                .expect("element")
         };
         assert_eq!(outer(&d, find("li")), b"<li>a");
         assert_eq!(outer(&d, find("ul")), b"<ul><li>a<li>b</ul>");
@@ -265,11 +272,11 @@ mod tests {
     fn escapable_raw_text_decodes_character_references() {
         let d = doc("<title>a &amp; b</title><script>x &amp; y</script>");
         let texts: Vec<_> = d
-            .node_tape
+            .nodes
             .iter()
             .enumerate()
             .filter(|(_, n)| n.is_text())
-            .map(|(i, _)| d.text(i as NodeId).into_owned())
+            .map(|(i, _)| d.text(NodeId::new(i as u32)).into_owned())
             .collect();
         assert_eq!(texts.len(), 2);
         assert_eq!(texts[0], "a & b", "title is RCDATA: decoded");
@@ -288,15 +295,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(none.node_tape.len() < spec.node_tape.len());
+        assert!(none.nodes.len() < spec.nodes.len());
         assert!(
             !none
-                .node_tape
+                .nodes
                 .iter()
                 .any(|n| n.is_element() && none.tag_name(n.tag_token()) == "html")
         );
         assert!(
-            spec.node_tape
+            spec.nodes
                 .iter()
                 .any(|n| n.is_element() && spec.tag_name(n.tag_token()) == "html")
         );
@@ -312,13 +319,13 @@ mod tests {
                     ..Default::default()
                 },
             ),
-            Err(ParseError::InvalidUtf8(_))
+            Err(ParseError::InvalidUtf8)
         ));
     }
 
     #[test]
     fn ns_html_is_used_by_default() {
         let d = doc("<p>x");
-        assert_eq!(d.node(1).namespace(), NS_HTML);
+        assert_eq!(d.node(NodeId::new(1)).namespace(), Namespace::HTML);
     }
 }

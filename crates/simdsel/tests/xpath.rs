@@ -1,7 +1,7 @@
 //! XPath 1.0 core behaviour, with expectations taken from lxml (`html.xpath`)
 //! on the same document.
 
-use simdsel::{Document, RefKind, Value, XPath};
+use simdsel::prelude::*;
 
 const PAGE: &str = r#"\
 <html>

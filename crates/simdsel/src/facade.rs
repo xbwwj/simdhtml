@@ -1,14 +1,16 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
-use simdhtml::{DOC_ROOT, Document, EncodingMode, NodeId, ParseOptions};
+use simdhtml::document::Document;
+use simdhtml::document::id::{DOC_ROOT, NodeId};
+use simdhtml::parse::{EncodingMode, ParseOptions};
 
-use crate::css::SelectorList;
+use crate::css::ast::SelectorList;
+use crate::css::cache::QueryCache;
+use crate::css::parser::parse_selector;
+use crate::css::select::{Count, Projection, extract, select_as_within_cache, select_within_cache};
+use crate::error::Error;
 use crate::record::{MatchKind, MatchRecord};
-use crate::{
-    Count, Error, Projection, QueryCache, parse_selector, select_as_within_cache,
-    select_within_cache,
-};
 
 /// An owned document or a result set, like parsel's `Selector`/`SelectorList`.
 #[derive(Clone, Debug)]
@@ -26,11 +28,11 @@ impl<'a> Selector<'a> {
     /// Wraps an already parsed document and selects from its root.
     ///
     /// ```no_run
-    /// use simdsel::{Document, Selector};
+    /// use simdsel::prelude::{Document, Error, Selector};
     ///
     /// let body: Vec<u8> = Vec::new(); // a fetched response body
     /// let sel = Selector::new(Document::parse_owned(body)?);
-    /// # Ok::<(), simdsel::Error>(())
+    /// # Ok::<(), Error>(())
     /// ```
     #[must_use]
     pub fn new(doc: Document<'a>) -> Self {
@@ -175,12 +177,7 @@ impl<'a> Selector<'a> {
     /// evaluation limits.
     pub fn css_as<'b, P: Projection>(&'b self, query: &str) -> Result<P::Output<'b>, Error> {
         let parsed = Self::compiled(query)?;
-        Ok(select_as_within_cache::<P>(
-            &self.doc,
-            &parsed,
-            &self.roots,
-            &self.cache,
-        )?)
+        select_as_within_cache::<P>(&self.doc, &parsed, &self.roots, &self.cache)
     }
 
     /// Counts CSS matches without materializing records.
@@ -199,7 +196,7 @@ impl<'a> Selector<'a> {
     pub fn get(&self) -> Option<Cow<'_, str>> {
         self.records
             .first()
-            .map(|record| crate::extract(&self.doc, record))
+            .map(|record| extract(&self.doc, record))
     }
 
     /// All result strings.
@@ -207,7 +204,7 @@ impl<'a> Selector<'a> {
     pub fn getall(&self) -> Vec<Cow<'_, str>> {
         self.records
             .iter()
-            .map(|record| crate::extract(&self.doc, record))
+            .map(|record| extract(&self.doc, record))
             .collect()
     }
 
@@ -240,11 +237,11 @@ impl Selector<'static> {
     /// document and the selector carries no lifetime.
     ///
     /// ```no_run
-    /// use simdsel::Selector;
+    /// use simdsel::prelude::{Error, Selector};
     ///
     /// let body: Vec<u8> = Vec::new(); // a fetched response body
     /// let sel = Selector::from_vec(body)?;
-    /// # Ok::<(), simdsel::Error>(())
+    /// # Ok::<(), Error>(())
     /// ```
     ///
     /// # Errors
@@ -301,7 +298,7 @@ pub fn select_query_within_cache(
     query: &str,
 ) -> Result<Vec<MatchRecord>, Error> {
     let parsed = Selector::compiled(query)?;
-    Ok(select_within_cache(doc, &parsed, roots, cache)?)
+    select_within_cache(doc, &parsed, roots, cache)
 }
 
 /// Text content of one match record: subtree text for elements, the decoded

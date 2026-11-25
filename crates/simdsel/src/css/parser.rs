@@ -1,33 +1,20 @@
-use std::fmt;
+use crate::error::{CssErrorKind, Error};
 
 use super::ast::{
     AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
     SelectorList,
 };
 
-/// Selector parse error.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct SelectorError {
-    /// Human-readable message.
-    pub message: String,
-    /// Byte position in the selector source.
-    pub position: usize,
-}
-
-impl fmt::Display for SelectorError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at byte {}", self.message, self.position)
-    }
-}
-
-impl std::error::Error for SelectorError {}
-
 /// Parses a CSS selector list.
 ///
 /// # Errors
 ///
-/// Returns [`SelectorError`] for unsupported or malformed selectors.
-pub fn parse_selector(input: &str) -> Result<SelectorList, SelectorError> {
+/// Returns [`Error::Css`] for unsupported or malformed selectors.
+pub fn parse_selector(input: &str) -> Result<SelectorList, Error> {
+    parse_selector_kind(input).map_err(Error::Css)
+}
+
+fn parse_selector_kind(input: &str) -> Result<SelectorList, CssErrorKind> {
     // CSS comments (`div/*x*/.item`) are whitespace-free trivia and can sit
     // between any two tokens.  Removing them up front keeps the parser free of
     // comment handling in every state; error positions then refer to the
@@ -63,8 +50,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn error(&self, message: impl Into<String>) -> SelectorError {
-        SelectorError {
+    fn error(&self, message: impl Into<String>) -> CssErrorKind {
+        CssErrorKind::Selector {
             message: message.into(),
             position: self.pos,
         }
@@ -86,7 +73,7 @@ impl<'a> Parser<'a> {
         self.pos != start
     }
 
-    fn expect(&mut self, byte: u8) -> Result<(), SelectorError> {
+    fn expect(&mut self, byte: u8) -> Result<(), CssErrorKind> {
         if self.peek() == Some(byte) {
             self.pos += 1;
             Ok(())
@@ -95,7 +82,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_list(&mut self, in_paren: bool) -> Result<Vec<Complex>, SelectorError> {
+    fn parse_list(&mut self, in_paren: bool) -> Result<Vec<Complex>, CssErrorKind> {
         let mut out = Vec::new();
         loop {
             self.skip_ws();
@@ -114,7 +101,7 @@ impl<'a> Parser<'a> {
     ///
     /// Whitespace is a descendant combinator unless followed by an explicit
     /// `>`, `+` or `~`; a pseudo-element must be the final component.
-    fn parse_complex(&mut self, in_paren: bool) -> Result<Complex, SelectorError> {
+    fn parse_complex(&mut self, in_paren: bool) -> Result<Complex, CssErrorKind> {
         let mut pseudo = None;
         let mut compounds = vec![self.parse_compound(&mut pseudo)?];
         let mut combinators = Vec::new();
@@ -162,7 +149,7 @@ impl<'a> Parser<'a> {
     fn parse_compound(
         &mut self,
         pseudo_element: &mut Option<PseudoElement>,
-    ) -> Result<Compound, SelectorError> {
+    ) -> Result<Compound, CssErrorKind> {
         let mut compound = Compound::default();
         self.parse_type_selector(&mut compound)?;
 
@@ -220,7 +207,7 @@ impl<'a> Parser<'a> {
     /// prefix is accepted and ignored: `*|*`, `*|div`, `|div` and `div` all
     /// select on the local name.  That is strictly more permissive than
     /// cssselect, which resolves prefixes through the XPath namespace map.
-    fn parse_type_selector(&mut self, compound: &mut Compound) -> Result<(), SelectorError> {
+    fn parse_type_selector(&mut self, compound: &mut Compound) -> Result<(), CssErrorKind> {
         // `|local`: the "no namespace" prefix.
         if self.peek() == Some(b'|') {
             self.pos += 1;
@@ -249,7 +236,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The local part of a namespaced type selector (`prefix|*`, `*|div`).
-    fn parse_local_name(&mut self, compound: &mut Compound) -> Result<(), SelectorError> {
+    fn parse_local_name(&mut self, compound: &mut Compound) -> Result<(), CssErrorKind> {
         if self.peek() == Some(b'*') {
             self.pos += 1;
             compound.universal = true;
@@ -262,7 +249,7 @@ impl<'a> Parser<'a> {
         Err(self.error("expected a local name after the namespace prefix"))
     }
 
-    fn parse_ident(&mut self) -> Result<String, SelectorError> {
+    fn parse_ident(&mut self) -> Result<String, CssErrorKind> {
         let mut out = Vec::new();
         while let Some(b) = self.peek() {
             if b == b'\\' {
@@ -284,7 +271,7 @@ impl<'a> Parser<'a> {
         Ok(String::from_utf8_lossy(&out).into_owned())
     }
 
-    fn parse_attr(&mut self) -> Result<AttrPred, SelectorError> {
+    fn parse_attr(&mut self) -> Result<AttrPred, CssErrorKind> {
         self.skip_ws();
         let name = self.parse_ident()?.to_ascii_lowercase();
         self.skip_ws();
@@ -365,7 +352,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_string(&mut self, quote: u8) -> Result<String, SelectorError> {
+    fn parse_string(&mut self, quote: u8) -> Result<String, CssErrorKind> {
         let mut out = Vec::new();
         while let Some(b) = self.peek() {
             self.pos += 1;
@@ -384,7 +371,7 @@ impl<'a> Parser<'a> {
         Err(self.error("unterminated string"))
     }
 
-    fn parse_pseudo(&mut self) -> Result<Pseudo, SelectorError> {
+    fn parse_pseudo(&mut self) -> Result<Pseudo, CssErrorKind> {
         let name = self.parse_ident()?.to_ascii_lowercase();
         match name.as_str() {
             "first-child" => Ok(Pseudo::FirstChild),
@@ -453,14 +440,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_nested_list(&mut self) -> Result<Vec<Complex>, SelectorError> {
+    fn parse_nested_list(&mut self) -> Result<Vec<Complex>, CssErrorKind> {
         self.expect(b'(')?;
         let list = self.parse_list(true)?;
         self.expect(b')')?;
         Ok(list)
     }
 
-    fn parse_relative_list(&mut self) -> Result<Vec<RelativeSelector>, SelectorError> {
+    fn parse_relative_list(&mut self) -> Result<Vec<RelativeSelector>, CssErrorKind> {
         self.expect(b'(')?;
         let mut out = Vec::new();
         loop {
@@ -496,7 +483,7 @@ impl<'a> Parser<'a> {
         Ok(out)
     }
 
-    fn parse_an_plus_b(&mut self) -> Result<(i32, i32), SelectorError> {
+    fn parse_an_plus_b(&mut self) -> Result<(i32, i32), CssErrorKind> {
         self.expect(b'(')?;
         let start = self.pos;
         while let Some(b) = self.peek() {
@@ -508,13 +495,13 @@ impl<'a> Parser<'a> {
         let raw = std::str::from_utf8(&self.input[start..self.pos])
             .map_err(|_| self.error("invalid nth argument"))?;
         self.expect(b')')?;
-        parse_an_plus_b_str(raw).map_err(|message| SelectorError {
+        parse_an_plus_b_str(raw).map_err(|message| CssErrorKind::Selector {
             message,
             position: start,
         })
     }
 
-    fn parse_pseudo_element(&mut self) -> Result<PseudoElement, SelectorError> {
+    fn parse_pseudo_element(&mut self) -> Result<PseudoElement, CssErrorKind> {
         let name = self.parse_ident()?.to_ascii_lowercase();
         match name.as_str() {
             "text" => Ok(PseudoElement::Text),
@@ -581,7 +568,7 @@ fn parse_an_plus_b_str(raw: &str) -> Result<(i32, i32), String> {
 }
 
 /// Removes `/* ... */` comments.  An unterminated comment is a syntax error.
-fn strip_comments(input: &str) -> Result<String, SelectorError> {
+fn strip_comments(input: &str) -> Result<String, CssErrorKind> {
     let mut out = String::with_capacity(input.len());
     let mut rest = input;
     let mut consumed = 0;
@@ -589,7 +576,7 @@ fn strip_comments(input: &str) -> Result<String, SelectorError> {
         out.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let Some(end) = after.find("*/") else {
-            return Err(SelectorError {
+            return Err(CssErrorKind::Selector {
                 message: "unterminated comment".to_string(),
                 position: consumed + start,
             });

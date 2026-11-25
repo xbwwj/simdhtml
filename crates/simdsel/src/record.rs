@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use simdhtml::NodeId;
+use simdhtml::document::id::NodeId;
 
 /// One selected item.
 #[derive(Clone, Debug, Eq, PartialEq)]

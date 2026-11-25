@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use simdhtml::{Document, NO_TAG, NodeId};
+use simdhtml::document::Document;
+use simdhtml::document::id::{NO_ATTR, NO_NODE, NO_TAG, NodeId};
 
 use crate::dom::{attr_name, attr_value};
 
@@ -33,17 +34,17 @@ impl NodeRef {
 
     /// The document node (for callers that need a context node).
     pub fn document() -> Self {
-        Self::new(RefKind::Document, 0, 0)
+        Self::new(RefKind::Document, NodeId::new(0), NO_ATTR)
     }
 
     /// An element reference.
     pub fn element(id: NodeId) -> Self {
-        Self::new(RefKind::Element, id, 0)
+        Self::new(RefKind::Element, id, NO_ATTR)
     }
 
     /// A text-node reference.
     pub fn text(id: NodeId) -> Self {
-        Self::new(RefKind::Text, id, 0)
+        Self::new(RefKind::Text, id, NO_ATTR)
     }
 
     /// An attribute-node reference (owned by element `id`, flat index `attr`).
@@ -87,8 +88,8 @@ impl NodeRef {
                 None => doc.text(self.id),
                 Some(last) => {
                     let mut out = String::new();
-                    for id in self.id..=last {
-                        out.push_str(&doc.text(id));
+                    for id in self.id.get()..=last.get() {
+                        out.push_str(&doc.text(NodeId::new(id)));
                     }
                     Cow::Owned(out)
                 }
@@ -98,7 +99,7 @@ impl NodeRef {
             // before/after the root element is not in the XPath data model.
             RefKind::Document => {
                 let root = doc.node(self.id).first_child();
-                if root == simdhtml::NO_NODE {
+                if root == NO_NODE {
                     Cow::Borrowed("")
                 } else {
                     Cow::Owned(crate::dom::text_content(doc, root))

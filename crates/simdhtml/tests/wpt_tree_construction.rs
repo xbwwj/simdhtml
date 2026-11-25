@@ -12,7 +12,14 @@
 use std::fs;
 use std::path::Path;
 
-use simdhtml::{DOC_ROOT, Document, NO_NODE, NodeKind, ParseOptions, RepairMode};
+use simdhtml::character_reference::decode_character_references;
+use simdhtml::document::Document;
+use simdhtml::document::id::{DOC_ROOT, NO_NODE, NodeId};
+use simdhtml::document::namespace::Namespace;
+use simdhtml::document::node::NodeKind;
+use simdhtml::document::text::{normalize_newlines, replace_nulls};
+use simdhtml::error::ParseError;
+use simdhtml::parse::{ParseOptions, RepairMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TNode {
@@ -304,12 +311,10 @@ fn normalize(node: TNode) -> TNode {
 
 /// Decoded attribute value.
 fn attr_value<'a>(doc: &'a Document<'_>, attr: u32) -> std::borrow::Cow<'a, str> {
-    let start = doc.attr_value_start[attr as usize] as usize;
-    let end = start + doc.attr_value_len[attr as usize] as usize;
+    let start = doc.attrs.value_start[attr as usize] as usize;
+    let end = start + doc.attrs.value_len[attr as usize] as usize;
     let raw = std::str::from_utf8(&doc.input[start..end]).expect("valid utf-8");
-    simdhtml::normalize_newlines(simdhtml::replace_nulls(
-        simdhtml::decode_character_references(raw, true),
-    ))
+    normalize_newlines(replace_nulls(decode_character_references(raw, true)))
 }
 
 /// Attribute name as the expected-tree format prints it.
@@ -373,15 +378,15 @@ fn processing_instruction(input: &[u8], span: core::ops::Range<u32>) -> Option<S
     }
 }
 
-fn simdhtml_node(doc: &Document, id: u32) -> TNode {
+fn simdhtml_node(doc: &Document, id: NodeId) -> TNode {
     let node = doc.node(id);
     match node.kind() {
         NodeKind::Element => {
             let mut attrs: Vec<(String, String)> = Vec::new();
             let mut seen: Vec<String> = Vec::new();
             let tag = node.tag_token();
-            let foreign = node.namespace() != simdhtml::NS_HTML;
-            for attr in doc.tags[tag as usize].attr_range.clone() {
+            let foreign = node.namespace() != Namespace::HTML;
+            for attr in doc.tags.token(tag).attr_range.clone() {
                 let name = attr_display_name(&doc.attr_name(attr), foreign);
                 if seen.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
                     continue;
@@ -401,8 +406,8 @@ fn simdhtml_node(doc: &Document, id: u32) -> TNode {
             // expected trees do (`svg svg`, `math math`).
             let name = doc.tag_name_lower(node.tag_token());
             let name = match node.namespace() {
-                simdhtml::NS_SVG => format!("svg {name}"),
-                simdhtml::NS_MATHML => format!("math {name}"),
+                Namespace::SVG => format!("svg {name}"),
+                Namespace::MATHML => format!("math {name}"),
                 _ => name.into_owned(),
             };
             TNode::Element {
@@ -418,10 +423,7 @@ fn simdhtml_node(doc: &Document, id: u32) -> TNode {
             let text = |r: core::ops::Range<u32>| {
                 let raw = std::str::from_utf8(&input[r.start as usize..r.end as usize])
                     .expect("valid utf-8");
-                simdhtml::normalize_newlines(simdhtml::replace_nulls(std::borrow::Cow::Borrowed(
-                    raw,
-                )))
-                .into_owned()
+                normalize_newlines(replace_nulls(std::borrow::Cow::Borrowed(raw))).into_owned()
             };
             if node.is_doctype() {
                 // The expected-tree format writes the name plus the quoted
@@ -638,8 +640,8 @@ struct FileStats {
 
 /// Parses under the only caliber there is: the tree the standard's algorithms
 /// produce.
-fn parse_mode(data: &str) -> Result<simdhtml::Document<'_>, simdhtml::ParseError> {
-    simdhtml::Document::parse_with(
+fn parse_mode(data: &str) -> Result<Document<'_>, ParseError> {
+    Document::parse_with(
         data.as_bytes(),
         ParseOptions {
             repair: RepairMode::Spec,

@@ -11,7 +11,8 @@ use std::{
     io::{self, Write},
 };
 
-use simdsel::{Document, NodeKind, RefKind, Value, XPath};
+use simdhtml::character_reference::decode_character_references;
+use simdsel::prelude::*;
 
 fn json_string(out: &mut String, text: &str) {
     out.push('"');
@@ -32,10 +33,11 @@ fn json_string(out: &mut String, text: &str) {
 fn dump_tree(out: &mut String, doc: &Document<'_>) {
     out.push_str("\"tree\":[");
 
-    for id in 0..doc.node_tape.len() as u32 {
+    for raw in 0..doc.nodes.len() as u32 {
+        let id = NodeId::new(raw);
         let node = doc.node(id);
 
-        if id > 0 {
+        if raw > 0 {
             out.push(',');
         }
 
@@ -58,14 +60,14 @@ fn dump_tree(out: &mut String, doc: &Document<'_>) {
 
             let mut first = true;
 
-            for attr in doc.tags[node.tag_token() as usize].attr_range.clone() {
-                let name_start = doc.attr_name_start[attr as usize] as usize;
-                let name_end = name_start + doc.attr_name_len[attr as usize] as usize;
+            for attr in doc.tags.token(node.tag_token()).attr_range.clone() {
+                let name_start = doc.attrs.name_start[attr as usize] as usize;
+                let name_end = name_start + doc.attrs.name_len[attr as usize] as usize;
                 let name = std::str::from_utf8(&doc.input[name_start..name_end]).expect("utf-8");
-                let value_start = doc.attr_value_start[attr as usize] as usize;
-                let value_end = value_start + doc.attr_value_len[attr as usize] as usize;
+                let value_start = doc.attrs.value_start[attr as usize] as usize;
+                let value_end = value_start + doc.attrs.value_len[attr as usize] as usize;
                 let raw = std::str::from_utf8(&doc.input[value_start..value_end]).expect("utf-8");
-                let value = simdhtml::decode_character_references(raw, true);
+                let value = decode_character_references(raw, true);
                 if !first {
                     out.push(',');
                 }

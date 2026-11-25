@@ -1,4 +1,4 @@
-use simdsel::{ParseOptions, RepairMode, Selector};
+use simdsel::prelude::*;
 
 const HTML: &str = r#"\
 <html>
@@ -72,16 +72,16 @@ fn missing_attrs() {
 fn projection_gat_modes() {
     let root = root(HTML);
 
-    assert_eq!(root.css_as::<simdsel::Count>(".item").unwrap(), 2);
+    assert_eq!(root.css_as::<Count>(".item").unwrap(), 2);
     assert_eq!(
-        root.css_as::<simdsel::Texts>(".item .title::text").unwrap(),
+        root.css_as::<Texts>(".item .title::text").unwrap(),
         vec!["First & best", "Second"]
     );
     assert_eq!(
-        root.css_as::<simdsel::Html>(".item .title").unwrap()[0],
+        root.css_as::<Html>(".item .title").unwrap()[0],
         "<h2 class=\"title\">First &amp; best</h2>"
     );
-    assert_eq!(root.css_as::<simdsel::Records>(".item").unwrap().len(), 2);
+    assert_eq!(root.css_as::<Records>(".item").unwrap().len(), 2);
     assert_eq!(root.css_count(".item").unwrap(), 2);
 }
 
@@ -90,7 +90,7 @@ fn selector_owns_its_document() {
     // Owned bytes: the selector stays valid after the buffer that produced it
     // is gone, which is what a crawl step needs.
     fn build(body: Vec<u8>) -> Selector<'static> {
-        Selector::new(simdsel::Document::parse_owned(body).expect("parse"))
+        Selector::new(Document::parse_owned(body).expect("parse"))
     }
     let owned = build(b"<div class=item><a href=/x>hi</a></div>".to_vec());
     assert_eq!(
@@ -100,7 +100,7 @@ fn selector_owns_its_document() {
 
     // `From<Document>` is the same as `Selector::new`.
     let html = String::from("<p class=x>hi</p>");
-    let doc = simdsel::Document::parse(html.as_bytes()).expect("parse");
+    let doc = Document::parse(html.as_bytes()).expect("parse");
     let from: Selector<'_> = doc.into();
     assert_eq!(from.css("p::text").unwrap().get(), Some("hi".into()));
 

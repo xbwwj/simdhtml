@@ -1,12 +1,15 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use simdhtml::{Document, NO_TAG, NodeId, decode_character_references};
+use simdhtml::character_reference::decode_character_references;
+use simdhtml::document::Document;
+use simdhtml::document::id::{NO_TAG, NodeId};
+use simdhtml::document::text::replace_nulls;
 
 /// Raw attribute-name bytes (not lowercased, not interned).
 pub(crate) fn attr_name<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
-    let start = doc.attr_name_start[attr as usize] as usize;
-    let end = start + doc.attr_name_len[attr as usize] as usize;
+    let start = doc.attrs.name_start[attr as usize] as usize;
+    let end = start + doc.attrs.name_len[attr as usize] as usize;
     &doc.input[start..end]
 }
 
@@ -15,15 +18,15 @@ pub(crate) fn attr_name<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
 /// decoded text check for `&` first and fall back to [`attr_value`].
 #[inline]
 pub(crate) fn attr_value_raw<'a>(doc: &'a Document<'_>, attr: u32) -> &'a [u8] {
-    let start = doc.attr_value_start[attr as usize] as usize;
-    let end = start + doc.attr_value_len[attr as usize] as usize;
+    let start = doc.attrs.value_start[attr as usize] as usize;
+    let end = start + doc.attrs.value_len[attr as usize] as usize;
     &doc.input[start..end]
 }
 
 /// Attribute value bytes with character references decoded.
 pub(crate) fn attr_value<'a>(doc: &'a Document<'_>, attr: u32) -> Cow<'a, str> {
-    let start = doc.attr_value_start[attr as usize] as usize;
-    let end = start + doc.attr_value_len[attr as usize] as usize;
+    let start = doc.attrs.value_start[attr as usize] as usize;
+    let end = start + doc.attrs.value_len[attr as usize] as usize;
     decode_span(doc, start..end)
 }
 
@@ -34,7 +37,7 @@ pub(crate) fn attr_value_span<'a>(doc: &'a Document<'_>, span: &Range<u32>) -> C
 
 fn decode_span<'a>(doc: &'a Document<'_>, span: Range<usize>) -> Cow<'a, str> {
     let raw = std::str::from_utf8(&doc.input[span]).expect("Document input is valid UTF-8");
-    simdhtml::replace_nulls(decode_character_references(raw, true))
+    replace_nulls(decode_character_references(raw, true))
 }
 
 /// Attribute index range owned by an element; empty for non-elements.
@@ -43,7 +46,7 @@ pub(crate) fn attr_range(doc: &Document<'_>, node: NodeId) -> Range<u32> {
     if tag == NO_TAG {
         return 0..0;
     }
-    doc.tags[tag as usize].attr_range.clone()
+    doc.tags.token(tag).attr_range.clone()
 }
 
 /// ASCII-case-insensitive equality against a known lowercase identifier, one
@@ -93,7 +96,8 @@ pub(crate) fn text_content(doc: &Document<'_>, node: NodeId) -> String {
         return doc.text(node).into_owned();
     }
     let mut out = String::new();
-    for child in node..n.subtree_end() {
+    for child in node.get()..n.subtree_end().get() {
+        let child = NodeId::new(child);
         if doc.node(child).is_text() {
             out.push_str(&doc.text(child));
         }

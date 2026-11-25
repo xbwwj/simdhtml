@@ -1,4 +1,4 @@
-use simdsel::Selector;
+use simdsel::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let html = r#"\

@@ -12,11 +12,11 @@ use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyAnyMethods, PyByteArray, PyBytes, PyDict, PyList, PySlice, PySliceMethods,
 };
-use simdhtml::{DOC_ROOT, Document, EncodingMode, ParseOptions};
-use simdsel::{
-    MatchKind, MatchRecord, NodeId, NodeRef, QueryCache, RefKind, Value, XPath, extract,
-    record_attrib, record_text, root_element, select_query_within_cache,
-};
+use simdhtml::character_reference::decode_character_references;
+use simdhtml::document::Document;
+use simdhtml::document::id::{DOC_ROOT, NodeId};
+use simdhtml::parse::{EncodingMode, ParseOptions, RepairMode};
+use simdsel::prelude::*;
 
 /// parsel's default XPath namespace map (EXSLT), reported by `.namespaces`.
 const DEFAULT_NAMESPACES: [(&str, &str); 2] = [
@@ -910,10 +910,10 @@ fn explicit_encoding(label: Option<&str>) -> PyResult<Option<&'static Encoding>>
 ///
 /// `none` is the default (no repair; the tree is the flat start/end-tag
 /// result) and `spec` is full WHATWG compatibility.
-fn repair_mode(mode: Option<&str>) -> PyResult<simdhtml::RepairMode> {
+fn repair_mode(mode: Option<&str>) -> PyResult<RepairMode> {
     Ok(match mode.unwrap_or("none").to_ascii_lowercase().as_str() {
-        "none" | "" => simdhtml::RepairMode::None,
-        "spec" => simdhtml::RepairMode::Spec,
+        "none" | "" => RepairMode::None,
+        "spec" => RepairMode::Spec,
         other => {
             return Err(PyValueError::new_err(format!(
                 "unknown parse mode {other:?}: expected \"none\" or \"spec\""
@@ -1012,10 +1012,7 @@ fn keep_lt_amp_entities(text: &str) -> String {
         if name.eq_ignore_ascii_case("amp") || name.eq_ignore_ascii_case("lt") {
             out.push_str(&text[start..=end]);
         } else {
-            out.push_str(&simdhtml::decode_character_references(
-                &text[start..=end],
-                false,
-            ));
+            out.push_str(&decode_character_references(&text[start..=end], false));
         }
         pos = end + 1;
     }
@@ -1023,7 +1020,7 @@ fn keep_lt_amp_entities(text: &str) -> String {
     out
 }
 
-fn to_py_err(error: simdsel::Error) -> PyErr {
+fn to_py_err(error: Error) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
