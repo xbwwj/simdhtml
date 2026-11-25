@@ -67,14 +67,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Development
 
+We use xtask for automating chores.
+
 ```bash
-cargo test                 # Rust tests
-cargo xtask compat --parsel  # parsel compatibility tests
-cargo xtask data           # fetch inputs and build the SWDE working set
-cargo xtask data --clear   # remove downloaded/derived data
-cargo xtask bench --quick  # sampled benchmark
+# test parsel compatbility
+cargo xtask compat --parsel
+
+# data management
+cargo xtask data          
+cargo xtask data --clear
+
+# sampled benchmark for fast iteration
+cargo xtask bench --quick
+
+# benchmark compared with other parsers
 cargo xtask bench --compare
-cargo xtask plot           # figures/cc.svg, figures/swde.svg
+
+# plot performance graph
+cargo xtask plot
 ```
 
-More commands: `cargo xtask --help`. Data layout: [`data/README.md`](./data/README.md).
+## Credits
+
+- [`simdjson`](https://github.com/simdjson/simdjson)
+- [`cuJSON`](https://github.com/AutomataLab/cuJSON)
+- [`algorithmica`](https://github.com/algorithmica-org/algorithmica)
+- [`html5ever`](https://github.com/servo/html5ever)
+- [`parsel`](https://github.com/scrapy/parsel)
+
+## License
+
+[MIT](./LICENSE-MIT) or [Apache 2.0](./LICENSE-APACHE) at your option.
