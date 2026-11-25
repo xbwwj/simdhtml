@@ -1,6 +1,6 @@
 //! Dumps each document's tree plus XPath results as JSON for debugging.
 //!
-//! Usage: `cargo run --release --example xpath -- <cc|swde|html-dir> <exprs-file> [limit]`
+//! Usage: `cargo run -p simdhtml-tests --release --example xpath -- <cc|swde|html-dir> <exprs-file> [limit]`
 //!
 //! A dataset name streams the corpus through `simdhtml-data` (no extraction);
 //! a directory is read as a flat set of `.html` files.

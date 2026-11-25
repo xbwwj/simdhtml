@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "tests",
   "data",
   "crates/simdhtml",
   "crates/simdsel",
@@ -42,6 +43,6 @@ warc = "0.4"
 
 # internal crates
 
-simdhtml = { path = "crates/simdhtml" }
+simdhtml = { path = "crates/simdhtml", version = "0.1.0" }
 simdhtml-data = { path = "data" }
-simdsel = { path = "crates/simdsel" }
+simdsel = { path = "crates/simdsel", version = "0.1.0" }

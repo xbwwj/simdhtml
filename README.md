@@ -77,6 +77,10 @@ cargo xtask compat --parsel
 cargo xtask data          
 cargo xtask data --clear
 
+# corpus tests (need `cargo xtask data`)
+cargo test --release -p simdhtml-tests -- --ignored
+cargo test -p simdhtml-tests --features quick -- --ignored
+
 # sampled benchmark for fast iteration
 cargo xtask bench --quick
 

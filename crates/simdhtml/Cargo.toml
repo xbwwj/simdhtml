@@ -3,7 +3,15 @@ name = "simdhtml"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Fast read-only HTML parsing into a preorder FlatDoc"
+
+description = "A blazing fast HTML parser powered by SIMD."
+
+repository = "https://github.com/xbwwj/simdhtml"
+homepage = "https://github.com/xbwwj/simdhtml"
+readme = "../../README.md"
+
+keywords = ["html", "parser", "simd", "scraping"]
+categories = ["parsing", "web-programming"]
 
 [dependencies]
 bitflags = { workspace = true }
@@ -15,4 +23,3 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-simdhtml-data = { workspace = true }

@@ -5,7 +5,7 @@
 //! maintained in WPT).  It compares `simdhtml` against the expected tree.
 //!
 //! ```text
-//! cargo test -p simdhtml --test wpt_tree_construction -- --ignored --nocapture
+//! cargo test -p simdhtml-tests --test wpt_tree_construction -- --ignored --nocapture
 //! ```
 
 use std::fs;

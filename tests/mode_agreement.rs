@@ -7,14 +7,29 @@
 //! and running both modes never panics.
 //!
 //! ```text
-//! cargo test -p simdhtml --test mode_agreement -- --nocapture
+//! cargo test --release -p simdhtml-tests --test mode_agreement -- --ignored --nocapture
+//! cargo test -p simdhtml-tests --features quick --test mode_agreement -- --ignored
 //! ```
+//!
+//! A debug build parses roughly an order of magnitude slower, so the default
+//! 256 MiB sample needs `--release`; `quick` samples 16 MiB instead.
 
 use simdhtml::document::Document;
 use simdhtml::document::id::{NO_NODE, NodeId};
 use simdhtml::document::node::NodeKind;
 use simdhtml::parse::{ParseOptions, RepairMode};
 use simdhtml_data::{Dataset, SamplePolicy};
+
+fn policy() -> SamplePolicy {
+    if cfg!(feature = "quick") {
+        return SamplePolicy::quick();
+    }
+    SamplePolicy {
+        limit: 500,
+        bytes: 256 * 1024 * 1024,
+        ..SamplePolicy::default()
+    }
+}
 
 fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
     for raw in 0..doc.nodes.len() as u32 {
@@ -70,13 +85,16 @@ fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
 #[test]
 #[ignore = "needs data/commoncrawl"]
 fn corpus_preorder_invariants() {
-    let policy = SamplePolicy {
-        limit: 500,
-        bytes: 256 * 1024 * 1024,
-        ..SamplePolicy::default()
-    };
-    let corpus = simdhtml_data::Corpus::load_with(Dataset::CommonCrawl, &policy)
+    let start = std::time::Instant::now();
+    let corpus = simdhtml_data::Corpus::load_with(Dataset::CommonCrawl, &policy())
         .unwrap_or_else(|err| panic!("{err}"));
+    println!(
+        "corpus: {} docs, {:.1} MiB loaded in {:.1}s",
+        corpus.len(),
+        corpus.mib(),
+        start.elapsed().as_secs_f64()
+    );
+    let parse_start = std::time::Instant::now();
 
     let mut parsed = 0usize;
     for source in &corpus.docs {
@@ -98,5 +116,8 @@ fn corpus_preorder_invariants() {
         }
         parsed += 1;
     }
-    println!("documents: {parsed} (preorder invariants hold in both modes)");
+    println!(
+        "documents: {parsed} (preorder invariants hold in both modes) in {:.1}s",
+        parse_start.elapsed().as_secs_f64()
+    );
 }

@@ -3,12 +3,17 @@ name = "simdsel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CSS selector compilation and set-at-a-time matching over simdhtml FlatDoc"
+
+description = "A blazing fast HTML selector powered by SIMD."
+
+repository = "https://github.com/xbwwj/simdhtml"
+homepage = "https://github.com/xbwwj/simdhtml"
+readme = "../../README.md"
+
+keywords = ["html", "parser", "simd", "scraping", "selector"]
+categories = ["parsing", "web-programming"]
 
 [dependencies]
 rustc-hash = { workspace = true }
 simdhtml = { workspace = true }
 thiserror = { workspace = true }
-
-[dev-dependencies]
-simdhtml-data = { workspace = true }
