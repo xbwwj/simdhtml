@@ -1,12 +1,42 @@
-//! WPT html5lib tree-construction compatibility test.
-//!
-//! The `.dat` files come from the `data/wpt` submodule
-//! (`html/syntax/parsing/resources`, the html5lib tree-construction suite,
-//! maintained in WPT).  It compares `simdhtml` against the expected tree.
-//!
-//! ```text
-//! cargo test -p simdhtml-tests --test wpt_tree_construction -- --ignored --nocapture
-//! ```
+/*!
+WPT html5lib tree-construction compatibility test.
+The `.dat` files come from the `data/wpt` submodule
+(`html/syntax/parsing/resources`, the html5lib tree-construction suite,
+maintained in WPT). It compares `simdhtml` against the expected tree.
+
+```sh
+cargo test -p simdhtml-tests --test wpt_tree_construction -- --ignored --nocapture
+```
+
+The `.data` file looks like:
+
+```text
+#data
+Test
+#errors
+(1,0): expected-doctype-but-got-chars
+#document
+| <html>
+|   <head>
+|   <body>
+|     "Test"
+
+#data
+<p>One<p>Two
+#errors
+(1,3): expected-doctype-but-got-start-tag
+#document
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "One"
+|     <p>
+|       "Two"
+
+... many other tests
+```
+*/
 
 use std::fs;
 use std::path::Path;

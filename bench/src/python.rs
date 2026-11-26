@@ -1,7 +1,7 @@
 //! Small helpers for the embedded-CPython benchmarks/tests.
 //!
 //! PyO3's auto-initialized interpreter does not inherit a uv virtualenv's
-//! site-packages.  `cargo xtask bench` exports `PYTHONPATH`; this fallback
+//! site-packages. `cargo xtask bench` exports `PYTHONPATH`; this fallback
 //! keeps a direct run working when `PYO3_PYTHON` points at the venv.
 
 use pyo3_embed::{Python, types::PyAnyMethods};

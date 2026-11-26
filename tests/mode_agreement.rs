@@ -2,7 +2,7 @@
 //!
 //! The specification-shaped constructor builds a mutable tree and flattens it,
 //! so a bug easily produces an ill-formed preorder tape (which every downstream
-//! pass assumes).  This walks the corpus and checks the invariants directly:
+//! pass assumes). This walks the corpus and checks the invariants directly:
 //! children ids are ascending, `subtree_end` contains the subtree, parents agree,
 //! and running both modes never panics.
 //!
@@ -10,9 +10,6 @@
 //! cargo test --release -p simdhtml-tests --test mode_agreement -- --ignored --nocapture
 //! cargo test -p simdhtml-tests --features quick --test mode_agreement -- --ignored
 //! ```
-//!
-//! A debug build parses roughly an order of magnitude slower, so the default
-//! 256 MiB sample needs `--release`; `quick` samples 16 MiB instead.
 
 use simdhtml::document::Document;
 use simdhtml::document::id::{NO_NODE, NodeId};

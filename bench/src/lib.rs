@@ -1,6 +1,5 @@
 //! Shared benchmark support: data discovery, corpus streaming and criterion
-//! registration for the `bench/` package.  Nothing here is part of the
-//! published parser or selector crates.
+//! registration for the `bench/` package.
 //!
 //! Inputs are the real corpora read straight from their compressed sources
 //! (Common Crawl `.warc.gz`, SWDE `.7z`); see `simdhtml-data`.

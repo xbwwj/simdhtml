@@ -1,10 +1,3 @@
-// Common Crawl is a source of real pages, not a model of the production
-// workload: a crawler may spend most of its time on rendered React output,
-// while the WARC only contains the server-rendered HTML.  The public sample is
-// therefore deliberately stratified by size bucket: keep 200 URL-hash-selected
-// documents per bucket, then even-stride down to the document/byte budget.
-// The bucket labels also drive the internal size-group diagnostics.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 
