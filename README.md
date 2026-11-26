@@ -92,6 +92,13 @@ cargo xtask bench --compare
 cargo xtask plot
 ```
 
+## Roadmap
+
+- More bindings: JS/C/CLI/Go
+- Query aware parser: do not pay for unnecessary parsing
+- Mutable support: so that we can support bs4 and dom like api
+- GPU: large scale, offline analysis, but not of priority
+
 ## Credits
 
 - [`simdjson`](https://github.com/simdjson/simdjson)
