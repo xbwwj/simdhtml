@@ -1,8 +1,8 @@
 //! Parse-only comparison against html5ever + rcdom on the real corpora.
 //!
 //! ```text
-//! cargo bench -p simdhtml-bench --bench parse_compare --features external
-//! cargo bench -p simdhtml-bench --features external,quick --bench parse_compare -- --quick
+//! cargo xtask bench parse_compare
+//! cargo xtask bench --quick parse_compare
 //! ```
 
 use std::hint::black_box;

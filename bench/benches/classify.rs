@@ -1,8 +1,8 @@
 //! SIMD primitive throughput on real corpus bytes.
 //!
 //! ```text
-//! cargo bench -p simdhtml-bench --bench classify
-//! cargo bench -p simdhtml-bench --features quick --bench classify -- --quick
+//! cargo xtask bench classify
+//! cargo xtask bench --quick classify
 //! ```
 //!
 //! This is a kernel-level bench (dispatch vs scalar `classify`, and

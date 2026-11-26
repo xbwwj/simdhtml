@@ -1,21 +1,16 @@
-# Benchmark and conformance data
+# Data
 
-This directory is also the `simdhtml-data` crate (`Cargo.toml`, `src/`).
+Benchmark and conformance corpora. This directory is also the `simdhtml-data`
+crate (`src/`).
 
-Everything here is read in the shape it is shipped in; no synthetic documents.
-
-| Path | Role |
+| Path | Source |
 |---|---|
-| `data/commoncrawl/warc/*.warc.gz` | Common Crawl stream for parse/markup/select benchmarks |
-| `data/swde/source` | SWDE submodule (`.7z` archives) |
-| `data/swde/html` | bounded SWDE working set used by benchmarks |
-| `data/wpt` | WPT submodule, tree-construction `.dat` files |
-| `bench/selectors` | CSS workload definition, checked in |
+| `commoncrawl/warc/*.warc.gz` | Common Crawl WARC |
+| `swde/source` | SWDE submodule (`.7z` archives) |
+| `swde/html` | SWDE working set, extracted from `swde/source` |
+| `wpt` | WPT submodule (html5lib tree-construction `.dat` files) |
 
-`data/commoncrawl/` and `data/swde/html/` are local and gitignored.
+`commoncrawl/` and `swde/html/` are local and gitignored.
 
-`cargo xtask data` fetches the submodules and WARC, then extracts about 500
-SWDE documents (under 40 MiB) from the solid `.7z` archives. The full SWDE
-tree is 8 GiB and pure-Rust LZMA is too slow, so the benchmark reads the
-bounded working set instead of decoding archives. `cargo xtask data --clear`
-removes the downloaded WARC and the working set.
+`cargo xtask data` fetches the submodules and the WARC, then extracts the SWDE
+working set. `cargo xtask data --clear` removes them.

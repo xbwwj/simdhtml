@@ -21,4 +21,3 @@ path = "wpt_tree_construction.rs"
 [dependencies]
 simdhtml = { workspace = true }
 simdhtml-data = { workspace = true }
-simdsel = { workspace = true }

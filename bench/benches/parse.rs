@@ -1,8 +1,8 @@
 //! Parse throughput on the real corpora, one group per repair mode.
 //!
 //! ```text
-//! cargo bench -p simdhtml-bench --bench parse
-//! cargo bench -p simdhtml-bench --features quick --bench parse -- --quick
+//! cargo xtask bench parse
+//! cargo xtask bench --quick parse
 //! ```
 //!
 //! `RepairMode::None` is the default and therefore the headline number; `Spec`

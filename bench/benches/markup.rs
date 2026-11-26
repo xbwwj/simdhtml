@@ -1,8 +1,8 @@
 //! Markup scan (`markup::scan`) throughput on the real corpora.
 //!
 //! ```text
-//! cargo bench -p simdhtml-bench --bench markup
-//! cargo bench -p simdhtml-bench --features quick --bench markup -- --quick
+//! cargo xtask bench markup
+//! cargo xtask bench --quick markup
 //! ```
 //!
 //! Input is streamed from the Common Crawl `.warc.gz` and the SWDE `.7z`

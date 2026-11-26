@@ -1,8 +1,7 @@
 //! Python-engine comparison through an embedded CPython interpreter.
 //!
 //! ```text
-//! PYO3_PYTHON=.venv/bin/python \
-//!   cargo bench -p simdhtml-bench --features external,python --bench python_compare
+//! cargo xtask bench python_compare
 //! ```
 //!
 //! Criterion owns the measurement; the Python libraries are called through
@@ -11,9 +10,8 @@
 //! `html.parser` + soupsieve).  Rust `simdsel` is measured by
 //! the other bench targets; this file is only the Python side.
 //!
-//! The Python packages are installed by:
-//!     uv sync --group bench
-//! and `cargo xtask bench --compare` sets the venv for the embedding.
+//! `cargo xtask bench` provisions the bench virtualenv (`uv sync --group
+//! bench`) and points PyO3 and `PYTHONPATH` at it.
 
 use std::hint::black_box;
 

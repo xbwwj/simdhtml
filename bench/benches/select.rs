@@ -1,8 +1,8 @@
 //! Selector throughput on the real corpora.
 //!
 //! ```text
-//! cargo bench -p simdhtml-bench --bench select
-//! cargo bench -p simdhtml-bench --features quick --bench select -- --quick
+//! cargo xtask bench select
+//! cargo xtask bench --quick select
 //! ```
 //!
 //! Two shapes:

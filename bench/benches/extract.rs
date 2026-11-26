@@ -1,8 +1,8 @@
 //! Extraction throughput: parse + fixed CSS selectors on real workloads.
 //!
 //! ```text
-//! cargo bench -p simdhtml-bench --bench extract --features external
-//! cargo bench -p simdhtml-bench --features external,quick --bench extract -- --quick
+//! cargo xtask bench extract
+//! cargo xtask bench --quick extract
 //! ```
 //!
 //! Engines: simdsel in both repair modes, scraper (html5ever + servo
