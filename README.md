@@ -1,5 +1,17 @@
 # simdhtml
 
+[![PyPI](https://img.shields.io/pypi/v/simdsel?logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/simdsel/)
+[![crates.io simdsel](https://img.shields.io/crates/v/simdsel?logo=rust)](https://crates.io/crates/simdsel)
+[![docs.rs](https://img.shields.io/docsrs/simdsel?label=docs.rs&logo=rust&logoColor=white)](https://docs.rs/simdsel)
+[![CI](https://img.shields.io/github/actions/workflow/status/xbwwj/simdhtml/ci.yml?branch=main&label=CI)](https://github.com/xbwwj/simdhtml/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+[Python Docs](https://xbwwj.github.io/simdhtml/) ·
+[Rust Docs](https://docs.rs/simdsel) ·
+[Installation](https://pypi.org/project/simdsel/) ·
+[Usage](#usage) ·
+[Benchmarks](#benchmarks)
+
 **A gigabytes fast HTML parser and selector, powered by Rust and SIMD.**
 
 Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings native SIMD speed to the HTML extraction pipeline—10x faster than parsel, the scrapy default.
@@ -10,20 +22,7 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 - **Automatic**: Adapt to available CPU features at runtime. No configuration needed.
 - **Reliable**: Built in Rust, with `unsafe` strictly confined to low-level SIMD intrinsics.
 
-[![PyPI](https://img.shields.io/pypi/v/simdsel?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/simdsel/)
-[![Python](https://img.shields.io/pypi/pyversions/simdsel?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/simdsel/)
-[![docs.rs](https://img.shields.io/docsrs/simdsel?style=flat-square&color=386C5F)](https://docs.rs/simdsel)
-[![simdsel](https://img.shields.io/crates/v/simdsel?style=flat-square&logo=rust&logoColor=white&color=C65A2E)](https://crates.io/crates/simdsel)
-[![simdhtml](https://img.shields.io/crates/v/simdhtml?style=flat-square&logo=rust&logoColor=white&color=C65A2E)](https://crates.io/crates/simdhtml)
-[![CI](https://img.shields.io/github/actions/workflow/status/xbwwj/simdhtml/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/xbwwj/simdhtml/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-lightgrey?style=flat-square)](#license)
-
-[Python Docs](https://xbwwj.github.io/simdhtml/) ·
-[Installation](https://pypi.org/project/simdsel/) ·
-[Usage](#usage) ·
-[Benchmarks](#benchmarks)
-
-## Benchmarks
+## Performance results
 
 [![Common Crawl](./figures/cc.svg)](./figures/cc.svg)
 
@@ -95,11 +94,6 @@ cargo xtask bench --compare
 
 # plot performance graph
 cargo xtask plot
-
-# build the Python docs
-maturin develop
-uv run --with-requirements crates/simdsel-py/docs/requirements.txt \
-  sphinx-build -b html crates/simdsel-py/docs /tmp/simdsel-docs
 ```
 
 ## Roadmap
