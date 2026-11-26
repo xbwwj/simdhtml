@@ -75,3 +75,16 @@ def test_parsel_xpath(query):
     ours = call(Selector(text=HTML), query)
     theirs = call(parsel.Selector(text=HTML), query)
     assert ours == theirs, query
+
+
+@pytest.mark.parametrize(
+    "html,expr,texts",
+    [
+        ('<b class="x">1<p class="y">2</b>3', "//b", ["1", "2"]),
+        ("<b><i>x</b>y", "//i", ["x", "y"]),
+    ],
+)
+def test_xpath_reused_tag_tokens(html, expr, texts):
+    sel = Selector(text=html, mode="spec")
+    assert [node.text for node in sel.xpath(expr)] == texts
+    assert sel.xpath(f"count({expr})").get() == f"{float(len(texts))}"

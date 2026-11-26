@@ -389,7 +389,8 @@ pub(crate) fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Op
 }
 
 /// Attributes of one element match record, deduplicated first-wins.  `None` for
-/// text and attribute records.
+/// text and attribute records.  Names are lowercased like parsel/lxml: HTML
+/// attribute names are case-insensitive.
 pub(crate) fn record_attrib(
     doc: &Document<'_>,
     record: &MatchRecord,
@@ -407,7 +408,7 @@ pub(crate) fn record_attrib(
         {
             continue;
         }
-        let name = String::from_utf8_lossy(name).into_owned();
+        let name = String::from_utf8_lossy(name).to_ascii_lowercase();
         seen.push(name.clone());
         out.push((name, crate::dom::attr_value(doc, attr).into_owned()));
     }

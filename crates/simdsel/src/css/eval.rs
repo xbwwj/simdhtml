@@ -372,8 +372,24 @@ impl<'a> Eval<'a> {
         } else {
             tag_code_mask(self.doc, code, &mut mask);
         }
+        self.add_cloned_tags(name, code, &mut mask);
         self.cache.put_tag_mask(name.to_string(), mask.clone());
         mask
+    }
+
+    /// Elements cloned from an existing start tag (the adoption agency) share
+    /// that token, so token-keyed masks miss them.
+    fn add_cloned_tags(&self, name: &str, code: u8, mask: &mut BitSet) {
+        for &(tag, node) in self.doc.extra_tag_elements() {
+            let hit = if code == 0 {
+                self.doc.tag_name_lower(tag).eq_ignore_ascii_case(name)
+            } else {
+                self.doc.tags.code[tag.index()] == code
+            };
+            if hit {
+                mask.set(node);
+            }
+        }
     }
 
     /// Elements carrying an attribute key: the query-side attribute index, so a
@@ -395,6 +411,11 @@ impl<'a> Eval<'a> {
             },
             &mut mask,
         );
+        for &(_, node) in self.doc.extra_tag_elements() {
+            if crate::dom::find_attr_bytes(self.doc, node, name.as_bytes()).is_some() {
+                mask.set(node);
+            }
+        }
         self.cache.put_attr_mask(name.to_string(), mask.clone());
         mask
     }

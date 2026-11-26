@@ -187,6 +187,15 @@ impl Evaluator<'_, '_> {
                 (element != NO_NODE && self.doc.tags.code[tag] == code).then_some(element)
             })
             .collect();
+        // Cloned elements share their start tag's token, so they are not in
+        // `tags.element`; the adoption agency can create them.
+        ids.extend(
+            self.doc
+                .extra_tag_elements()
+                .iter()
+                .filter(|(tag, _)| self.doc.tags.code[tag.index()] == code)
+                .map(|&(_, node)| node),
+        );
         ids.sort_unstable();
         ids.dedup();
 

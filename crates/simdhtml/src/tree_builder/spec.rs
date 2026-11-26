@@ -337,6 +337,13 @@ pub(super) struct SpecTree<'a> {
     /// `(destination node, source tag)` pairs whose attributes are merged by
     /// the `html`/`body` start tag rules.
     merges: Vec<(u32, u32)>,
+    /// Internal `(node, tag token)` for elements created from a start tag that
+    /// already produced an element: adoption-agency clones and reconstructed
+    /// formatting elements.  They share the token (and attributes) with the
+    /// original, so token-keyed indexes need them; `emit` maps the internal
+    /// ids to final ones.  `seen_tag` is the per-token "already created" flag.
+    extra_tag_elements: Vec<(u32, u32)>,
+    seen_tag: Vec<bool>,
     /// Foster-parent the next inserted element (used when the in-body rules are
     /// run from a table mode: "process the token using the rules for the in body
     /// insertion mode" with foster parenting).
@@ -347,8 +354,15 @@ pub(super) struct SpecTree<'a> {
 }
 
 /// What tree construction hands back: document flags, diagnostics, per-token
-/// adjusted SVG names, and `(destination node, source tag)` attribute merges.
-type TreeResult = (DocumentFlags, Vec<Diagnostic>, Vec<u8>, Vec<(u32, u32)>);
+/// adjusted SVG names, `(destination node, source tag)` attribute merges, and
+/// `(tag token, node)` for the second and later elements from one start tag.
+type TreeResult = (
+    DocumentFlags,
+    Vec<Diagnostic>,
+    Vec<u8>,
+    Vec<(u32, u32)>,
+    Vec<(TagId, NodeId)>,
+);
 
 pub(super) fn build(
     input: &[u8],
@@ -359,7 +373,7 @@ pub(super) fn build(
 ) -> TreeResult {
     if mode == RepairMode::None {
         let (flags, diagnostics) = build_without_repair(input, tokens, index, builder);
-        return (flags, diagnostics, Vec::new(), Vec::new());
+        return (flags, diagnostics, Vec::new(), Vec::new(), Vec::new());
     }
     let mut tree = SpecTree {
         quirks: false,
@@ -383,6 +397,8 @@ pub(super) fn build(
         table_text_return: Mode::InTable,
         foster_next_insert: false,
         merges: Vec::new(),
+        extra_tag_elements: Vec::new(),
+        seen_tag: vec![false; tokens.tags.len()],
         template_modes: Vec::new(),
         diagnostics: Vec::new(),
     };
@@ -548,7 +564,14 @@ pub(super) fn build(
     for (tag, name) in tree.adjusted {
         overrides[tag as usize] = name;
     }
-    (flags, tree.diagnostics, overrides, tree.merges)
+    let extra_tag_elements = std::mem::take(&mut builder.extra_tag_elements);
+    (
+        flags,
+        tree.diagnostics,
+        overrides,
+        tree.merges,
+        extra_tag_elements,
+    )
 }
 
 /// `RepairMode::None`: one node per start tag, a matching end tag closes it,
@@ -631,6 +654,11 @@ impl SpecTree<'_> {
         raw_text: bool,
     ) -> u32 {
         let id = self.nodes.len() as u32;
+        if let Some(Name::Token(tag)) = name
+            && std::mem::replace(&mut self.seen_tag[tag as usize], true)
+        {
+            self.extra_tag_elements.push((id, tag));
+        }
         self.nodes.push(Node {
             kind,
             name,
@@ -1611,6 +1639,20 @@ impl SpecTree<'_> {
         // `<pre>`/`<listing>` only skip the newline that *immediately* follows.
         self.skip_next_newline = false;
         self.at = span.start;
+        // `get()` is a source slice, so an end tag has to extend its element's
+        // end even when the insertion mode closes it implicitly (`</tr>` pops
+        // cells) or never pops it (`</html>`).
+        if !start {
+            let mut name_buf = [0u8; 32];
+            let name = lower_into(&mut name_buf, self.input, self.tokens, tag);
+            if let Some(index) = (0..self.stack.len())
+                .rev()
+                .find(|&index| self.is(self.stack[index], name))
+            {
+                let id = self.stack[index] as usize;
+                self.nodes[id].end = self.nodes[id].end.max(span.end);
+            }
+        }
 
         // "In foreign content": while the current node's namespace is not HTML,
         // its own rules apply before the insertion mode's.
@@ -1993,12 +2035,8 @@ impl SpecTree<'_> {
         let token = &self.tokens.tags[ti];
         let tag = ti as u32;
         let span = token.span.clone();
-        if matches!(token.kind, TagKind::End) {
-            self.at = span.end;
-        }
         let mut name_buf = [0u8; 32];
         let name = lower_into(&mut name_buf, self.input, self.tokens, tag);
-
         if matches!(token.kind, TagKind::Start) {
             if name == b"html" {
                 // "Parse error.  If there is a template element on the stack of
@@ -3723,13 +3761,31 @@ impl SpecTree<'_> {
                 builder.insert_comment(node.span.clone(), matches!(node.kind, Kind::Doctype))
             }
             Kind::Element => {
-                match node.name.expect("element has a name") {
+                let name = node.name.expect("element has a name");
+                let clone = match name {
+                    Name::Token(tag) => self
+                        .extra_tag_elements
+                        .binary_search_by_key(&id, |&(node, _)| node)
+                        .ok()
+                        .filter(|&pos| self.extra_tag_elements[pos].1 == tag)
+                        .map(|pos| self.extra_tag_elements[pos].1),
+                    Name::Implied(_) => None,
+                };
+                let emitted = match name {
+                    // A clone does not own its token: `tag_element` keeps the
+                    // original element, and the clone is indexed separately.
+                    Name::Token(tag) if clone.is_some() => {
+                        builder.insert_element(TagId::new(tag), node.span.clone(), node.ns)
+                    }
                     Name::Token(tag) => {
-                        builder.start_tag(TagId::new(tag), node.span.clone(), node.ns);
+                        builder.start_tag(TagId::new(tag), node.span.clone(), node.ns)
                     }
                     Name::Implied(name) => {
-                        builder.insert_implied_element(name, node.span.clone(), node.ns);
+                        builder.insert_implied_element(name, node.span.clone(), node.ns)
                     }
+                };
+                if let Some(tag) = clone {
+                    builder.extra_tag_elements.push((TagId::new(tag), emitted));
                 }
                 let mut end = node.end;
                 let mut child = node.first_child;

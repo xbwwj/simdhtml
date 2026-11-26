@@ -208,7 +208,7 @@ pub(crate) fn build_with<'a>(
     let node_capacity = tokens.tags.len() + index.text_runs.len() + 1;
     let mut builder = TreeBuilder::new(input_len, node_capacity, tokens.tags.len());
 
-    let (normal_flags, diagnostics, tag_name_override, merges) =
+    let (normal_flags, diagnostics, tag_name_override, merges, extra_tag_elements) =
         spec::build(&input, &tokens, index, mode, &mut builder);
 
     // "Adjust SVG attributes" / "Adjust MathML attributes": the table applies
@@ -357,6 +357,7 @@ pub(crate) fn build_with<'a>(
         attrs,
         flags,
         diagnostics,
+        extra_tag_elements,
     }
 }
 
@@ -394,6 +395,9 @@ struct TreeBuilder {
     implied_tags: Vec<TagToken>,
     implied_literals: Vec<Option<&'static str>>,
     source_tag_count: usize,
+    /// `(tag token, final node)` for the second and later elements emitted from
+    /// one start tag (adoption agency, formatting reconstruction).
+    extra_tag_elements: Vec<(TagId, NodeId)>,
 }
 
 impl TreeBuilder {
@@ -428,15 +432,22 @@ impl TreeBuilder {
             implied_tags: Vec::new(),
             implied_literals: Vec::new(),
             source_tag_count: tag_count,
+            extra_tag_elements: Vec::new(),
         }
     }
 
-    fn start_tag(&mut self, tag_token: TagId, span: Range<u32>, ns: Namespace) {
+    fn start_tag(&mut self, tag_token: TagId, span: Range<u32>, ns: Namespace) -> NodeId {
         let id = self.insert_element(tag_token, span, ns);
         self.tag_element[tag_token.index()] = id;
+        id
     }
 
-    fn insert_implied_element(&mut self, name: &'static str, span: Range<u32>, ns: Namespace) {
+    fn insert_implied_element(
+        &mut self,
+        name: &'static str,
+        span: Range<u32>,
+        ns: Namespace,
+    ) -> NodeId {
         let tag_token = TagId::new((self.source_tag_count + self.implied_tags.len()) as u32);
         let id = self.insert_element(tag_token, span.clone(), ns);
         self.implied_tags.push(TagToken {
@@ -447,6 +458,7 @@ impl TreeBuilder {
         });
         self.tag_element.push(id);
         self.implied_literals.push(Some(name));
+        id
     }
 
     /// Pops the current node off the stack of open elements: ends arrive in

@@ -1,50 +1,49 @@
-# Compatibility with parsel
+# Compatibility with Parsel
 
-simdsel is parsel-compatible at the selector level, but it is not an lxml clone.
-The deliberate differences are listed here.
+simdsel supports the same selector API as Parsel, so most existing CSS and XPath queries should work without changes. However, it does not try to reproduce every detail of Parsel or lxml. Here are the differences worth knowing about.
 
-## Tree construction
+## HTML tree construction
 
-- The tree follows the HTML specification (`mode="spec"`, 98% WPT conformance),
-  not libxml2: implied `<html>/<head>/<body>`, `<tbody>`, foster parenting and
-  the adoption agency.
-- `mode="none"` (the default) skips repair: the tree is the flat start/end-tag
-  result.
-- As a consequence, fragment documents can produce a different tree than parsel.
-  Use `mode="spec"` when browser-shaped trees matter.
+simdsel and Parsel build their HTML trees differently.
 
-## Serialization
+- By default, `mode="none"` skips HTML tree repair and keeps the tree close to the parsed start and end tags.
+- Set `mode="spec"` to follow the HTML specification. This includes inserting missing elements such as `<html>`, `<head>`, `<body>` and `<tbody>`, as well as handling foster parenting and the adoption agency algorithm. This mode achieves 98% WPT conformance.
+- Because of these differences, malformed HTML and HTML fragments may produce different results from Parsel. Use `mode="spec"` when you need a tree closer to what a browser would build.
 
-- `get()` on an element returns the original source slice: attribute quotes,
-  entity spelling and tag case stay as written.
-- parsel/lxml re-serialize the node. Text and attribute results are decoded.
+## HTML serialization
 
-## Selecting
+Calling `get()` on an element returns its original HTML from the input, rather than serializing the element again.
 
-- `::text` and `::attr(name)` are supported.
-- A chained `css()` searches inside the current results. parsel expands to
-  `descendant-or-self::`, so it also matches the current node; use `:scope` to
-  include it in simdsel.
-- Positional pseudo-classes can differ on malformed input because the trees
-  differ (see above).
+This means the original tag casing, attribute quotes and entity spelling are preserved. Parsel and lxml serialize the element, which may change its formatting. Text and attribute values, however, are decoded in both libraries.
 
-## XPath
+One exception: when repairing has to create the same element twice (the adoption agency does this), the extra copy has no source of its own, so `get()` returns the range of the tag it was copied from.
 
-- XPath 1.0 core is supported: node tests, the common axes, predicates,
-  operators and the 27 core functions.
-- Not supported: the `following`, `preceding` and `ancestor-or-self` axes;
-  `comment()` and `processing-instruction()` node tests; variables; namespace
-  prefixes (names are matched as local names).
-- Text and attribute nodes become strings. Scalars are stringified like Python's
-  `repr`: `count()` gives `"1.0"`, booleans give `"1"` / `"0"`.
+## CSS selectors
 
-## API
+simdsel supports the `::text` and `::attr(name)` extensions familiar from Parsel.
 
-- `Selector(text=..., type="text")` keeps the string as the selector value;
-  later `css()` / `xpath()` calls return empty. parsel re-parses the string as
-  HTML.
-- `.attrib` on a scalar result raises `AttributeError` (simdsel says
-  `'str' object`, parsel says `'float'` / `'bool'`).
-- Documents are immutable: `drop()` and `root=` are not supported.
-- Extensions: `.text`, `parse_many()` and the `mode=` keyword.
-- An empty document yields an empty value; parsel yields `<html></html>`.
+There is one difference when chaining selectors: in simdsel, `css()` searches within the current results, but does not automatically match the current element itself. Parsel includes the current element through its `descendant-or-self::` behavior. Use `:scope` when you also want to match the current element in simdsel.
+
+Positional pseudo-classes may also return different results for malformed HTML, since the two libraries can build different trees.
+
+## XPath support
+
+simdsel supports the XPath 1.0 core, including node tests, common axes, predicates, operators and all 27 core functions.
+
+Some features are not currently supported:
+
+- The `following`, `preceding`, `ancestor-or-self` and `namespace` axes.
+- The `comment()` and `processing-instruction()` node tests.
+- Variables. Namespace prefixes are rejected too: write the local name (`rect`, not `svg:rect`).
+
+Text and attribute nodes are returned as strings. Scalar results are also converted to strings. For example, `count()` returns `"1.0"`, while boolean results are `"1"` or `"0"`.
+
+## API differences
+
+A few parts of the API behave differently from Parsel:
+
+- `Selector(text=..., type="text")` treats the input as a text value. Subsequent `css()` and `xpath()` calls return empty results. Parsel instead parses the string as HTML.
+- Accessing `.attrib` on a scalar result raises `AttributeError`. The error message differs: simdsel reports `'str' object`, while Parsel reports `'float'` or `'bool'`.
+- Documents are immutable. `drop()` and assigning to `root` are not supported.
+- simdsel also provides a few extensions: `.text`, `parse_many()` and the `mode=` argument.
+- An empty input produces an empty result. Parsel instead creates an empty `<html></html>` element.

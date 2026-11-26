@@ -1,5 +1,15 @@
 # simdhtml
 
+**A gigabytes fast HTML parser and selector, powered by Rust and SIMD.**
+
+Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings native SIMD speed to the HTML extraction pipeline—10x faster than parsel, the scrapy default.
+
+- **Fast**: Over 4000 page/s/core in real-world workloads, 7x-150x faster than commonly used parsers.
+- **Drop-in Replacement**: Migrate from parsel by changing a single line of code.
+- **Standards**: 98% WPT conformance in spec mode, while remaining significantly faster.
+- **Automatic**: Adapt to available CPU features at runtime. No configuration needed.
+- **Reliable**: Built in Rust, with `unsafe` strictly confined to low-level SIMD intrinsics.
+
 [![PyPI](https://img.shields.io/pypi/v/simdsel?logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/simdsel/)
 [![crates.io simdsel](https://img.shields.io/crates/v/simdsel?logo=rust)](https://crates.io/crates/simdsel)
 [![docs.rs](https://img.shields.io/docsrs/simdsel?label=docs.rs&logo=rust&logoColor=white)](https://docs.rs/simdsel)
@@ -12,15 +22,6 @@
 [Usage](#usage) ·
 [Benchmarks](#benchmarks)
 
-**A gigabytes fast HTML parser and selector, powered by Rust and SIMD.**
-
-Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings native SIMD speed to the HTML extraction pipeline—10x faster than parsel, the scrapy default.
-
-- **Fast**: Over 4000 page/s/core in real-world workloads, 7x-150x faster than commonly used parsers.
-- **Drop-in Replacement**: Migrate from parsel by changing a single line of code.
-- **Standards**: 98% WPT conformance in spec mode, while remaining significantly faster.
-- **Automatic**: Adapt to available CPU features at runtime. No configuration needed.
-- **Reliable**: Built in Rust, with `unsafe` strictly confined to low-level SIMD intrinsics.
 
 ## Performance results
 

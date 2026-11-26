@@ -45,9 +45,21 @@ pub struct Document<'a> {
     /// Recoverable parse problems, in document order.  Carries source spans;
     /// [`Self::flags`] carries the O(1) summary.
     pub diagnostics: Vec<Diagnostic>,
+
+    /// `(tag token, node)` for the second and later elements created from one
+    /// start tag (adoption agency clones, reconstructed formatting elements).
+    /// They share the token (and its attributes) with the original, so
+    /// token-keyed indexes have to include them.
+    pub(crate) extra_tag_elements: Vec<(TagId, NodeId)>,
 }
 
 impl Document<'_> {
+    /// The second and later elements created from one start-tag token, as
+    /// `(token, node)`; repairing markup can produce them.
+    pub fn extra_tag_elements(&self) -> &[(TagId, NodeId)] {
+        &self.extra_tag_elements
+    }
+
     /// Borrowed view of one node.
     #[inline]
     pub fn node(&self, id: NodeId) -> Node<'_> {

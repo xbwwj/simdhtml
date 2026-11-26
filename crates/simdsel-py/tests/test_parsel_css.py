@@ -110,3 +110,16 @@ def test_parsel_css(fixture, query):
     ours = call(Selector(text=html), query)
     theirs = call(parsel.Selector(text=html), query)
     assert ours == theirs, f"[{fixture}] {query!r}"
+
+
+def test_spec_reused_tag_tokens():
+    # The adoption agency clones a formatting element and reconstruction can
+    # reuse a token; both must stay visible to tag- and class-indexed queries.
+    html = '<b class="x">1<p class="y">2</b>3'
+    sel = Selector(text=html, mode="spec")
+    assert [item.text for item in sel.css("b")] == ["1", "2"]
+    assert len(sel.css("b.x")) == 2
+    assert len(sel.css(".x")) == 2
+
+    sel = Selector(text="<b><i>x</b>y", mode="spec")
+    assert [item.text for item in sel.css("i")] == ["x", "y"]

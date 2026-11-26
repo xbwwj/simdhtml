@@ -84,3 +84,22 @@ def test_parsel_api(name, fn):
     ours = call(Selector(text=HTML), fn)
     theirs = call(parsel.Selector(text=HTML), fn)
     assert ours == theirs, name
+
+
+def test_spec_source_slices():
+    cases = [
+        ("<style>a{}</style>", "style", "<style>a{}</style>"),
+        ("<title>t</title>", "title", "<title>t</title>"),
+        ("<table><tr><td>a</td></tr></table>", "td", "<td>a</td>"),
+        ("<table><tr><td>a</td></tr></table>", "table", "<table><tr><td>a</td></tr></table>"),
+        ("<svg><circle r='1'/></svg>", "svg", "<svg><circle r='1'/></svg>"),
+        ("<div><p>a</div>", "p", "<p>a"),
+    ]
+    for html, query, expected in cases:
+        assert Selector(text=html, mode="spec").css(query).get() == expected, query
+
+
+def test_attrib_names_are_lowercase():
+    ours = Selector(text='<DIV CLASS="a" ID="x">t</DIV>').css("div").attrib
+    theirs = parsel.Selector(text='<DIV CLASS="a" ID="x">t</DIV>').css("div").attrib
+    assert dict(ours) == dict(theirs) == {"class": "a", "id": "x"}

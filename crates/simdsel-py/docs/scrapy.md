@@ -3,7 +3,7 @@
 Scrapy's default selector is parsel. simdsel exposes a compatible selector
 surface, so there are two ways to use it: call it directly in a spider, or
 replace `response.selector` through a small downloader middleware. Both examples
-use the public `simdsel.parsel` facade.
+use the public `simdsel.parsel` API.
 
 ## Directly in a spider
 

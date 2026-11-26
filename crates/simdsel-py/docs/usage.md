@@ -101,8 +101,8 @@ for div in sel.css("div"):
     div.xpath("./h2/text()").get()
 ```
 
-Namespaces are accepted but not resolved (elements are matched by local name),
-and XPath variables are rejected. The supported subset is listed in
+Namespaces are not resolved: prefixed name tests are rejected, so match by local
+name. XPath variables are rejected too. The supported subset is listed in
 [compatibility.md](compatibility.md).
 
 ## Metadata
