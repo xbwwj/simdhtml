@@ -1,6 +1,7 @@
-//! Byte-classification kernels for the markup scanner: `avx512`, `x86` (AVX2 +
-//! PCLMULQDQ) and `neon` implement the same `classify` / `probe_lt` /
-//! `prefix_xor` that `fallback` defines portably.
+//! Byte-classification kernels for the markup scanner.
+//!
+//! `avx512`, `x86` (AVX2 + PCLMULQDQ) and `neon` implement the same
+//! `classify` / `probe_lt` / `prefix_xor` that `fallback` defines portably.
 
 use std::sync::OnceLock;
 
