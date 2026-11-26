@@ -11,8 +11,8 @@ autotests = false
 quick = ["simdhtml-data/quick"]
 
 [[test]]
-name = "mode_agreement"
-path = "mode_agreement.rs"
+name = "preorder_invariants"
+path = "preorder_invariants.rs"
 
 [[test]]
 name = "wpt_tree_construction"

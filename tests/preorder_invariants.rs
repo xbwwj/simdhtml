@@ -7,8 +7,8 @@
 //! and running both modes never panics.
 //!
 //! ```text
-//! cargo test --release -p simdhtml-tests --test mode_agreement -- --ignored --nocapture
-//! cargo test -p simdhtml-tests --features quick --test mode_agreement -- --ignored
+//! cargo test --release -p simdhtml-tests --test preorder_invariants -- --ignored --nocapture
+//! cargo test -p simdhtml-tests --features quick --test preorder_invariants -- --ignored
 //! ```
 
 use simdhtml::document::Document;
