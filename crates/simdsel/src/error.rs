@@ -1,64 +1,38 @@
-use std::fmt;
+use simdhtml::error::ParseError;
+use thiserror::Error;
 
 /// The single public error type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum Error {
     /// Parsing the HTML failed.
-    Parse(simdhtml::error::ParseError),
-
+    #[error("parse error: {0}")]
+    Parse(#[from] ParseError),
     /// CSS parsing or evaluation failed.
-    Css(CssErrorKind),
-
+    #[error(transparent)]
+    Css(CssError),
     /// XPath parsing or evaluation failed.
-    XPath(XPathErrorKind),
+    #[error(transparent)]
+    XPath(XPathError),
 }
 
 /// CSS error data, carried inside [`Error::Css`].
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub enum CssErrorKind {
+#[derive(Clone, Debug, Eq, Error, PartialEq, Hash)]
+pub enum CssError {
+    #[error("selector error: {message} at byte {position}")]
     Selector { message: String, position: usize },
+    #[error("selector evaluation hit the depth limit")]
     DepthLimit,
 }
 
 /// XPath error data, carried inside [`Error::XPath`].
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub enum XPathErrorKind {
+#[derive(Clone, Debug, Eq, Error, PartialEq, Hash)]
+pub enum XPathError {
+    #[error("xpath syntax error at byte {position}: {message}")]
     Syntax { position: usize, message: String },
+    #[error("xpath unsupported: {0}")]
     Unsupported(&'static str),
+    #[error("xpath evaluation error: {0}")]
     Eval(String),
+    #[error("xpath expression exceeded the evaluation budget")]
     TooComplex,
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Parse(error) => write!(f, "parse error: {error}"),
-            Self::Css(CssErrorKind::Selector { message, position }) => {
-                write!(f, "selector error: {message} at byte {position}")
-            }
-            Self::Css(CssErrorKind::DepthLimit) => {
-                write!(f, "selector evaluation hit the depth limit")
-            }
-            Self::XPath(XPathErrorKind::Syntax { position, message }) => {
-                write!(f, "xpath syntax error at byte {position}: {message}")
-            }
-            Self::XPath(XPathErrorKind::Unsupported(what)) => {
-                write!(f, "xpath unsupported: {what}")
-            }
-            Self::XPath(XPathErrorKind::Eval(message)) => {
-                write!(f, "xpath evaluation error: {message}")
-            }
-            Self::XPath(XPathErrorKind::TooComplex) => {
-                write!(f, "xpath expression exceeded the evaluation budget")
-            }
-        }
-    }
-}
-
-impl From<simdhtml::error::ParseError> for Error {
-    fn from(error: simdhtml::error::ParseError) -> Self {
-        Self::Parse(error)
-    }
-}
-
-impl std::error::Error for Error {}

@@ -1,4 +1,4 @@
-use super::XPathErrorKind;
+use super::XPathError;
 use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
 use super::value::{NodeRef, RefKind, Value};
 use crate::dom::{attr_name, attr_range};
@@ -48,7 +48,7 @@ struct Ctx {
 }
 
 /// Evaluates a compiled expression against `doc`.
-pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathErrorKind> {
+pub(super) fn evaluate(doc: &Document<'_>, expr: &Expr) -> Result<Value, XPathError> {
     evaluate_at(doc, expr, NodeRef::document())
 }
 
@@ -58,7 +58,7 @@ pub(super) fn evaluate_at(
     doc: &Document<'_>,
     expr: &Expr,
     node: NodeRef,
-) -> Result<Value, XPathErrorKind> {
+) -> Result<Value, XPathError> {
     let mut evaluator = Evaluator {
         doc,
         visits: 0,
@@ -80,7 +80,7 @@ struct Evaluator<'d, 'a> {
 }
 
 impl Evaluator<'_, '_> {
-    fn eval(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Value, XPathErrorKind> {
+    fn eval(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Value, XPathError> {
         match expr {
             Expr::Path(path) => Ok(Value::Nodes(self.path(path, ctx)?)),
             Expr::Filter {
@@ -89,7 +89,7 @@ impl Evaluator<'_, '_> {
             } => {
                 let value = self.eval(primary, ctx)?;
                 let Value::Nodes(nodes) = value else {
-                    return Err(XPathErrorKind::Eval(
+                    return Err(XPathError::Eval(
                         "a predicate can only filter a node-set".to_owned(),
                     ));
                 };
@@ -111,14 +111,14 @@ impl Evaluator<'_, '_> {
         }
     }
 
-    fn nodes(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathErrorKind> {
+    fn nodes(&mut self, expr: &Expr, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathError> {
         match self.eval(expr, ctx)? {
             Value::Nodes(nodes) => Ok(nodes),
-            _ => Err(XPathErrorKind::Eval("expected a node-set".to_owned())),
+            _ => Err(XPathError::Eval("expected a node-set".to_owned())),
         }
     }
 
-    fn path(&mut self, path: &Path, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathErrorKind> {
+    fn path(&mut self, path: &Path, ctx: &Ctx) -> Result<Vec<NodeRef>, XPathError> {
         let mut set = match &path.base {
             Some(base) => self.nodes(base, ctx)?,
             None if path.absolute => vec![NodeRef::document()],
@@ -172,7 +172,7 @@ impl Evaluator<'_, '_> {
         &mut self,
         contexts: &[NodeRef],
         name: &str,
-    ) -> Result<Option<Vec<NodeRef>>, XPathErrorKind> {
+    ) -> Result<Option<Vec<NodeRef>>, XPathError> {
         let code = simdhtml::tag_code::code_of(name.as_bytes());
         if code == 0 {
             return Ok(None);
@@ -204,7 +204,7 @@ impl Evaluator<'_, '_> {
         }
         self.visits += (ids.len() + contexts.len() + out.len()) as u64;
         if self.visits > self.budget {
-            return Err(XPathErrorKind::TooComplex);
+            return Err(XPathError::TooComplex);
         }
         Ok(Some(out))
     }
@@ -214,7 +214,7 @@ impl Evaluator<'_, '_> {
         &mut self,
         mut nodes: Vec<NodeRef>,
         predicates: &[Expr],
-    ) -> Result<Vec<NodeRef>, XPathErrorKind> {
+    ) -> Result<Vec<NodeRef>, XPathError> {
         for predicate in predicates {
             let size = nodes.len();
             let mut kept = Vec::with_capacity(size);
@@ -242,7 +242,7 @@ impl Evaluator<'_, '_> {
 
     /// Nodes on `axis`, in axis order (reverse document order for `ancestor`
     /// and `preceding-sibling`, as the specification requires for positions).
-    fn axis(&mut self, axis: Axis, node: NodeRef) -> Result<Vec<NodeRef>, XPathErrorKind> {
+    fn axis(&mut self, axis: Axis, node: NodeRef) -> Result<Vec<NodeRef>, XPathError> {
         let out = match axis {
             Axis::Self_ => vec![node],
             Axis::Child => self.children(node),
@@ -316,7 +316,7 @@ impl Evaluator<'_, '_> {
         };
         self.visits += out.len() as u64;
         if self.visits > self.budget {
-            return Err(XPathErrorKind::TooComplex);
+            return Err(XPathError::TooComplex);
         }
         Ok(out)
     }
@@ -434,7 +434,7 @@ impl Evaluator<'_, '_> {
         left: &Expr,
         right: &Expr,
         ctx: &Ctx,
-    ) -> Result<Value, XPathErrorKind> {
+    ) -> Result<Value, XPathError> {
         match op {
             BinOp::Or => {
                 let left = self.eval(left, ctx)?.to_boolean();
@@ -472,7 +472,7 @@ impl Evaluator<'_, '_> {
 
     /// XPath 1.0 section 3.4 comparison rules, including the existential
     /// semantics of `=`/`!=` on node-sets.
-    fn compare(&self, op: BinOp, left: &Value, right: &Value) -> Result<bool, XPathErrorKind> {
+    fn compare(&self, op: BinOp, left: &Value, right: &Value) -> Result<bool, XPathError> {
         let equality = matches!(op, BinOp::Eq | BinOp::Ne);
         match (left, right) {
             (Value::Nodes(left), Value::Nodes(right)) if equality => Ok(left.iter().any(|a| {
@@ -533,7 +533,7 @@ impl Evaluator<'_, '_> {
         super::value::parse_number(&node.string_value(self.doc))
     }
 
-    fn call(&mut self, func: Func, args: &[Expr], ctx: &Ctx) -> Result<Value, XPathErrorKind> {
+    fn call(&mut self, func: Func, args: &[Expr], ctx: &Ctx) -> Result<Value, XPathError> {
         match func {
             Func::Position => {
                 require_arity(func, args, 0)?;
@@ -774,7 +774,7 @@ impl Evaluator<'_, '_> {
     }
 }
 
-fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPathErrorKind> {
+fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPathError> {
     if args.len() == expected {
         Ok(())
     } else {
@@ -782,8 +782,8 @@ fn require_arity(func: Func, args: &[Expr], expected: usize) -> Result<(), XPath
     }
 }
 
-fn arity_error(func: Func, got: usize) -> XPathErrorKind {
-    XPathErrorKind::Eval(format!("{func:?} called with {got} arguments"))
+fn arity_error(func: Func, got: usize) -> XPathError {
+    XPathError::Eval(format!("{func:?} called with {got} arguments"))
 }
 
 /// Sorts into document order and removes duplicates.

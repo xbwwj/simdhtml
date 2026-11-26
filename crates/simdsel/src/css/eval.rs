@@ -12,7 +12,7 @@ use super::ast::{
     SelectorList,
 };
 use super::cache::{ChildIndex, QueryCache};
-use crate::error::{CssErrorKind, Error};
+use crate::error::{CssError, Error};
 
 const MAX_DEPTH: usize = 64;
 
@@ -227,7 +227,7 @@ impl<'a> Eval<'a> {
 
     fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet, Error> {
         if depth > MAX_DEPTH {
-            return Err(Error::Css(CssErrorKind::DepthLimit));
+            return Err(Error::Css(CssError::DepthLimit));
         }
         let mut out = BitSet::new(self.n);
         for complex in &selector.complexes {
@@ -241,7 +241,7 @@ impl<'a> Eval<'a> {
     /// rightmost compound's matches, without per-element ancestor walks.
     fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet, Error> {
         if depth > MAX_DEPTH {
-            return Err(Error::Css(CssErrorKind::DepthLimit));
+            return Err(Error::Css(CssError::DepthLimit));
         }
         // No combinator: the compound mask is the answer.
         if complex.combinators.is_empty() {
@@ -454,7 +454,7 @@ impl<'a> Eval<'a> {
     /// index, attribute keys the query-side index, pseudos filter afterwards.
     fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet, Error> {
         if depth > MAX_DEPTH {
-            return Err(Error::Css(CssErrorKind::DepthLimit));
+            return Err(Error::Css(CssError::DepthLimit));
         }
         if compound.pseudos.is_empty()
             && let Some(mask) = self.cache.get_compound(compound)
@@ -650,7 +650,7 @@ impl<'a> Eval<'a> {
         depth: usize,
     ) -> Result<(), Error> {
         if depth > MAX_DEPTH {
-            return Err(Error::Css(CssErrorKind::DepthLimit));
+            return Err(Error::Css(CssError::DepthLimit));
         }
         match pseudo {
             Pseudo::FirstChild => self.filter_position(mask, Position::FirstChild),

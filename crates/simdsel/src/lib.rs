@@ -23,7 +23,7 @@ pub mod prelude {
         select_as_within_cache, select_count, select_count_within, select_within,
         select_within_cache,
     };
-    pub use crate::error::{CssErrorKind, Error, XPathErrorKind};
+    pub use crate::error::{CssError, Error, XPathError};
     pub use crate::facade::{Selector, record_attrib, record_text, select_query_within_cache};
     pub use crate::record::{MatchKind, MatchRecord};
     pub use crate::xpath::XPath;

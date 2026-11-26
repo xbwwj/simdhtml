@@ -7,7 +7,7 @@ use value::{NodeRef, Value};
 
 use simdhtml::document::Document;
 
-use crate::error::{Error, XPathErrorKind};
+use crate::error::{Error, XPathError};
 
 /// A compiled XPath 1.0 expression.
 ///

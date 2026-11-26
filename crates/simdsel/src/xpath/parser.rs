@@ -1,4 +1,4 @@
-use super::XPathErrorKind;
+use super::XPathError;
 use super::ast::{Axis, BinOp, Expr, Func, NodeTest, Path, Step};
 
 /// Tokens.
@@ -44,7 +44,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn tokens(mut self) -> Result<Vec<(Tok, usize)>, XPathErrorKind> {
+    fn tokens(mut self) -> Result<Vec<(Tok, usize)>, XPathError> {
         let mut out = Vec::new();
         loop {
             let start = self.pos;
@@ -152,7 +152,7 @@ impl<'a> Lexer<'a> {
                         self.pos += 2;
                         out.push((Tok::DColon, start));
                     } else {
-                        return Err(XPathErrorKind::Unsupported(
+                        return Err(XPathError::Unsupported(
                             "namespace prefixes are not supported",
                         ));
                     }
@@ -194,7 +194,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn number(&mut self) -> Result<Tok, XPathErrorKind> {
+    fn number(&mut self) -> Result<Tok, XPathError> {
         let begin = self.pos;
         while self.input.get(self.pos).is_some_and(u8::is_ascii_digit) {
             self.pos += 1;
@@ -213,8 +213,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn error(&self, position: usize, message: &str) -> XPathErrorKind {
-        XPathErrorKind::Syntax {
+    fn error(&self, position: usize, message: &str) -> XPathError {
+        XPathError::Syntax {
             position,
             message: message.to_owned(),
         }
@@ -240,10 +240,10 @@ struct Parser {
 }
 
 /// Parses `input` into an [`Expr`].
-pub(super) fn parse(input: &str) -> Result<Expr, XPathErrorKind> {
+pub(super) fn parse(input: &str) -> Result<Expr, XPathError> {
     let toks = Lexer::new(input).tokens()?;
     if toks.len() == 1 {
-        return Err(XPathErrorKind::Syntax {
+        return Err(XPathError::Syntax {
             position: 0,
             message: "empty expression".to_owned(),
         });
@@ -280,8 +280,8 @@ impl Parser {
         self.toks[self.i].1
     }
 
-    fn error(&self, message: &str) -> XPathErrorKind {
-        XPathErrorKind::Syntax {
+    fn error(&self, message: &str) -> XPathError {
+        XPathError::Syntax {
             position: self.position(),
             message: message.to_owned(),
         }
@@ -296,7 +296,7 @@ impl Parser {
         }
     }
 
-    fn expect(&mut self, tok: &Tok) -> Result<(), XPathErrorKind> {
+    fn expect(&mut self, tok: &Tok) -> Result<(), XPathError> {
         if self.eat(tok) {
             Ok(())
         } else {
@@ -309,11 +309,11 @@ impl Parser {
     }
 
     // Expr := OrExpr
-    fn expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn expr(&mut self) -> Result<Expr, XPathError> {
         self.or_expr()
     }
 
-    fn or_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn or_expr(&mut self) -> Result<Expr, XPathError> {
         let mut expr = self.and_expr()?;
         while self.keyword("or") {
             self.bump();
@@ -323,7 +323,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn and_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn and_expr(&mut self) -> Result<Expr, XPathError> {
         let mut expr = self.comparison_expr()?;
         while self.keyword("and") {
             self.bump();
@@ -333,7 +333,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn comparison_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn comparison_expr(&mut self) -> Result<Expr, XPathError> {
         let mut expr = self.additive_expr()?;
         loop {
             let op = match self.peek() {
@@ -351,7 +351,7 @@ impl Parser {
         }
     }
 
-    fn additive_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn additive_expr(&mut self) -> Result<Expr, XPathError> {
         let mut expr = self.multiplicative_expr()?;
         loop {
             let op = match self.peek() {
@@ -365,7 +365,7 @@ impl Parser {
         }
     }
 
-    fn multiplicative_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn multiplicative_expr(&mut self) -> Result<Expr, XPathError> {
         let mut expr = self.unary_expr()?;
         loop {
             let op = match self.peek() {
@@ -380,7 +380,7 @@ impl Parser {
         }
     }
 
-    fn unary_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn unary_expr(&mut self) -> Result<Expr, XPathError> {
         if self.eat(&Tok::Minus) {
             let operand = self.unary_expr()?;
             return Ok(Expr::Negate(Box::new(operand)));
@@ -388,7 +388,7 @@ impl Parser {
         self.union_expr()
     }
 
-    fn union_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn union_expr(&mut self) -> Result<Expr, XPathError> {
         let mut expr = self.path_expr()?;
         while self.eat(&Tok::Pipe) {
             let rhs = self.path_expr()?;
@@ -411,7 +411,7 @@ impl Parser {
         }
     }
 
-    fn path_expr(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn path_expr(&mut self) -> Result<Expr, XPathError> {
         if self.eat(&Tok::Slash) {
             let steps = if self.starts_step() {
                 self.relative_path()?
@@ -470,7 +470,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn relative_path(&mut self) -> Result<Vec<Step>, XPathErrorKind> {
+    fn relative_path(&mut self) -> Result<Vec<Step>, XPathError> {
         let mut steps = vec![self.step()?];
         loop {
             let double = match self.peek() {
@@ -486,7 +486,7 @@ impl Parser {
         }
     }
 
-    fn step(&mut self) -> Result<Step, XPathErrorKind> {
+    fn step(&mut self) -> Result<Step, XPathError> {
         if self.eat(&Tok::Dot) {
             return Ok(Step {
                 axis: Axis::Self_,
@@ -525,7 +525,7 @@ impl Parser {
         })
     }
 
-    fn node_test(&mut self) -> Result<NodeTest, XPathErrorKind> {
+    fn node_test(&mut self) -> Result<NodeTest, XPathError> {
         if self.eat(&Tok::Star) {
             return Ok(NodeTest::Any);
         }
@@ -539,7 +539,7 @@ impl Parser {
                 "text" => NodeTest::Text,
                 "node" => NodeTest::Node,
                 "comment" | "processing-instruction" => {
-                    return Err(XPathErrorKind::Unsupported(
+                    return Err(XPathError::Unsupported(
                         "comment()/processing-instruction() node tests",
                     ));
                 }
@@ -549,7 +549,7 @@ impl Parser {
         Ok(NodeTest::Name(name))
     }
 
-    fn predicates(&mut self) -> Result<Vec<Expr>, XPathErrorKind> {
+    fn predicates(&mut self) -> Result<Vec<Expr>, XPathError> {
         let mut out = Vec::new();
         while self.eat(&Tok::LBracket) {
             out.push(self.expr()?);
@@ -558,7 +558,7 @@ impl Parser {
         Ok(out)
     }
 
-    fn primary(&mut self) -> Result<Expr, XPathErrorKind> {
+    fn primary(&mut self) -> Result<Expr, XPathError> {
         match self.peek().clone() {
             Tok::Str(text) => {
                 self.bump();
@@ -593,7 +593,7 @@ impl Parser {
                 }
                 match Func::lookup(&name) {
                     Some(func) => Ok(Expr::Call(func, args)),
-                    None => Err(XPathErrorKind::Unsupported("unknown function")),
+                    None => Err(XPathError::Unsupported("unknown function")),
                 }
             }
             other => Err(self.error(&format!("unexpected {other:?}"))),
@@ -601,7 +601,7 @@ impl Parser {
     }
 }
 
-fn axis_from_name(name: &str) -> Result<Axis, XPathErrorKind> {
+fn axis_from_name(name: &str) -> Result<Axis, XPathError> {
     Ok(match name {
         "child" => Axis::Child,
         "descendant" => Axis::Descendant,
@@ -613,11 +613,11 @@ fn axis_from_name(name: &str) -> Result<Axis, XPathErrorKind> {
         "following-sibling" => Axis::FollowingSibling,
         "preceding-sibling" => Axis::PrecedingSibling,
         "following" | "preceding" => {
-            return Err(XPathErrorKind::Unsupported(
+            return Err(XPathError::Unsupported(
                 "the following/preceding axes are not implemented yet",
             ));
         }
-        _ => return Err(XPathErrorKind::Unsupported("unknown axis")),
+        _ => return Err(XPathError::Unsupported("unknown axis")),
     })
 }
 
