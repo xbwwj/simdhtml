@@ -11,5 +11,6 @@ quick = []
 
 [dependencies]
 flate2 = { workspace = true }
+httparse = { workspace = true }
 sha1_smol = { workspace = true }
 warc = { workspace = true }

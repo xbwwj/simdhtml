@@ -10,40 +10,25 @@ pub struct Http<'a> {
 }
 
 pub fn parse(body: &[u8]) -> Result<Http<'_>, String> {
-    let split = body
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or("no HTTP header terminator")?;
-    let head = &body[..split];
-    let payload = &body[split + 4..];
-    let mut lines = head.split(|byte| *byte == b'\n');
-    let status_line = lines.next().ok_or("no HTTP status line")?;
-    let status = String::from_utf8_lossy(status_line)
-        .split_whitespace()
-        .nth(1)
-        .ok_or("no HTTP status code")?
-        .to_string();
-    let mut headers = HashMap::new();
-    for line in lines {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-        let Some(colon) = line.iter().position(|byte| *byte == b':') else {
-            continue;
-        };
-        let name = String::from_utf8_lossy(&line[..colon])
-            .trim()
-            .to_ascii_lowercase();
-        let value = String::from_utf8_lossy(&line[colon + 1..])
-            .trim()
-            .to_string();
-        headers.insert(name, value);
-    }
+    let mut headers = [httparse::EMPTY_HEADER; 128];
+    let mut response = httparse::Response::new(&mut headers);
+    let head_len = match response.parse(body).map_err(|err| format!("HTTP: {err}"))? {
+        httparse::Status::Complete(len) => len,
+        httparse::Status::Partial => return Err("truncated HTTP head".to_string()),
+    };
+    let status = response.code.ok_or("no HTTP status line")?.to_string();
+    let headers = response
+        .headers
+        .iter()
+        .map(|header| {
+            let value = String::from_utf8_lossy(header.value);
+            (header.name.to_ascii_lowercase(), value.trim().to_string())
+        })
+        .collect();
     Ok(Http {
         status,
         headers,
-        payload,
+        payload: &body[head_len..],
     })
 }
 
@@ -123,5 +108,48 @@ fn decode_chunked(data: &[u8]) -> Result<Vec<u8>, String> {
         }
         out.extend_from_slice(&rest[..size]);
         rest = &rest[size + 2..];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 5\r\nX-Dup: a\r\nX-Dup: b\r\n\r\nhello";
+
+    #[test]
+    fn parses_status_headers_and_payload() {
+        let http = parse(RESPONSE).unwrap();
+        assert_eq!(http.status, "200");
+        assert_eq!(http.headers["content-type"], "text/html; charset=utf-8");
+        assert_eq!(http.headers["x-dup"], "b");
+        assert_eq!(http.payload, b"hello");
+        assert!(is_html(&http));
+        assert_eq!(decode_payload(&http).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn decodes_chunked_and_gzip() {
+        let mut body = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n".to_vec();
+        body.extend_from_slice(b"5\r\nhello\r\n0\r\n\r\n");
+        let http = parse(&body).unwrap();
+        assert_eq!(decode_payload(&http).unwrap(), b"hello");
+
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"hello").unwrap();
+        let gz = encoder.finish().unwrap();
+        let mut body = b"HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\n\r\n".to_vec();
+        body.extend_from_slice(&gz);
+        let http = parse(&body).unwrap();
+        assert_eq!(decode_payload(&http).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn rejects_malformed_heads() {
+        assert!(parse(b"HTTP/1.1 200 OK\r\nContent-Type: text/html").is_err());
+        assert!(parse(b"not http").is_err());
     }
 }
