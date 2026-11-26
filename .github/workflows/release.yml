@@ -25,6 +25,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude simdsel-py --exclude simdhtml-bench
 
+  guard:
+    name: Check the release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Require a non-prerelease version matching the tag
+        id: version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "simdhtml") | .version')
+          tag="${{ github.ref_name }}"
+          tag="${tag#v}"
+          if [[ "$version" == *-* ]]; then
+            echo "::error::workspace version $version is a pre-release; bump it before tagging"
+            exit 1
+          fi
+          if [[ "$version" != "$tag" ]]; then
+            echo "::error::tag ${{ github.ref_name }} does not match workspace version $version"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
   linux:
     name: Linux ${{ matrix.target }}
     needs: check
@@ -113,7 +137,7 @@ jobs:
 
   pypi:
     name: Publish to PyPI
-    needs: [linux, macos, windows, sdist]
+    needs: [linux, macos, windows, sdist, guard]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi
@@ -127,3 +151,49 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+
+  crates:
+    name: Publish to crates.io
+    needs: [check, guard]
+    if: needs.guard.outputs.version != ''
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish simdhtml
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          version="${{ needs.guard.outputs.version }}"
+          if curl -fsS -o /dev/null "https://crates.io/api/v1/crates/simdhtml/$version" 2>/dev/null; then
+            echo "simdhtml $version is already on crates.io"
+          else
+            cargo publish -p simdhtml --locked
+          fi
+      - name: Publish simdsel
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          version="${{ needs.guard.outputs.version }}"
+          if curl -fsS -o /dev/null "https://crates.io/api/v1/crates/simdsel/$version" 2>/dev/null; then
+            echo "simdsel $version is already on crates.io"
+            exit 0
+          fi
+          # simdsel depends on the version of simdhtml published above; the
+          # index can lag the upload by a few seconds.
+          for attempt in 1 2 3 4 5; do
+            if cargo publish -p simdsel --locked; then
+              exit 0
+            fi
+            echo "simdsel publish failed, retrying ($attempt)"
+            sleep 20
+          done
+          exit 1
