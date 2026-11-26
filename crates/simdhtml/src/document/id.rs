@@ -86,12 +86,21 @@ macro_rules! id_type {
 id_type!(NodeId);
 id_type!(TagId);
 
-pub const NO_NODE: NodeId = NodeId::new(u32::MAX);
-pub const NO_TAG: TagId = TagId::new(u32::MAX);
-pub const NO_ATTR: u32 = u32::MAX;
+impl NodeId {
+    /// Sentinel for "no node".
+    pub const NONE: Self = Self::new(u32::MAX);
 
-/// The document node: always node `0`, and the only node without a parent.
-pub const DOC_ROOT: NodeId = NodeId::new(0);
+    /// The document node: always node `0`, and the only node without a parent.
+    pub const ROOT: Self = Self::new(0);
+}
+
+impl TagId {
+    /// Sentinel for "no tag token".
+    pub const NONE: Self = Self::new(u32::MAX);
+}
+
+/// Sentinel for "no attribute".
+pub const NO_ATTR: u32 = u32::MAX;
 
 impl fmt::Display for NodeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

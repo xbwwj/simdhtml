@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use simdhtml::document::Document;
-use simdhtml::document::id::{NO_ATTR, NO_NODE, NO_TAG, NodeId};
+use simdhtml::document::id::{NO_ATTR, NodeId, TagId};
 
 use crate::dom::{attr_name, attr_value};
 
@@ -99,7 +99,7 @@ impl NodeRef {
             // before/after the root element is not in the XPath data model.
             RefKind::Document => {
                 let root = doc.node(self.id).first_child();
-                if root == NO_NODE {
+                if root == NodeId::NONE {
                     Cow::Borrowed("")
                 } else {
                     Cow::Owned(crate::dom::text_content(doc, root))
@@ -114,7 +114,7 @@ impl NodeRef {
         match self.kind {
             RefKind::Element => {
                 let tag = doc.node(self.id).tag_token();
-                if tag == NO_TAG { "" } else { doc.tag_name(tag) }
+                if tag == TagId::NONE { "" } else { doc.tag_name(tag) }
             }
             RefKind::Attribute => std::str::from_utf8(attr_name(doc, self.attr))
                 .expect("Document input is valid UTF-8"),

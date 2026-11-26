@@ -112,7 +112,7 @@ pub(crate) enum TagCode {
 const MAX_NAME: usize = 16;
 
 /// Classifies a raw tag name into its byte-sized code (`0` = no dedicated code),
-/// which is what [`crate::document::Document::tag_code`] stores.
+/// which is what [`TagTable::code`](crate::document::tag::TagTable::code) stores.
 pub fn code_of(name: &[u8]) -> u8 {
     TagCode::of(name) as u8
 }

@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use super::id::{NO_NODE, NodeId, TagId};
+use super::id::{NodeId, TagId};
 use super::namespace::Namespace;
 use super::tape::{DOCTYPE_BIT, KIND_MASK, NodeTape, RAW_TEXT_BIT};
 
@@ -72,12 +72,12 @@ impl Node<'_> {
 
     pub fn prev_element_sibling(&self) -> NodeId {
         let parent = self.parent();
-        if parent == NO_NODE {
-            return NO_NODE;
+        if parent == NodeId::NONE {
+            return NodeId::NONE;
         }
-        let mut prev = NO_NODE;
+        let mut prev = NodeId::NONE;
         let mut child = self.tape.record[self.tape.idx(parent)].first_child;
-        while child != NO_NODE && child != self.id {
+        while child != NodeId::NONE && child != self.id {
             if self.tape.kind[self.tape.idx(child)] & KIND_MASK == NodeKind::Element.bits() {
                 prev = child;
             }
@@ -114,9 +114,8 @@ pub enum NodeKind {
     Document = 0,
     Element = 1,
     Text = 2,
-    /// Comments, processing instructions, bogus comments and doctypes; the
-    /// doctype flag lives in [`DOCTYPE_BIT`] because the category only has two
-    /// bits.
+    /// Comments, processing instructions, bogus comments and doctypes; a flag
+    /// in the kind column distinguishes doctypes from the others.
     Comment = 3,
 }
 

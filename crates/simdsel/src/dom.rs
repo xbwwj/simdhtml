@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use simdhtml::character_reference::decode_character_references;
 use simdhtml::document::Document;
-use simdhtml::document::id::{NO_TAG, NodeId};
+use simdhtml::document::id::{NodeId, TagId};
 use simdhtml::document::text::replace_nulls;
 
 /// Raw attribute-name bytes (not lowercased, not interned).
@@ -43,7 +43,7 @@ fn decode_span<'a>(doc: &'a Document<'_>, span: Range<usize>) -> Cow<'a, str> {
 /// Attribute index range owned by an element; empty for non-elements.
 pub(crate) fn attr_range(doc: &Document<'_>, node: NodeId) -> Range<u32> {
     let tag = doc.node(node).tag_token();
-    if tag == NO_TAG {
+    if tag == TagId::NONE {
         return 0..0;
     }
     doc.tags.token(tag).attr_range.clone()

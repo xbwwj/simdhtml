@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use simdhtml::document::Document;
-use simdhtml::document::id::{DOC_ROOT, NodeId};
+use simdhtml::document::id::NodeId;
 use simdhtml::parse::{EncodingMode, ParseOptions};
 
 use crate::css::ast::SelectorList;
@@ -61,7 +61,7 @@ impl<'a> Selector<'a> {
         let root = Item::Record(document_record(&doc));
         Self {
             doc: Rc::new(doc),
-            roots: vec![DOC_ROOT],
+            roots: vec![NodeId::ROOT],
             items: vec![root],
             cache: Rc::new(QueryCache::root()),
         }
@@ -358,7 +358,7 @@ fn document_record(doc: &Document<'_>) -> MatchRecord {
     match root_element(doc) {
         Some(id) => element_record(doc, id),
         None => MatchRecord {
-            node: DOC_ROOT,
+            node: NodeId::ROOT,
             kind: MatchKind::Element,
             span: 0..0,
             outer_end: 0,

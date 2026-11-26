@@ -16,7 +16,7 @@ pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     m
 }
 
-/// Scalar reference for [`super::x86::probe_lt`].
+/// Scalar reference for [`probe_lt`](super::probe_lt).
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     let m = classify(block);
     if m.lt == 0 { None } else { Some(m) }

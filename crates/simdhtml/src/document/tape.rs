@@ -25,7 +25,7 @@ pub(crate) const KIND_MASK: u8 = 0b011;
 /// and tree walking read several of them per node--the data locality overwhelms.
 #[derive(Clone, Debug, Default)]
 pub struct NodeTape {
-    /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].
+    /// `NodeKind` discriminant plus the raw-text flag.
     pub kind: Vec<u8>,
     pub record: Vec<NodeRecord>,
 }

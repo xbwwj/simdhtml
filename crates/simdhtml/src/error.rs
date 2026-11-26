@@ -2,8 +2,9 @@ use thiserror::Error;
 
 /// Fatal parse errors.
 ///
-/// Recoverable problems are reported per-document in [`Document::flags`] and
-/// [`Document::diagnostics`] instead.
+/// Recoverable problems are reported per-document in
+/// [`Document::flags`](crate::document::Document::flags) and
+/// [`Document::diagnostics`](crate::document::Document::diagnostics) instead.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum ParseError {
     #[error("input exceeds u32::MAX bytes")]

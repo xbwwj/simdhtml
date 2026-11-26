@@ -12,7 +12,7 @@
 //! ```
 
 use simdhtml::document::Document;
-use simdhtml::document::id::{NO_NODE, NodeId};
+use simdhtml::document::id::NodeId;
 use simdhtml::document::node::NodeKind;
 use simdhtml::parse::{ParseOptions, RepairMode};
 use simdhtml_data::{Dataset, SamplePolicy};
@@ -45,7 +45,7 @@ fn check_preorder(doc: &Document<'_>, path: &std::path::Path) {
         );
         let mut child = node.first_child();
         let mut previous = None;
-        while child != NO_NODE {
+        while child != NodeId::NONE {
             assert!(
                 child > id && child < end,
                 "{}: child {child} of {id} outside [{}, {end})",

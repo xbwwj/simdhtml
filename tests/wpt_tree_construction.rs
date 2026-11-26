@@ -43,7 +43,7 @@ use std::path::Path;
 
 use simdhtml::character_reference::decode_character_references;
 use simdhtml::document::Document;
-use simdhtml::document::id::{DOC_ROOT, NO_NODE, NodeId};
+use simdhtml::document::id::NodeId;
 use simdhtml::document::namespace::Namespace;
 use simdhtml::document::node::NodeKind;
 use simdhtml::document::text::{normalize_newlines, replace_nulls};
@@ -426,7 +426,7 @@ fn simdhtml_node(doc: &Document, id: NodeId) -> TNode {
             attrs.sort();
             let mut children = Vec::new();
             let mut child = node.first_child();
-            while child != NO_NODE {
+            while child != NodeId::NONE {
                 children.push(simdhtml_node(doc, child));
                 child = doc.node(child).next_sibling();
             }
@@ -482,8 +482,8 @@ fn simdhtml_node(doc: &Document, id: NodeId) -> TNode {
 
 fn simdhtml_tree(doc: &Document) -> Vec<TNode> {
     let mut out = Vec::new();
-    let mut child = doc.node(DOC_ROOT).first_child();
-    while child != NO_NODE {
+    let mut child = doc.node(NodeId::ROOT).first_child();
+    while child != NodeId::NONE {
         out.push(simdhtml_node(doc, child));
         child = doc.node(child).next_sibling();
     }

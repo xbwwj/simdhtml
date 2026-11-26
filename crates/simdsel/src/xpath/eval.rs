@@ -22,20 +22,20 @@ pub(super) fn text_run(doc: &Document<'_>, id: NodeId) -> Option<NodeId> {
 /// Whether this text node is outside the root element: XPath's root node has no
 /// text children, though the tape keeps that text.
 fn outside_root(doc: &Document<'_>, id: NodeId) -> bool {
-    doc.node(id).parent() == DOC_ROOT
+    doc.node(id).parent() == NodeId::ROOT
 }
 
 /// Is this text node the continuation of a run whose first node is its
 /// preceding sibling?
 fn text_continuation(doc: &Document<'_>, id: NodeId) -> bool {
-    if id == DOC_ROOT {
+    if id == NodeId::ROOT {
         return false;
     }
     let previous = doc.node(id - 1);
     previous.is_text() && previous.parent() == doc.node(id).parent()
 }
 use simdhtml::document::Document;
-use simdhtml::document::id::{DOC_ROOT, NO_NODE, NodeId};
+use simdhtml::document::id::NodeId;
 use simdhtml::document::node::NodeKind;
 
 /// Evaluation context: the context node plus its position and set size, which
@@ -184,7 +184,7 @@ impl Evaluator<'_, '_> {
             .iter()
             .enumerate()
             .filter_map(|(tag, &element)| {
-                (element != NO_NODE && self.doc.tags.code[tag] == code).then_some(element)
+                (element != NodeId::NONE && self.doc.tags.code[tag] == code).then_some(element)
             })
             .collect();
         // Cloned elements share their start tag's token, so they are not in
@@ -300,7 +300,7 @@ impl Evaluator<'_, '_> {
                 } else {
                     let mut out = Vec::new();
                     let mut sibling = self.doc.node(node.node_id()).next_sibling();
-                    while sibling != NO_NODE {
+                    while sibling != NodeId::NONE {
                         out.push(self.ref_of(sibling));
                         sibling = self.doc.node(sibling).next_sibling();
                     }
@@ -314,7 +314,7 @@ impl Evaluator<'_, '_> {
                     let parent = self.doc.node(node.node_id()).parent();
                     let mut out = Vec::new();
                     let mut child = self.doc.node(parent).first_child();
-                    while child != NO_NODE && child != node.node_id() {
+                    while child != NodeId::NONE && child != node.node_id() {
                         out.push(self.ref_of(child));
                         child = self.doc.node(child).next_sibling();
                     }
@@ -336,7 +336,7 @@ impl Evaluator<'_, '_> {
         }
         let mut out = Vec::new();
         let mut child = self.doc.node(node.node_id()).first_child();
-        while child != NO_NODE {
+        while child != NodeId::NONE {
             out.push(self.ref_of(child));
             child = self.doc.node(child).next_sibling();
         }
@@ -777,7 +777,7 @@ impl Evaluator<'_, '_> {
                 break;
             }
             let parent = record.parent();
-            current = (parent != NO_NODE).then_some(parent);
+            current = (parent != NodeId::NONE).then_some(parent);
         }
         false
     }

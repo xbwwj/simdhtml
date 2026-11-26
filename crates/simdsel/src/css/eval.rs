@@ -1,7 +1,7 @@
 use std::cell::OnceCell;
 
 use simdhtml::document::Document;
-use simdhtml::document::id::{DOC_ROOT, NO_NODE, NO_TAG, NodeId};
+use simdhtml::document::id::{NodeId, TagId};
 use simdhtml::document::node::NodeKind;
 
 use crate::bitset::BitSet;
@@ -71,8 +71,8 @@ impl<'a> Eval<'a> {
         let n = doc.nodes.len();
 
         let mut root_element = None;
-        let mut child = doc.node(DOC_ROOT).first_child();
-        while child != NO_NODE {
+        let mut child = doc.node(NodeId::ROOT).first_child();
+        while child != NodeId::NONE {
             let node = doc.node(child);
             if node.is_element() {
                 root_element = Some(child);
@@ -138,7 +138,7 @@ impl<'a> Eval<'a> {
         self.set_scope(roots);
         let mut mask = self.selector_mask(selector, 0)?;
         if let Some(roots) = roots
-            && !(roots.len() == 1 && roots[0] == DOC_ROOT)
+            && !(roots.len() == 1 && roots[0] == NodeId::ROOT)
         {
             let include_scope =
                 selector_has_scope(selector) || selector_starts_with_implied_universal(selector);
@@ -160,7 +160,7 @@ impl<'a> Eval<'a> {
                         let id = NodeId::new(id);
                         allowed.set(id);
                     }
-                } else if node.parent() != NO_NODE {
+                } else if node.parent() != NodeId::NONE {
                     let parent = self.doc.node(node.parent());
                     if parent.is_element() {
                         for id in node.parent().get() + 1
@@ -282,7 +282,7 @@ impl<'a> Eval<'a> {
             Combinator::Child => {
                 for &id in set {
                     let mut child = self.doc.node(id).first_child();
-                    while child != NO_NODE {
+                    while child != NodeId::NONE {
                         windows.push((child, child + 1));
                         child = self.doc.node(child).next_sibling();
                     }
@@ -291,10 +291,10 @@ impl<'a> Eval<'a> {
             Combinator::Adjacent => {
                 for &id in set {
                     let mut next = self.doc.node(id).next_sibling();
-                    while next != NO_NODE && !self.doc.node(next).is_element() {
+                    while next != NodeId::NONE && !self.doc.node(next).is_element() {
                         next = self.doc.node(next).next_sibling();
                     }
-                    if next != NO_NODE {
+                    if next != NodeId::NONE {
                         windows.push((next, next + 1));
                     }
                 }
@@ -302,7 +302,7 @@ impl<'a> Eval<'a> {
             Combinator::GeneralSibling => {
                 for &id in set {
                     let mut next = self.doc.node(id).next_sibling();
-                    while next != NO_NODE {
+                    while next != NodeId::NONE {
                         windows.push((next, next + 1));
                         next = self.doc.node(next).next_sibling();
                     }
@@ -565,7 +565,7 @@ impl<'a> Eval<'a> {
     /// Case-insensitive tag-name test against source spelling.
     fn is_tag(&self, id: NodeId, name: &[u8]) -> bool {
         let tag = self.doc.node(id).tag_token();
-        if tag == NO_TAG {
+        if tag == TagId::NONE {
             return false;
         }
         let actual = self.doc.tag_name(tag);
@@ -610,14 +610,14 @@ impl<'a> Eval<'a> {
         }
         if self.is_tag(id, b"option")
             && let parent = self.doc.node(id).parent()
-            && parent != NO_NODE
+            && parent != NodeId::NONE
             && self.is_tag(parent, b"optgroup")
             && self.has_attr(parent, "disabled")
         {
             return true;
         }
         let mut current = self.doc.node(id).parent();
-        while current != NO_NODE {
+        while current != NodeId::NONE {
             let node = self.doc.node(current);
             if !node.is_element() {
                 break;
@@ -633,7 +633,7 @@ impl<'a> Eval<'a> {
     /// `:lang(x)`: the nearest ancestor-or-self `lang` is `x` or `x-*`.
     fn lang_matches(&self, id: NodeId, value: &str) -> bool {
         let mut current = id;
-        while current != NO_NODE {
+        while current != NodeId::NONE {
             let node = self.doc.node(current);
             if node.is_element()
                 && let Some(attr) = crate::dom::find_attr(self.doc, current, "lang")
@@ -689,7 +689,7 @@ impl<'a> Eval<'a> {
             Pseudo::Root => {
                 self.filter(mask, |id| Some(id) == self.root_element);
             }
-            Pseudo::Empty => self.filter(mask, |id| self.doc.node(id).first_child() == NO_NODE),
+            Pseudo::Empty => self.filter(mask, |id| self.doc.node(id).first_child() == NodeId::NONE),
             Pseudo::Scope => {
                 let scope = self.scope_mask().clone();
                 mask.and_assign(&scope);
@@ -758,7 +758,7 @@ impl<'a> Eval<'a> {
         });
         let (mut at, mut total) = (0u32, 0u32);
         let mut child = self.doc.node(parent).first_child();
-        while child != NO_NODE {
+        while child != NodeId::NONE {
             if *budget == 0 {
                 return None;
             }
@@ -897,7 +897,7 @@ impl<'a> Eval<'a> {
         let mut index = 0u32;
         let mut total = 0u32;
         let mut child = self.doc.node(node.parent()).first_child();
-        while child != NO_NODE {
+        while child != NodeId::NONE {
             let child_node = self.doc.node(child);
             if child_node.is_element()
                 && self
@@ -950,7 +950,7 @@ impl<'a> Eval<'a> {
         let mut out = BitSet::new(self.n);
         for id in set.iter_set() {
             let parent = self.doc.node(id).parent();
-            if parent != NO_NODE {
+            if parent != NodeId::NONE {
                 out.set(parent);
             }
         }
@@ -964,12 +964,12 @@ impl<'a> Eval<'a> {
         for parent in 0..self.n {
             let start = index.child_start[parent] as usize;
             let end = index.child_start[parent + 1] as usize;
-            let mut prev = NO_NODE;
+            let mut prev = NodeId::NONE;
             for &child in &index.children[start..end] {
                 if !self.doc.node(child).is_element() {
                     continue;
                 }
-                if set.get(child) && prev != NO_NODE {
+                if set.get(child) && prev != NodeId::NONE {
                     out.set(prev);
                 }
                 prev = child;
@@ -1006,7 +1006,7 @@ impl<'a> Eval<'a> {
         match pseudo {
             PseudoElement::Text => {
                 let mut child = self.doc.node(record.node).first_child();
-                while child != NO_NODE {
+                while child != NodeId::NONE {
                     if self.doc.node(child).is_text() {
                         out.push(MatchRecord {
                             node: child,
@@ -1056,7 +1056,7 @@ fn key_mask_scalar(
             continue;
         }
         let node = resolve(i);
-        if node != NO_NODE {
+        if node != NodeId::NONE {
             mask.set(node);
         }
     }
@@ -1064,7 +1064,7 @@ fn key_mask_scalar(
 
 /// Builds a node mask for a short, case-insensitive key (tag or attribute name).
 /// `starts`/`lens` are the key spans; `resolve` maps a key index to its element
-/// (`NO_NODE` for keys that own none, such as end tags).
+/// (`NodeId::NONE` for keys that own none, such as end tags).
 /// Sets every element whose tag code is `code`: one byte per tag token makes this
 /// a dense `cmpeq`+`movemask` scan (measured 0.22 vs 7.90 cycles per tag).
 fn tag_code_mask(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
@@ -1096,7 +1096,7 @@ fn tag_code_mask_scalar(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
     for (i, &c) in doc.tags.code.iter().enumerate() {
         if c == code {
             let node = doc.tags.element[i];
-            if node != NO_NODE {
+            if node != NodeId::NONE {
                 mask.set(node);
             }
         }
@@ -1119,7 +1119,7 @@ unsafe fn tag_code_mask_avx512(doc: &Document<'_>, code: u8, mask: &mut BitSet) 
             while bits != 0 {
                 let j = bits.trailing_zeros() as usize;
                 let node = doc.tags.element[i + j];
-                if node != NO_NODE {
+                if node != NodeId::NONE {
                     mask.set(node);
                 }
                 bits &= bits - 1;
@@ -1129,7 +1129,7 @@ unsafe fn tag_code_mask_avx512(doc: &Document<'_>, code: u8, mask: &mut BitSet) 
         for (k, item) in codes.iter().enumerate().skip(i) {
             if *item == code {
                 let node = doc.tags.element[k];
-                if node != NO_NODE {
+                if node != NodeId::NONE {
                     mask.set(node);
                 }
             }
@@ -1154,7 +1154,7 @@ unsafe fn tag_code_mask_neon(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
             while bits != 0 {
                 let j = bits.trailing_zeros() as usize;
                 let node = doc.tags.element[i + j];
-                if node != NO_NODE {
+                if node != NodeId::NONE {
                     mask.set(node);
                 }
                 bits &= bits - 1;
@@ -1164,7 +1164,7 @@ unsafe fn tag_code_mask_neon(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
         for (k, item) in codes.iter().enumerate().skip(i) {
             if *item == code {
                 let node = doc.tags.element[k];
-                if node != NO_NODE {
+                if node != NodeId::NONE {
                     mask.set(node);
                 }
             }
@@ -1188,7 +1188,7 @@ unsafe fn tag_code_mask_avx2(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
             while bits != 0 {
                 let j = bits.trailing_zeros() as usize;
                 let node = doc.tags.element[i + j];
-                if node != NO_NODE {
+                if node != NodeId::NONE {
                     mask.set(node);
                 }
                 bits &= bits - 1;
@@ -1198,7 +1198,7 @@ unsafe fn tag_code_mask_avx2(doc: &Document<'_>, code: u8, mask: &mut BitSet) {
         for (k, item) in codes.iter().enumerate().skip(i) {
             if *item == code {
                 let node = doc.tags.element[k];
-                if node != NO_NODE {
+                if node != NodeId::NONE {
                     mask.set(node);
                 }
             }
@@ -1307,7 +1307,7 @@ unsafe fn key_mask_avx2(
                 while bits != 0 {
                     let j = bits.trailing_zeros() as usize;
                     let node = resolve(i + j);
-                    if node != NO_NODE {
+                    if node != NodeId::NONE {
                         mask.set(node);
                     }
                     bits &= bits - 1;
@@ -1386,7 +1386,7 @@ unsafe fn key_mask_avx2(
                 while bits != 0 {
                     let j = bits.trailing_zeros() as usize;
                     let node = resolve(i + j);
-                    if node != NO_NODE {
+                    if node != NodeId::NONE {
                         mask.set(node);
                     }
                     bits &= bits - 1;
@@ -1442,8 +1442,8 @@ fn complex_has_scope(complex: &Complex) -> bool {
 
 /// The document's root element (first element child of the document node).
 pub fn root_element(doc: &Document<'_>) -> Option<NodeId> {
-    let mut child = doc.node(DOC_ROOT).first_child();
-    while child != NO_NODE {
+    let mut child = doc.node(NodeId::ROOT).first_child();
+    while child != NodeId::NONE {
         let node = doc.node(child);
         if node.is_element() {
             return Some(child);

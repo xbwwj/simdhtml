@@ -15,7 +15,7 @@ pub mod text;
 
 use self::attr::AttrTable;
 use self::flags::{Diagnostic, DocumentFlags};
-use self::id::{NO_TAG, NodeId, TagId};
+use self::id::{NodeId, TagId};
 use self::namespace::Namespace;
 use self::node::Node;
 use self::tag::TagTable;
@@ -147,7 +147,7 @@ impl Document<'_> {
             let parent = self.node(self.node(id).parent());
             let parent_ns = parent.namespace();
             let at_point = match parent.tag_token() {
-                NO_TAG => false,
+                TagId::NONE => false,
                 tag => {
                     let name = self.tag_name_lower(tag).to_ascii_lowercase();
                     let svg_point = matches!(name.as_ref(), "foreignobject" | "desc" | "title");

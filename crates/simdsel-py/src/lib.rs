@@ -36,10 +36,12 @@ enum Item {
 /// Create a document selector with ``Selector(text=...)`` or
 /// ``Selector(body=...)``, then chain :meth:`css` and :meth:`xpath`:
 ///
-///     >>> from simdsel.parsel import Selector
-///     >>> sel = Selector(text="<p>hi</p>")
-///     >>> sel.css("p::text").get()
-///     'hi'
+/// ```python
+/// >>> from simdsel.parsel import Selector
+/// >>> sel = Selector(text="<p>hi</p>")
+/// >>> sel.css("p::text").get()
+/// 'hi'
+/// ```
 ///
 /// Queries return a :class:`SelectorList`; :meth:`get` / :meth:`getall` turn
 /// it into strings. Documents are immutable and shared by chained selectors.
@@ -80,9 +82,11 @@ pub struct PySelector {
 /// item and flatten the results. The list is mutable and supports indexing,
 /// slicing, iteration, ``len()`` and ``+``.
 ///
-///     >>> sel = Selector(text="<b>a</b><b>b</b>")
-///     >>> [item.get() for item in sel.css("b")]
-///     ['<b>a</b>', '<b>b</b>']
+/// ```python
+/// >>> sel = Selector(text="<b>a</b><b>b</b>")
+/// >>> [item.get() for item in sel.css("b")]
+/// ['<b>a</b>', '<b>b</b>']
+/// ```
 #[pyclass(
     name = "SelectorList",
     module = "simdsel._simdsel",

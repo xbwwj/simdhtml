@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::document::Document;
 use crate::document::attr::AttrTable;
 use crate::document::flags::{DiagnosticKind, DocumentFlags};
-use crate::document::id::{DOC_ROOT, NO_NODE, NO_TAG, NodeId, TagId};
+use crate::document::id::{NodeId, TagId};
 use crate::document::namespace::Namespace;
 use crate::document::node::NodeKind;
 use crate::document::tag::TagTable;
@@ -217,7 +217,7 @@ pub(crate) fn build_with<'a>(
     // merge step below copies them along with the rest of the row.
     let mut attr_name_override = vec![0u8; tokens.attr_name_start.len()];
     for (tag_index, &element) in builder.tag_element.iter().enumerate() {
-        if element == NO_NODE {
+        if element == NodeId::NONE {
             continue;
         }
         let ns = builder.nodes.namespace_of(element);
@@ -320,7 +320,7 @@ pub(crate) fn build_with<'a>(
     }
     let mut tag_element = std::mem::take(&mut builder.tag_element);
     tokens.tags.extend(builder.implied_tags);
-    tag_element.resize(tokens.tags.len(), NO_NODE);
+    tag_element.resize(tokens.tags.len(), NodeId::NONE);
     for _ in 0..builder.implied_literals.len() {
         tokens.tag_name_start.push(0);
         tokens.tag_name_len.push(0);
@@ -406,29 +406,29 @@ impl TreeBuilder {
         nodes.push(NodeRecordInit {
             kind: NodeKind::Document,
             ns: Namespace::HTML,
-            parent: NO_NODE,
-            first_child: NO_NODE,
-            next_sibling: NO_NODE,
-            subtree_end: NO_NODE,
+            parent: NodeId::NONE,
+            first_child: NodeId::NONE,
+            next_sibling: NodeId::NONE,
+            subtree_end: NodeId::NONE,
             span: 0..0,
-            tag_token: NO_TAG,
+            tag_token: TagId::NONE,
             outer_end: input_len,
             raw_text: false,
             doctype: false,
             normalize_newlines: false,
         });
         let mut stack = Vec::with_capacity(64);
-        stack.push(DOC_ROOT);
+        stack.push(NodeId::ROOT);
         // Only open elements need a "last child" cursor.  Keeping these
         // parallel to the open stack (instead of one slot per node) avoids two
         // O(nodes) vector pushes and random writes for every text node.
         let mut last_child = Vec::with_capacity(64);
-        last_child.push(NO_NODE);
+        last_child.push(NodeId::NONE);
         Self {
             nodes,
             stack,
             last_child,
-            tag_element: vec![NO_NODE; tag_count],
+            tag_element: vec![NodeId::NONE; tag_count],
             implied_tags: Vec::new(),
             implied_literals: Vec::new(),
             source_tag_count: tag_count,
@@ -469,7 +469,7 @@ impl TreeBuilder {
             return;
         };
         debug_assert!(
-            id != DOC_ROOT,
+            id != NodeId::ROOT,
             "tree construction must not close the Document node"
         );
         let subtree_end = NodeId::new(self.nodes.len() as u32);
@@ -488,9 +488,9 @@ impl TreeBuilder {
             kind: NodeKind::Element,
             ns,
             parent,
-            first_child: NO_NODE,
-            next_sibling: NO_NODE,
-            subtree_end: NO_NODE,
+            first_child: NodeId::NONE,
+            next_sibling: NodeId::NONE,
+            subtree_end: NodeId::NONE,
             span,
             tag_token,
             outer_end: 0,
@@ -500,7 +500,7 @@ impl TreeBuilder {
         });
         self.append_child(parent, id);
         self.stack.push(id);
-        self.last_child.push(NO_NODE);
+        self.last_child.push(NodeId::NONE);
         id
     }
 
@@ -514,11 +514,11 @@ impl TreeBuilder {
             normalize_newlines: false,
             ns: Namespace::HTML,
             parent,
-            first_child: NO_NODE,
-            next_sibling: NO_NODE,
+            first_child: NodeId::NONE,
+            next_sibling: NodeId::NONE,
             subtree_end: NodeId::new(id.get() + 1),
             span: span.clone(),
-            tag_token: NO_TAG,
+            tag_token: TagId::NONE,
             outer_end: span.end,
             raw_text: false,
         });
@@ -535,11 +535,11 @@ impl TreeBuilder {
             kind: NodeKind::Text,
             ns: Namespace::HTML,
             parent,
-            first_child: NO_NODE,
-            next_sibling: NO_NODE,
+            first_child: NodeId::NONE,
+            next_sibling: NodeId::NONE,
             subtree_end: NodeId::new(id.get() + 1),
             span: span.clone(),
-            tag_token: NO_TAG,
+            tag_token: TagId::NONE,
             outer_end: span.end,
             raw_text: raw,
             doctype: false,
@@ -552,7 +552,7 @@ impl TreeBuilder {
         debug_assert_eq!(self.stack.last().copied(), Some(parent));
         let frame = self.stack.len() - 1;
         let previous_last = self.last_child[frame];
-        if previous_last == NO_NODE {
+        if previous_last == NodeId::NONE {
             self.nodes.set_first_child(parent, child);
         } else {
             self.nodes.set_next_sibling(previous_last, child);
@@ -563,15 +563,15 @@ impl TreeBuilder {
     fn finish(&mut self, input_len: u32) {
         let subtree_end = NodeId::new(self.nodes.len() as u32);
         for &node in self.stack.iter().rev() {
-            if self.nodes.subtree_end_of(node) == NO_NODE {
+            if self.nodes.subtree_end_of(node) == NodeId::NONE {
                 self.nodes.set_subtree_end(node, subtree_end);
             }
             let outer_end = self.nodes.outer_end_of(node).max(input_len);
             self.nodes.set_outer_end(node, outer_end);
         }
-        self.nodes.set_outer_end(DOC_ROOT, input_len);
-        if self.nodes.subtree_end_of(DOC_ROOT) == NO_NODE {
-            self.nodes.set_subtree_end(DOC_ROOT, subtree_end);
+        self.nodes.set_outer_end(NodeId::ROOT, input_len);
+        if self.nodes.subtree_end_of(NodeId::ROOT) == NodeId::NONE {
+            self.nodes.set_subtree_end(NodeId::ROOT, subtree_end);
         }
     }
 }
@@ -591,7 +591,7 @@ mod tests {
             let id = NodeId::new(raw as u32);
             let node = doc.node(id);
             if raw == 0 {
-                assert_eq!(node.parent(), NO_NODE);
+                assert_eq!(node.parent(), NodeId::NONE);
                 continue;
             }
             assert!(
@@ -613,7 +613,7 @@ mod tests {
             // Children are contiguous and in id order.
             let mut child = node.first_child();
             let mut last = None;
-            while child != NO_NODE {
+            while child != NodeId::NONE {
                 assert_eq!(doc.node(child).parent(), id);
                 assert!(child > id && child < node.subtree_end());
                 if let Some(last) = last {
