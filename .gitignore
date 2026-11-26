@@ -7,6 +7,7 @@
 *.dylib
 __pycache__/
 .pytest_cache/
+crates/simdsel-py/docs/_build/
 *.egg-info/
 .venv/
 /fuzz/target

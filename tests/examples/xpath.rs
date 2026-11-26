@@ -11,7 +11,11 @@ use std::{
 };
 
 use simdhtml::character_reference::decode_character_references;
-use simdsel::prelude::*;
+use simdhtml::document::Document;
+use simdhtml::document::id::NodeId;
+use simdhtml::document::node::NodeKind;
+use simdsel::xpath::value::RefKind;
+use simdsel::{Value, XPath};
 
 fn json_string(out: &mut String, text: &str) {
     out.push('"');

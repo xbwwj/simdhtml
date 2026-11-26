@@ -1,8 +1,8 @@
-pub mod ast;
-pub mod cache;
-pub mod eval;
-pub mod parser;
-pub mod select;
+pub(crate) mod ast;
+pub(crate) mod cache;
+pub(crate) mod eval;
+pub(crate) mod parser;
+pub(crate) mod select;
 
 #[cfg(test)]
 mod tests {

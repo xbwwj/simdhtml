@@ -1,3 +1,5 @@
+//! The single error type and its CSS/XPath payloads.
+
 use simdhtml::error::ParseError;
 use thiserror::Error;
 

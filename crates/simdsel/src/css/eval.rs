@@ -212,15 +212,6 @@ impl<'a> Eval<'a> {
         Ok(self.records_for(selector, &mask))
     }
 
-    pub(super) fn count(&self, selector: &SelectorList, roots: Option<&[NodeId]>) -> Result<usize> {
-        let mask = self.mask_for(selector, roots)?;
-        if common_pseudo(selector).is_some() {
-            Ok(self.records_for(selector, &mask).len())
-        } else {
-            Ok(mask.count_ones() as usize)
-        }
-    }
-
     fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet> {
         if depth > MAX_DEPTH {
             return Err(Error::Css(CssError::DepthLimit));

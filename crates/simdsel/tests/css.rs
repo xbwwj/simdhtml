@@ -1,4 +1,5 @@
 use simdsel::prelude::*;
+use simdsel::{ParseOptions, RepairMode};
 
 const HTML: &str = r#"\
 <html>
@@ -81,7 +82,7 @@ fn projection_gat_modes() {
         root.css_as::<Html>(".item .title").unwrap()[0],
         "<h2 class=\"title\">First &amp; best</h2>"
     );
-    assert_eq!(root.css_as::<Records>(".item").unwrap().len(), 2);
+    assert_eq!(root.css(".item").unwrap().len(), 2);
     assert_eq!(root.css_count(".item").unwrap(), 2);
 }
 

@@ -25,22 +25,6 @@ pub trait Projection {
     ) -> Result<Self::Output<'a>>;
 }
 
-/// Raw `MatchRecord` projection.
-pub struct Records;
-
-impl Projection for Records {
-    type Output<'a> = Vec<MatchRecord>;
-
-    fn finish<'a>(
-        doc: &'a Document<'_>,
-        selector: &SelectorList,
-        mask: BitSet,
-    ) -> Result<Self::Output<'a>> {
-        let cache = QueryCache::root();
-        Ok(Eval::new(doc, &cache).records_for(selector, &mask))
-    }
-}
-
 /// Count-only projection: no records allocated.
 pub struct Count;
 
@@ -109,14 +93,15 @@ impl Projection for Texts {
 }
 
 /// Selects all elements matching `selector`, in document order.
+#[cfg(test)]
 pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRecord>> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     ctx.select(selector, None)
 }
 
-/// Selects matching elements inside the subtrees of `roots`: what chained
-/// `SelectorList.css()` uses.
+/// Selects matching elements inside the subtrees of `roots`.
+#[cfg(test)]
 pub fn select_within(
     doc: &Document<'_>,
     selector: &SelectorList,
@@ -145,46 +130,6 @@ pub fn select_as_within_cache<'a, P: Projection>(
     cache: &QueryCache,
 ) -> Result<P::Output<'a>> {
     let ctx = Eval::new(doc, cache);
-    let mask = ctx.mask_for(selector, Some(roots))?;
-    P::finish(doc, selector, mask)
-}
-
-/// Counts matches without materializing records.  Pseudo-elements fall back to
-/// record projection so `::text` / `::attr()` counts stay correct.
-pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize> {
-    let cache = QueryCache::root();
-    Eval::new(doc, &cache).count(selector, None)
-}
-
-/// Like [`select_count`], but restricted to the subtrees of `roots`.
-pub fn select_count_within(
-    doc: &Document<'_>,
-    selector: &SelectorList,
-    roots: &[NodeId],
-) -> Result<usize> {
-    let cache = QueryCache::root();
-    Eval::new(doc, &cache).count(selector, Some(roots))
-}
-
-/// Evaluates `selector` and projects the result with `P`.
-pub fn select_as<'a, P: Projection>(
-    doc: &'a Document<'_>,
-    selector: &SelectorList,
-) -> Result<P::Output<'a>> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
-    let mask = ctx.mask_for(selector, None)?;
-    P::finish(doc, selector, mask)
-}
-
-/// Like [`select_as`], but restricted to the subtrees of `roots`.
-pub fn select_as_within<'a, P: Projection>(
-    doc: &'a Document<'_>,
-    selector: &SelectorList,
-    roots: &[NodeId],
-) -> Result<P::Output<'a>> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
     let mask = ctx.mask_for(selector, Some(roots))?;
     P::finish(doc, selector, mask)
 }

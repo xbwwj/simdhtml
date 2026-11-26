@@ -1,6 +1,8 @@
-pub mod ast;
-pub mod eval;
-pub mod parser;
+//! Compiled XPath 1.0 expressions and values.
+
+pub(crate) mod ast;
+pub(crate) mod eval;
+pub(crate) mod parser;
 pub mod value;
 
 use value::{NodeRef, Value};

@@ -1,3 +1,5 @@
+//! The parsel-shaped [`Selector`].
+
 use std::borrow::Cow;
 use std::rc::Rc;
 
@@ -7,17 +9,37 @@ use simdhtml::parse::{EncodingMode, ParseOptions};
 
 use crate::css::ast::SelectorList;
 use crate::css::cache::QueryCache;
+use crate::css::eval::root_element;
 use crate::css::parser::parse_selector;
 use crate::css::select::{Count, Projection, extract, select_as_within_cache, select_within_cache};
 use crate::error::Result;
 use crate::record::{MatchKind, MatchRecord};
+use crate::xpath::XPath;
+use crate::xpath::value::{NodeRef, RefKind, Value};
+
+/// One result of a selector chain: an element/text/attribute match or a
+/// scalar XPath string.
+#[derive(Clone, Debug)]
+enum Item {
+    Record(MatchRecord),
+    Text(String),
+}
 
 /// An owned document or a result set, like parsel's `Selector`/`SelectorList`.
+///
+/// ```
+/// use simdsel::Selector;
+///
+/// let sel = Selector::from_text(r#"<div class=item><b>hi</b></div>"#)?;
+/// assert_eq!(sel.css(".item b::text")?.get(), Some("hi".into()));
+/// assert_eq!(sel.xpath("//b/text()")?.get(), Some("hi".into()));
+/// # Ok::<(), simdsel::Error>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Selector<'a> {
     doc: Rc<Document<'a>>,
     roots: Vec<NodeId>,
-    records: Vec<MatchRecord>,
+    items: Vec<Item>,
     /// Derived query data (masks, child index) shared by every query from this
     /// selector.  A function of the document, not of `roots`, so it stays valid
     /// as queries narrow; built on demand.
@@ -25,25 +47,28 @@ pub struct Selector<'a> {
 }
 
 impl<'a> Selector<'a> {
-    /// Wraps an already parsed document and selects from its root.
+    /// Wraps an already parsed document and selects its root element.
     ///
-    /// ```no_run
-    /// use simdsel::prelude::{Document, Error, Selector};
+    /// ```
+    /// use simdsel::{Document, Selector};
     ///
-    /// let body: Vec<u8> = Vec::new(); // a fetched response body
-    /// let sel = Selector::new(Document::parse_owned(body)?);
-    /// # Ok::<(), Error>(())
+    /// let doc = Document::parse(b"<p>hi</p>")?;
+    /// let sel = Selector::new(doc);
+    /// assert_eq!(sel.css("p::text")?.get(), Some("hi".into()));
+    /// # Ok::<(), simdsel::Error>(())
     /// ```
     pub fn new(doc: Document<'a>) -> Self {
+        let root = Item::Record(document_record(&doc));
         Self {
             doc: Rc::new(doc),
             roots: vec![DOC_ROOT],
-            records: Vec::new(),
+            items: vec![root],
             cache: Rc::new(QueryCache::root()),
         }
     }
 
     /// Parses `input` as bytes (parsel's `body=`) and selects from its root.
+    /// The charset is sniffed from a BOM or `<meta charset>`.
     pub fn from_bytes(input: &'a [u8]) -> Result<Self> {
         Ok(Self::new(Document::parse(input)?))
     }
@@ -65,15 +90,28 @@ impl<'a> Selector<'a> {
         )
     }
 
-    /// Splits a result set into one single-result selector per record; the
+    /// Splits a result set into one single-result selector per item; the
     /// derived selectors share the document and the query cache.
+    ///
+    /// ```
+    /// use simdsel::Selector;
+    ///
+    /// let sel = Selector::from_text("<b>a</b><b>b</b>")?;
+    /// let items = sel.css("b")?.split();
+    /// let texts = items.iter().filter_map(|b| b.text()).collect::<Vec<_>>();
+    /// assert_eq!(texts, vec!["a", "b"]);
+    /// # Ok::<(), simdsel::Error>(())
+    /// ```
     pub fn split(&self) -> Vec<Self> {
-        self.records
+        self.items
             .iter()
-            .map(|record| Self {
+            .map(|item| Self {
                 doc: Rc::clone(&self.doc),
-                roots: vec![record.node],
-                records: vec![record.clone()],
+                roots: match item {
+                    Item::Record(record) => vec![record.node],
+                    Item::Text(_) => Vec::new(),
+                },
+                items: vec![item.clone()],
                 cache: Rc::clone(&self.cache),
             })
             .collect()
@@ -89,19 +127,24 @@ impl<'a> Selector<'a> {
         &self.roots
     }
 
-    /// Current records.
-    pub fn records(&self) -> &[MatchRecord] {
-        &self.records
+    /// Whether every result is a string: an XPath scalar or `::text`/`::attr`
+    /// output rather than an element.
+    pub fn is_text(&self) -> bool {
+        !self.items.is_empty()
+            && self.items.iter().all(|item| match item {
+                Item::Text(_) => true,
+                Item::Record(record) => record.kind != MatchKind::Element,
+            })
     }
 
-    /// Number of records.
+    /// Number of results.
     pub fn len(&self) -> usize {
-        self.records.len()
+        self.items.len()
     }
 
-    /// Whether there are no records.
+    /// Whether the selection is empty.
     pub fn is_empty(&self) -> bool {
-        self.records.is_empty()
+        self.items.is_empty()
     }
 
     /// Per-thread compiled-selector intern table: `css*` takes selector text on
@@ -131,7 +174,10 @@ impl<'a> Selector<'a> {
         })
     }
 
-    /// Compiles and evaluates a CSS selector inside the current roots.
+    /// Compiles and evaluates a CSS selector inside the current results.
+    ///
+    /// The current results are not part of the search (use `:scope` to include
+    /// them). `::text` and `::attr(name)` select text and attribute values.
     pub fn css(&self, query: &str) -> Result<Self> {
         let parsed = Self::compiled(query)?;
         let records = select_within_cache(&self.doc, &parsed, &self.roots, &self.cache)?;
@@ -139,7 +185,56 @@ impl<'a> Selector<'a> {
         Ok(Self {
             doc: Rc::clone(&self.doc),
             roots,
-            records,
+            items: records.into_iter().map(Item::Record).collect(),
+            cache: Rc::clone(&self.cache),
+        })
+    }
+
+    /// Evaluates an XPath 1.0 expression at every element result, flattening the
+    /// node-sets into parsel-shaped items: elements stay elements, text and
+    /// attribute nodes become strings, scalars become one string.
+    ///
+    /// Text results cannot be queried further, as in parsel.
+    pub fn xpath(&self, expr: &str) -> Result<Self> {
+        let path = XPath::new(expr)?;
+        let mut items = Vec::new();
+        let mut roots = Vec::new();
+        for item in &self.items {
+            let Item::Record(record) = item else {
+                continue;
+            };
+            if record.kind != MatchKind::Element {
+                continue;
+            }
+            let context = NodeRef::element(record.node);
+            match path.eval_at(&self.doc, context)? {
+                Value::Nodes(nodes) => {
+                    for node in nodes {
+                        match node.kind() {
+                            RefKind::Element => {
+                                let record = element_record(&self.doc, node.node_id());
+                                roots.push(record.node);
+                                items.push(Item::Record(record));
+                            }
+                            RefKind::Text | RefKind::Attribute => {
+                                items.push(Item::Text(node.string_value(&self.doc).into_owned()))
+                            }
+                            // parsel never sees the document node (lxml has none).
+                            RefKind::Document => {}
+                        }
+                    }
+                }
+                Value::Str(text) => items.push(Item::Text(text)),
+                Value::Number(number) => items.push(Item::Text(format_number(number))),
+                Value::Bool(value) => {
+                    items.push(Item::Text(if value { "1" } else { "0" }.to_string()));
+                }
+            }
+        }
+        Ok(Self {
+            doc: Rc::clone(&self.doc),
+            roots,
+            items,
             cache: Rc::clone(&self.cache),
         })
     }
@@ -159,37 +254,49 @@ impl<'a> Selector<'a> {
     /// First result's extracted string.  Element results are the original source
     /// slice, not a re-serialization; text and attribute results are decoded.
     pub fn get(&self) -> Option<Cow<'_, str>> {
-        self.records
-            .first()
-            .map(|record| extract(&self.doc, record))
+        self.items.first().map(|item| self.item_value(item))
     }
 
     /// All result strings.
     pub fn getall(&self) -> Vec<Cow<'_, str>> {
-        self.records
+        self.items
             .iter()
-            .map(|record| extract(&self.doc, record))
+            .map(|item| self.item_value(item))
             .collect()
     }
 
     /// First result's text content.
     pub fn text(&self) -> Option<Cow<'_, str>> {
-        self.records
-            .first()
-            .and_then(|record| record_text(&self.doc, record))
+        match self.items.first()? {
+            Item::Record(record) => record_text(&self.doc, record),
+            Item::Text(text) => Some(Cow::Borrowed(text)),
+        }
     }
 
     /// All result text contents.
     pub fn texts(&self) -> Vec<Cow<'_, str>> {
-        self.records
+        self.items
             .iter()
-            .filter_map(|record| record_text(&self.doc, record))
+            .filter_map(|item| match item {
+                Item::Record(record) => record_text(&self.doc, record),
+                Item::Text(text) => Some(Cow::Borrowed(text.as_str())),
+            })
             .collect()
     }
 
     /// Attributes of the first element result.
     pub fn attrib(&self) -> Option<Vec<(String, String)>> {
-        record_attrib(&self.doc, self.records.first()?)
+        match self.items.first()? {
+            Item::Record(record) => record_attrib(&self.doc, record),
+            Item::Text(_) => None,
+        }
+    }
+
+    fn item_value<'s>(&'s self, item: &'s Item) -> Cow<'s, str> {
+        match item {
+            Item::Record(record) => extract(&self.doc, record),
+            Item::Text(text) => Cow::Borrowed(text),
+        }
     }
 }
 
@@ -197,12 +304,13 @@ impl Selector<'static> {
     /// Parses an owned buffer and selects from its root: the bytes move into the
     /// document and the selector carries no lifetime.
     ///
-    /// ```no_run
-    /// use simdsel::prelude::{Error, Selector};
+    /// ```
+    /// use simdsel::Selector;
     ///
-    /// let body: Vec<u8> = Vec::new(); // a fetched response body
+    /// let body = b"<p>hi</p>".to_vec();
     /// let sel = Selector::from_vec(body)?;
-    /// # Ok::<(), Error>(())
+    /// assert_eq!(sel.css("p::text")?.get(), Some("hi".into()));
+    /// # Ok::<(), simdsel::Error>(())
     /// ```
     pub fn from_vec(input: Vec<u8>) -> Result<Self> {
         Ok(Self::new(Document::parse_owned(input)?))
@@ -232,22 +340,47 @@ impl<'a> From<Document<'a>> for Selector<'a> {
     }
 }
 
-/// Compiles `query` (through the per-thread intern table) and evaluates it
-/// inside `roots`, reusing the chain-local [`QueryCache`].  Used by language
-/// bindings to run one query without rebuilding a [`Selector`].
-pub fn select_query_within_cache(
-    doc: &Document<'_>,
-    roots: &[NodeId],
-    cache: &QueryCache,
-    query: &str,
-) -> Result<Vec<MatchRecord>> {
-    let parsed = Selector::compiled(query)?;
-    select_within_cache(doc, &parsed, roots, cache)
+/// One match record for an element node.
+fn element_record(doc: &Document<'_>, id: NodeId) -> MatchRecord {
+    let node = doc.node(id);
+    MatchRecord {
+        node: id,
+        kind: MatchKind::Element,
+        span: node.span(),
+        outer_end: node.outer_end(),
+        attr: None,
+    }
+}
+
+/// The record a document selector starts with: the root element, or the
+/// document node when the parse produced no element.
+fn document_record(doc: &Document<'_>) -> MatchRecord {
+    match root_element(doc) {
+        Some(id) => element_record(doc, id),
+        None => MatchRecord {
+            node: DOC_ROOT,
+            kind: MatchKind::Element,
+            span: 0..0,
+            outer_end: 0,
+            attr: None,
+        },
+    }
+}
+
+/// Python's `repr(float)`, which is what parsel stringifies XPath numbers with.
+fn format_number(value: f64) -> String {
+    if value.is_nan() {
+        return "nan".to_string();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "inf" } else { "-inf" }.to_string();
+    }
+    format!("{value:?}")
 }
 
 /// Text content of one match record: subtree text for elements, the decoded
 /// node for text records, nothing for attributes.
-pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Cow<'a, str>> {
+pub(crate) fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Cow<'a, str>> {
     match record.kind {
         MatchKind::Element => Some(Cow::Owned(crate::dom::text_content(doc, record.node))),
         MatchKind::Text => Some(doc.text(record.node)),
@@ -257,7 +390,10 @@ pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Co
 
 /// Attributes of one element match record, deduplicated first-wins.  `None` for
 /// text and attribute records.
-pub fn record_attrib(doc: &Document<'_>, record: &MatchRecord) -> Option<Vec<(String, String)>> {
+pub(crate) fn record_attrib(
+    doc: &Document<'_>,
+    record: &MatchRecord,
+) -> Option<Vec<(String, String)>> {
     if record.kind != MatchKind::Element {
         return None;
     }

@@ -10,11 +10,16 @@ with one changed import.
 ## Install
 
 ```bash
+uv add simdsel
+# or
 pip install simdsel
 ```
 
 Wheels are CPython abi3 (Python ≥ 3.9) and self-contained: no Rust toolchain, no
 libxml2, no lxml.
+
+Full documentation, including the XPath subset and Scrapy integration:
+<https://xbwwj.github.io/simdhtml/>.
 
 ## Quickstart
 

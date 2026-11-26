@@ -13,10 +13,8 @@ use pyo3::types::{
     PyAny, PyAnyMethods, PyByteArray, PyBytes, PyDict, PyList, PySlice, PySliceMethods,
 };
 use simdhtml::character_reference::decode_character_references;
-use simdhtml::document::Document;
-use simdhtml::document::id::{DOC_ROOT, NodeId};
 use simdhtml::parse::{EncodingMode, ParseOptions, RepairMode};
-use simdsel::prelude::*;
+use simdsel::prelude::{Error, Selector};
 
 /// parsel's default XPath namespace map (EXSLT), reported by `.namespaces`.
 const DEFAULT_NAMESPACES: [(&str, &str); 2] = [
@@ -28,21 +26,46 @@ const DEFAULT_NAMESPACES: [(&str, &str); 2] = [
 #[derive(Clone)]
 enum Item {
     /// An element (from `css()` or an XPath node-set).
-    Element(MatchRecord),
+    Element(Selector<'static>),
     /// A string: an XPath text node, attribute value, or scalar result.
     Text(String),
 }
 
-/// Parsel-shaped single selector.
+/// A parsel-shaped selector over one HTML document or one result.
+///
+/// Create a document selector with ``Selector(text=...)`` or
+/// ``Selector(body=...)``, then chain :meth:`css` and :meth:`xpath`:
+///
+///     >>> from simdsel.parsel import Selector
+///     >>> sel = Selector(text="<p>hi</p>")
+///     >>> sel.css("p::text").get()
+///     'hi'
+///
+/// Queries return a :class:`SelectorList`; :meth:`get` / :meth:`getall` turn
+/// it into strings. Documents are immutable and shared by chained selectors.
+///
+/// Args:
+///     text (str): Already decoded HTML.
+///     type (str): ``"html"`` (default) or ``"text"``.
+///     body (bytes): HTML bytes; the charset is sniffed unless ``encoding``
+///         is given.
+///     encoding (str): Charset label for ``body=`` or ``text=``.
+///     namespaces (dict): XPath prefix map (stored, not resolved).
+///     root: Not supported; an lxml node cannot be shared.
+///     base_url (str): Stored as metadata and reported by :attr:`base_url`.
+///     _expr (str): The query that produced this selector, for ``repr``.
+///     huge_tree (bool): Accepted for parsel compatibility; ignored.
+///     mode (str): ``"none"`` (default, fast flat parse) or ``"spec"``
+///         (HTML-spec tree construction).
+///
+/// Raises:
+///     ValueError: If no input is given, or ``type`` / ``mode`` / ``encoding``
+///         is invalid.
+///     NotImplementedError: For ``type="xml"`` / ``"json"`` or ``root=``.
 #[pyclass(name = "Selector", module = "simdsel._simdsel", unsendable)]
 #[derive(Clone)]
 pub struct PySelector {
-    doc: Rc<Document<'static>>,
     item: Item,
-    /// Nodes a chained `css()` searches (the document node for a document
-    /// selector, the element for an element selector, nothing for strings).
-    scope: Vec<NodeId>,
-    cache: Rc<QueryCache>,
     base_url: Option<String>,
     /// `_expr` from parsel, shown by `repr`.
     expr: Option<String>,
@@ -51,7 +74,15 @@ pub struct PySelector {
     type_name: &'static str,
 }
 
-/// Parsel-shaped selector list.
+/// A parsel-shaped list of selectors.
+///
+/// :meth:`Selector.css` and :meth:`Selector.xpath` apply the query to every
+/// item and flatten the results. The list is mutable and supports indexing,
+/// slicing, iteration, ``len()`` and ``+``.
+///
+///     >>> sel = Selector(text="<b>a</b><b>b</b>")
+///     >>> [item.get() for item in sel.css("b")]
+///     ['<b>a</b>', '<b>b</b>']
 #[pyclass(
     name = "SelectorList",
     module = "simdsel._simdsel",
@@ -60,32 +91,6 @@ pub struct PySelector {
 )]
 pub struct PySelectorList {
     items: Vec<PySelector>,
-}
-
-fn element_record(doc: &Document<'_>, id: NodeId) -> MatchRecord {
-    let node = doc.node(id);
-    MatchRecord {
-        node: id,
-        kind: MatchKind::Element,
-        span: node.span(),
-        outer_end: node.outer_end(),
-        attr: None,
-    }
-}
-
-/// The record a document-level selector starts with: the root element, or the
-/// document node when there is none (`get()` is then `""`).
-fn document_record(doc: &Document<'_>) -> MatchRecord {
-    match root_element(doc) {
-        Some(id) => element_record(doc, id),
-        None => MatchRecord {
-            node: DOC_ROOT,
-            kind: MatchKind::Element,
-            span: 0..0,
-            outer_end: 0,
-            attr: None,
-        },
-    }
 }
 
 fn default_namespaces() -> Rc<Vec<(String, String)>> {
@@ -98,93 +103,50 @@ fn default_namespaces() -> Rc<Vec<(String, String)>> {
 }
 
 impl PySelector {
-    fn scalar(doc: Rc<Document<'static>>, value: impl Into<String>, expr: Option<String>) -> Self {
+    /// A `::text` / `::attr()` result is a string in parsel, not an element:
+    /// `.attrib` raises and chained queries are empty.
+    fn wrap(&self, selector: Selector<'static>, expr: Option<String>) -> Self {
+        let item = if selector.is_text() {
+            Item::Text(selector.get().map(Cow::into_owned).unwrap_or_default())
+        } else {
+            Item::Element(selector)
+        };
         Self {
-            doc,
-            item: Item::Text(value.into()),
-            scope: Vec::new(),
-            cache: Rc::new(QueryCache::root()),
-            base_url: None,
-            expr,
-            namespaces: default_namespaces(),
-            type_name: "text",
-        }
-    }
-
-    fn from_item(
-        doc: Rc<Document<'static>>,
-        cache: Rc<QueryCache>,
-        item: Item,
-        scope: Vec<NodeId>,
-        base_url: Option<String>,
-        expr: Option<String>,
-        namespaces: Rc<Vec<(String, String)>>,
-    ) -> Self {
-        Self {
-            doc,
             item,
-            scope,
-            cache,
-            base_url,
+            base_url: self.base_url.clone(),
             expr,
-            namespaces,
+            namespaces: Rc::clone(&self.namespaces),
             type_name: "html",
         }
     }
 
-    fn xpath_node_selector(&self, node: NodeRef) -> Option<Self> {
-        let item = match node.kind() {
-            RefKind::Element => Item::Element(element_record(&self.doc, node.node_id())),
-            RefKind::Text | RefKind::Attribute => {
-                Item::Text(node.string_value(&self.doc).into_owned())
-            }
-            // lxml has no document node, so parsel never returns one; the Rust
-            // API keeps it (the XPath data model has it).
-            RefKind::Document => return None,
-        };
-        let scope = match node.kind() {
-            RefKind::Element => vec![node.node_id()],
-            _ => Vec::new(),
-        };
-        Some(Self::from_item(
-            Rc::clone(&self.doc),
-            Rc::clone(&self.cache),
-            item,
-            scope,
-            self.base_url.clone(),
-            self.expr.clone(),
-            Rc::clone(&self.namespaces),
-        ))
+    fn spread(&self, selector: Selector<'static>, expr: Option<String>) -> Vec<Self> {
+        selector
+            .split()
+            .into_iter()
+            .map(|part| self.wrap(part, expr.clone()))
+            .collect()
     }
 
-    /// Context node for `eval_at`; `None` for string selectors.
-    fn context_node(&self) -> Option<NodeRef> {
+    fn value(&self) -> Option<String> {
         match &self.item {
-            Item::Element(record) => Some(NodeRef::element(record.node)),
-            Item::Text(_) => None,
+            Item::Element(selector) => selector.get().map(Cow::into_owned),
+            Item::Text(value) => Some(value.clone()),
         }
     }
 
-    fn value(&self) -> Option<Cow<'_, str>> {
+    fn text_value(&self) -> Option<String> {
         match &self.item {
-            Item::Element(record) => Some(extract(&self.doc, record)),
-            Item::Text(value) => Some(Cow::Borrowed(value.as_str())),
-        }
-    }
-
-    fn text_value(&self) -> Option<Cow<'_, str>> {
-        match &self.item {
-            Item::Element(record) => record_text(&self.doc, record),
-            Item::Text(value) => Some(Cow::Borrowed(value.as_str())),
+            Item::Element(selector) => selector.text().map(Cow::into_owned),
+            Item::Text(value) => Some(value.clone()),
         }
     }
 
     fn attrib_map(&self) -> PyResult<HashMap<String, String>> {
         match &self.item {
-            Item::Element(record) => Ok(record_attrib(&self.doc, record)
-                .unwrap_or_default()
-                .into_iter()
-                .collect()),
+            Item::Element(selector) => {
+                Ok(selector.attrib().unwrap_or_default().into_iter().collect())
+            }
             // parsel reaches through to the lxml node, so a string result is an
             // `AttributeError` rather than an empty dict.
             Item::Text(_) => Err(PyAttributeError::new_err(
@@ -207,83 +169,28 @@ impl PySelector {
     /// Builds the selector list for a chained query, per parsel: one item per
     /// matched node (the list level flattens across items).
     fn query_items(&self, query: &str) -> PyResult<Vec<PySelector>> {
-        if self.scope.is_empty() {
-            return Ok(Vec::new());
+        match &self.item {
+            Item::Element(selector) => {
+                let selected = selector.css(query).map_err(to_py_err)?;
+                Ok(self.spread(selected, self.expr.clone()))
+            }
+            // parsel re-parses a string selector's text as an HTML document;
+            // for anything structural that is empty.
+            Item::Text(_) => Ok(Vec::new()),
         }
-        let records = select_query_within_cache(&self.doc, &self.scope, &self.cache, query)
-            .map_err(to_py_err)?;
-        Ok(records
-            .into_iter()
-            .map(|record| {
-                // A `::text` / `::attr()` record is a string result in parsel
-                // (a text selector), not an element: `.attrib` raises and
-                // chained queries are empty.
-                let (item, scope) = match record.kind {
-                    MatchKind::Element => (Item::Element(record.clone()), vec![record.node]),
-                    MatchKind::Text | MatchKind::Attr => (
-                        Item::Text(extract(&self.doc, &record).into_owned()),
-                        Vec::new(),
-                    ),
-                };
-                Self::from_item(
-                    Rc::clone(&self.doc),
-                    Rc::clone(&self.cache),
-                    item,
-                    scope,
-                    self.base_url.clone(),
-                    self.expr.clone(),
-                    Rc::clone(&self.namespaces),
-                )
-            })
-            .collect())
     }
 
     /// Runs `query` from every context node and returns the flattened items.
     fn xpath_items(&self, query: &str) -> PyResult<Vec<PySelector>> {
-        let Some(context) = self.context_node() else {
-            // parsel re-parses a string selector's text as an HTML document;
-            // for anything structural that is empty.
-            return Ok(Vec::new());
-        };
-        let path = XPath::new(query)
-            .map_err(|error| PyValueError::new_err(format!("XPath error: {error} in {query}")))?;
-        let value = path
-            .eval_at(&self.doc, context)
-            .map_err(|error| PyValueError::new_err(format!("XPath error: {error} in {query}")))?;
-        let mut items = Vec::new();
-        match value {
-            Value::Nodes(nodes) => {
-                for node in nodes {
-                    if let Some(selector) = self.xpath_node_selector(node) {
-                        items.push(selector.with_expr(query));
-                    }
-                }
+        match &self.item {
+            Item::Element(selector) => {
+                let selected = selector
+                    .xpath(query)
+                    .map_err(|error| xpath_err(error, query))?;
+                Ok(self.spread(selected, Some(query.to_string())))
             }
-            Value::Str(text) => items.push(self.scalar_like(text, query)),
-            Value::Number(number) => items.push(self.scalar_like(format_number(number), query)),
-            Value::Bool(value) => {
-                items.push(self.scalar_like(if value { "1" } else { "0" }, query));
-            }
+            Item::Text(_) => Ok(Vec::new()),
         }
-        Ok(items)
-    }
-
-    fn scalar_like(&self, value: impl Into<String>, query: &str) -> PySelector {
-        Self {
-            doc: Rc::clone(&self.doc),
-            item: Item::Text(value.into()),
-            scope: Vec::new(),
-            cache: Rc::clone(&self.cache),
-            base_url: self.base_url.clone(),
-            expr: Some(query.to_string()),
-            namespaces: Rc::clone(&self.namespaces),
-            type_name: "html",
-        }
-    }
-
-    fn with_expr(mut self, query: &str) -> Self {
-        self.expr = Some(query.to_string());
-        self
     }
 }
 
@@ -336,12 +243,13 @@ impl PySelector {
             let text = text.filter(|text| !text.is_empty()).ok_or_else(|| {
                 PyValueError::new_err("Selector needs text, body, or root arguments")
             })?;
-            let doc = Document::parse_owned_with(Vec::new(), ParseOptions::default())
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
-            let mut selector = Self::scalar(Rc::new(doc), text, _expr);
-            selector.base_url = base_url;
-            selector.namespaces = namespace_map;
-            selector.type_name = "text";
+            let selector = Self {
+                item: Item::Text(text.to_string()),
+                base_url,
+                expr: _expr,
+                namespaces: namespace_map,
+                type_name: "text",
+            };
             return Ok(selector);
         }
 
@@ -401,15 +309,10 @@ impl PySelector {
             }
         };
 
-        let doc = Document::parse_owned_with(bytes, options)
+        let selector = Selector::from_vec_with(bytes, options)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let doc = Rc::new(doc);
-        let scope = vec![DOC_ROOT];
         Ok(Self {
-            item: Item::Element(document_record(&doc)),
-            scope,
-            doc,
-            cache: Rc::new(QueryCache::root()),
+            item: Item::Element(selector),
             base_url,
             expr: _expr,
             namespaces: namespace_map,
@@ -417,20 +320,22 @@ impl PySelector {
         })
     }
 
-    /// Parses a list of byte buffers sequentially (simdsel extension).
+    /// Parses a list of byte buffers into document selectors.
+    ///
+    /// Args:
+    ///     bodies (Iterable[bytes]): HTML byte buffers.
+    ///
+    /// Returns:
+    ///     list[Selector]
     #[staticmethod]
     fn parse_many(bodies: Vec<Vec<u8>>) -> PyResult<Vec<PySelector>> {
         bodies
             .into_iter()
             .map(|body| {
-                let doc = Document::parse_owned_with(body, ParseOptions::default())
+                let selector = Selector::from_vec_with(body, ParseOptions::default())
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
-                let doc = Rc::new(doc);
                 Ok(Self {
-                    item: Item::Element(document_record(&doc)),
-                    scope: vec![DOC_ROOT],
-                    doc,
-                    cache: Rc::new(QueryCache::root()),
+                    item: Item::Element(selector),
                     base_url: None,
                     expr: None,
                     namespaces: default_namespaces(),
@@ -440,19 +345,22 @@ impl PySelector {
             .collect()
     }
 
-    /// Base URL (stored only; simdsel never fetches).
+    /// The stored base URL, if any. simdsel never fetches anything.
     #[getter]
     fn base_url(&self) -> Option<&str> {
         self.base_url.as_deref()
     }
 
-    /// parsel's `Selector.type` (`"html"` or `"text"`).
+    /// parsel's ``Selector.type``: ``"html"`` or ``"text"``.
     #[getter]
     fn r#type(&self) -> &'static str {
         self.type_name
     }
 
-    /// parsel returns an lxml node here; simdsel has no such object.
+    /// Not supported: simdsel has no lxml node.
+    ///
+    /// Raises:
+    ///     NotImplementedError: Always.
     #[getter]
     fn root(&self) -> PyResult<()> {
         Err(PyNotImplementedError::new_err(
@@ -460,7 +368,7 @@ impl PySelector {
         ))
     }
 
-    /// Namespace prefixes visible to `xpath()` (defaults to parsel's EXSLT map).
+    /// Namespace prefixes reported to ``xpath()`` (parsel's EXSLT defaults).
     #[getter]
     fn namespaces(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
@@ -470,21 +378,46 @@ impl PySelector {
         Ok(dict.into_any().unbind())
     }
 
-    /// The class `css()`/`xpath()` return.
+    /// The class returned by :meth:`css` and :meth:`xpath`.
     #[getter]
     fn selectorlist_cls(&self, py: Python<'_>) -> Py<PyAny> {
         py.get_type::<PySelectorList>().into_any().unbind()
     }
 
-    /// Compiles and evaluates a CSS selector.
+    /// Compiles and evaluates a CSS selector inside the current items.
+    ///
+    /// The current item itself is not matched; use ``:scope`` to include it.
+    /// ``::text`` and ``::attr(name)`` select text and attribute values.
+    ///
+    /// Args:
+    ///     query (str): A CSS selector.
+    ///
+    /// Returns:
+    ///     SelectorList: One selector per match, in document order.
+    ///
+    /// Raises:
+    ///     ValueError: If ``query`` does not parse.
     fn css(&self, query: &str) -> PyResult<PySelectorList> {
         Ok(PySelectorList::collect(self.query_items(query)?))
     }
 
     /// Evaluates an XPath 1.0 expression.
     ///
-    /// Namespace prefixes are accepted but not resolved (the DOM stores local
-    /// names only), and XPath variables are not supported.
+    /// Node-sets become element or text selectors; scalars become string
+    /// selectors. Namespace prefixes are accepted but not resolved (the DOM
+    /// stores local names), and variables are not supported.
+    ///
+    /// Args:
+    ///     query (str): An XPath 1.0 expression.
+    ///     namespaces (dict): Accepted for parsel compatibility.
+    ///     **kwargs: XPath variables; passing any raises.
+    ///
+    /// Returns:
+    ///     SelectorList: One selector per node or scalar.
+    ///
+    /// Raises:
+    ///     ValueError: If ``query`` does not parse or evaluate.
+    ///     NotImplementedError: If variables are passed.
     #[pyo3(signature = (query, namespaces=None, **kwargs))]
     fn xpath(
         &self,
@@ -505,42 +438,70 @@ impl PySelector {
         Ok(PySelectorList::collect(self.xpath_items(query)?))
     }
 
-    /// Serialized current value.
+    /// The serialized value of the first item.
+    ///
+    /// For an element this is the original source slice, not a
+    /// re-serialization. Returns ``None`` when there is no first item.
+    ///
+    /// Returns:
+    ///     str | None
     fn get(&self) -> Option<String> {
-        self.value().map(Cow::into_owned)
+        self.value()
     }
 
-    /// Serialized values (a one-element list for a Selector).
+    /// The serialized values of all items.
+    ///
+    /// Returns:
+    ///     list[str]: One value per item (a one-element list for a Selector).
     fn getall(&self) -> Vec<String> {
-        self.value().map(Cow::into_owned).into_iter().collect()
+        self.value().into_iter().collect()
     }
 
-    /// `extract()` alias for `get()`.
+    /// Alias for :meth:`get`.
     fn extract(&self) -> Option<String> {
         self.get()
     }
 
-    /// `extract_first()` alias for `get()`.
+    /// Alias for :meth:`get`.
     fn extract_first(&self) -> Option<String> {
         self.get()
     }
 
-    /// Text content of the current result.
+    /// The text content of the first item.
+    ///
+    /// Elements return their subtree text; text items return themselves.
+    ///
+    /// Returns:
+    ///     str | None
     #[getter]
     fn text(&self) -> Option<String> {
-        self.text_value().map(Cow::into_owned)
+        self.text_value()
     }
 
-    /// Attributes of the current element result.
+    /// The attributes of the first element item.
+    ///
+    /// Returns:
+    ///     dict[str, str]
+    ///
+    /// Raises:
+    ///     AttributeError: If the first item is a string.
     #[getter]
     fn attrib(&self) -> PyResult<HashMap<String, String>> {
         self.attrib_map()
     }
 
-    /// Apply a Python `re` pattern to `get()`.
+    /// Applies a Python ``re`` pattern to :meth:`get` and returns all matches.
     ///
-    /// The pattern language is CPython's, not a Rust approximation: this defers
-    /// to the `re` module, exactly like parsel (`parsel.utils.extract_regex`).
+    /// The pattern language is CPython's ``re``. A named group ``extract``
+    /// takes precedence; otherwise ``findall`` is flattened.
+    ///
+    /// Args:
+    ///     pattern (str | re.Pattern): A pattern or a compiled pattern.
+    ///     replace_entities (bool): Decode character references except
+    ///         ``&amp;`` and ``&lt;``.
+    ///
+    /// Returns:
+    ///     list[str]
     #[pyo3(signature = (pattern, replace_entities=true))]
     fn re(
         &self,
@@ -554,7 +515,15 @@ impl PySelector {
         extract_regex(py, pattern, &value, replace_entities)
     }
 
-    /// First regex match or `default`.
+    /// Returns the first match of :meth:`re`, or ``default``.
+    ///
+    /// Args:
+    ///     pattern (str | re.Pattern): A pattern or a compiled pattern.
+    ///     default (str): Value returned when there is no match.
+    ///     replace_entities (bool): As in :meth:`re`.
+    ///
+    /// Returns:
+    ///     str | None
     #[pyo3(signature = (pattern, default=None, replace_entities=true))]
     fn re_first(
         &self,
@@ -572,7 +541,10 @@ impl PySelector {
             .or(default))
     }
 
-    /// Nodes cannot be removed from an immutable document.
+    /// Not supported: documents are immutable.
+    ///
+    /// Raises:
+    ///     NotImplementedError: Always.
     fn drop(&mut self) -> PyResult<()> {
         Err(PyNotImplementedError::new_err(
             "simdsel documents are immutable: drop() is not supported",
@@ -594,7 +566,7 @@ impl PySelector {
 
 #[pymethods]
 impl PySelectorList {
-    /// Number of selected nodes.
+    /// Number of items.
     fn __len__(&self) -> usize {
         self.items.len()
     }
@@ -649,10 +621,12 @@ impl PySelectorList {
         Ok(PyList::new(py, items)?.into_any().unbind())
     }
 
+    /// Appends a selector to the list.
     fn append(&mut self, item: PyRef<'_, PySelector>) {
         self.items.push(item.clone());
     }
 
+    /// Appends every item of ``other`` to the list.
     fn extend(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
         for item in other.try_iter()? {
             self.items
@@ -661,12 +635,14 @@ impl PySelectorList {
         Ok(())
     }
 
+    /// Inserts a selector at ``index``.
     fn insert(&mut self, index: isize, item: PyRef<'_, PySelector>) {
         let len = self.items.len() as isize;
         let index = index.clamp(0, len) as usize;
         self.items.insert(index, item.clone());
     }
 
+    /// Removes and returns the selector at ``index`` (default: last).
     #[pyo3(signature = (index=-1))]
     fn pop(&mut self, index: isize) -> PyResult<PySelector> {
         let len = self.items.len() as isize;
@@ -677,11 +653,21 @@ impl PySelectorList {
         Ok(self.items.remove(index as usize))
     }
 
+    /// Removes every item.
     fn clear(&mut self) {
         self.items.clear();
     }
 
-    /// Applies CSS to every item and flattens the result.
+    /// Applies a CSS selector to every item and flattens the result.
+    ///
+    /// Args:
+    ///     query (str): A CSS selector.
+    ///
+    /// Returns:
+    ///     SelectorList
+    ///
+    /// Raises:
+    ///     ValueError: If ``query`` does not parse.
     fn css(&self, query: &str) -> PyResult<PySelectorList> {
         let mut items = Vec::new();
         for item in &self.items {
@@ -690,7 +676,19 @@ impl PySelectorList {
         Ok(PySelectorList::collect(items))
     }
 
-    /// Evaluates XPath per item and flattens the result.
+    /// Evaluates an XPath expression on every item and flattens the result.
+    ///
+    /// Args:
+    ///     query (str): An XPath 1.0 expression.
+    ///     namespaces (dict): Accepted for parsel compatibility.
+    ///     **kwargs: XPath variables; passing any raises.
+    ///
+    /// Returns:
+    ///     SelectorList
+    ///
+    /// Raises:
+    ///     ValueError: If ``query`` does not parse or evaluate.
+    ///     NotImplementedError: If variables are passed.
     #[pyo3(signature = (query, namespaces=None, **kwargs))]
     fn xpath(
         &self,
@@ -713,7 +711,13 @@ impl PySelectorList {
         Ok(PySelectorList::collect(items))
     }
 
-    /// First item's value, or `default` when empty.
+    /// The first item's value, or ``default`` when the list is empty.
+    ///
+    /// Args:
+    ///     default (str): Value returned for an empty list.
+    ///
+    /// Returns:
+    ///     str | None
     #[pyo3(signature = (default=None))]
     fn get(&self, default: Option<String>) -> Option<String> {
         match self.items.first() {
@@ -723,28 +727,40 @@ impl PySelectorList {
     }
 
     /// All items' values.
+    ///
+    /// Returns:
+    ///     list[str]
     fn getall(&self) -> Vec<String> {
         self.items.iter().filter_map(|item| item.get()).collect()
     }
 
-    /// `extract()` alias for `getall()`.
+    /// Alias for :meth:`getall`.
     fn extract(&self) -> Vec<String> {
         self.getall()
     }
 
-    /// `extract_first()` alias for `get()`.
+    /// Alias for :meth:`get`.
     #[pyo3(signature = (default=None))]
     fn extract_first(&self, default: Option<String>) -> Option<String> {
         self.get(default)
     }
 
-    /// All items' text content.
+    /// The text content of every item.
+    ///
+    /// Returns:
+    ///     list[str]
     #[getter]
     fn text(&self) -> Vec<String> {
         self.items.iter().filter_map(|item| item.text()).collect()
     }
 
-    /// First item's attributes.
+    /// The attributes of the first item.
+    ///
+    /// Returns:
+    ///     dict[str, str]
+    ///
+    /// Raises:
+    ///     AttributeError: If the first item is a string.
     #[getter]
     fn attrib(&self) -> PyResult<HashMap<String, String>> {
         match self.items.first() {
@@ -753,7 +769,15 @@ impl PySelectorList {
         }
     }
 
-    /// Apply a regex to every item and flatten.
+    /// Applies a regex to every item's value and flattens the matches.
+    ///
+    /// Args:
+    ///     pattern (str | re.Pattern): A pattern or a compiled pattern.
+    ///     replace_entities (bool): Decode character references except
+    ///         ``&amp;`` and ``&lt;``.
+    ///
+    /// Returns:
+    ///     list[str]
     #[pyo3(signature = (pattern, replace_entities=true))]
     fn re(
         &self,
@@ -770,7 +794,15 @@ impl PySelectorList {
         Ok(out)
     }
 
-    /// First regex match across items, or `default`.
+    /// The first match across items, or ``default``.
+    ///
+    /// Args:
+    ///     pattern (str | re.Pattern): A pattern or a compiled pattern.
+    ///     default (str): Value returned when there is no match.
+    ///     replace_entities (bool): As in :meth:`re`.
+    ///
+    /// Returns:
+    ///     str | None
     #[pyo3(signature = (pattern, default=None, replace_entities=true))]
     fn re_first(
         &self,
@@ -790,7 +822,10 @@ impl PySelectorList {
         Ok(default)
     }
 
-    /// Nodes cannot be removed from an immutable document.
+    /// Not supported: documents are immutable.
+    ///
+    /// Raises:
+    ///     NotImplementedError: Always.
     fn drop(&mut self) -> PyResult<()> {
         Err(PyNotImplementedError::new_err(
             "simdsel documents are immutable: drop() is not supported",
@@ -842,17 +877,6 @@ fn shorten(text: &str, width: usize) -> String {
     let mut out: String = text.chars().take(width.saturating_sub(3)).collect();
     out.push_str("...");
     out
-}
-
-/// Python's `repr(float)` for the values XPath produces.
-fn format_number(value: f64) -> String {
-    if value.is_nan() {
-        return "nan".to_string();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "inf" } else { "-inf" }.to_string();
-    }
-    format!("{value:?}")
 }
 
 /// The `type=` / positional `body` conversions.
@@ -1022,6 +1046,10 @@ fn keep_lt_amp_entities(text: &str) -> String {
 
 fn to_py_err(error: Error) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+fn xpath_err(error: Error, query: &str) -> PyErr {
+    PyValueError::new_err(format!("XPath error: {error} in {query}"))
 }
 
 /// Python extension module `simdsel._simdsel`.

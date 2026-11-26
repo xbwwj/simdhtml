@@ -11,6 +11,7 @@ homepage = "https://github.com/xbwwj/simdhtml"
 [lib]
 name = "_simdsel"
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [dependencies]
 encoding_rs = { workspace = true }

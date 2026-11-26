@@ -16,7 +16,7 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 [![CI](https://github.com/xbwwj/simdhtml/actions/workflows/ci.yml/badge.svg)](https://github.com/xbwwj/simdhtml/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-**[Documentation(Python)](#)** · **[Documentation(Rust)](https://docs.rs/simdsel)** · [Installation](https://pypi.org/project/simdsel/) · [Usage](#usage) · [Benchmarks](#benchmarks)
+**[Documentation(Python)](https://xbwwj.github.io/simdhtml/)** · **[Documentation(Rust)](https://docs.rs/simdsel)** · [Installation](https://pypi.org/project/simdsel/) · [Usage](#usage) · [Benchmarks](#benchmarks)
 
 ## Benchmarks
 
@@ -28,45 +28,40 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 
 ## Usage
 
+```bash
+uv add simdsel        # Python
+cargo add simdsel     # Rust
+```
+
+The [Python documentation](https://xbwwj.github.io/simdhtml/) covers the full
+selector API, the XPath subset and Scrapy integration. Rust users can start at
+[docs.rs/simdsel](https://docs.rs/simdsel).
+
 ### Python
 
 ```python
->>> from simdsel.parsel import Selector
->>> html = """
-... <div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
-... <div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>
-... """
->>> sel = Selector(text=html)
->>> sel.css(".item h2::text").getall()
-['First & best', 'Second']
->>> sel.css(".item h2::text").get()
-'First & best'
->>> sel.css(".item a::attr(href)").getall()
-['/one', '/two']
->>> sel.xpath("//div[@data-id='2']/h2/text()").get()
-'Second'
->>> [item.attrib["data-id"] for item in sel.css(".item")]
-['1', '2']
+from simdsel.parsel import Selector
+
+html = '<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>'
+sel = Selector(text=html)
+
+sel.css(".item h2::text").get()        # 'First & best'
+sel.css("a::attr(href)").get()         # '/one'
+sel.xpath("//div/@data-id").get()      # '1'
 ```
 
 ### Rust
 
 ```rust
-use simdsel::prelude::{Selector, Value, XPath};
+use simdsel::Selector;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let html = r#"
-<div class="item" data-id="1"><h2>First &amp; best</h2><a href="/one">one</a></div>
-<div class="item" data-id="2"><h2>Second</h2><a href="/two">two</a></div>
-"#;
+fn main() -> Result<(), simdsel::Error> {
+    let sel = Selector::from_text(
+        r#"<div class="item" data-id="1"><h2>First &amp; best</h2></div>"#,
+    )?;
 
-    let root = Selector::from_text(html)?;
-    println!("{:?}", root.css(".item h2::text")?.getall());
-    println!("{:?}", root.css(".item a::attr(href)")?.getall());
-
-    if let Value::Str(id) = XPath::new("string(//div[2]/@data-id)")?.eval(root.doc())? {
-        println!("id={id}");
-    }
+    assert_eq!(sel.css("h2::text")?.get(), Some("First & best".into()));
+    assert_eq!(sel.xpath("//div/@data-id")?.get(), Some("1".into()));
     Ok(())
 }
 ```
@@ -95,6 +90,11 @@ cargo xtask bench --compare
 
 # plot performance graph
 cargo xtask plot
+
+# build the Python docs
+maturin develop
+uv run --with-requirements crates/simdsel-py/docs/requirements.txt \
+  sphinx-build -b html crates/simdsel-py/docs /tmp/simdsel-docs
 ```
 
 ## Roadmap

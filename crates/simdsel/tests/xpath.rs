@@ -2,6 +2,7 @@
 //! on the same document.
 
 use simdsel::prelude::*;
+use simdsel::xpath::value::RefKind;
 
 const PAGE: &str = r#"\
 <html>
