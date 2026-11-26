@@ -102,7 +102,9 @@ fn select(sizes: &[usize], quota: &Quota) -> Vec<usize> {
     selected
 }
 
-pub fn load(policy: &SamplePolicy) -> Result<Corpus, String> {
+/// `stratified` gives every size bucket the same byte quota instead of one
+/// global budget, so the largest documents are still represented.
+pub fn load(policy: &SamplePolicy, stratified: bool) -> Result<Corpus, String> {
     let mut candidates: Vec<Vec<Candidate>> = (0..BUCKETS.len()).map(|_| Vec::new()).collect();
     for_each_payload(policy, |index, url, payload| {
         let bucket = bucket_index(payload.len());
@@ -114,21 +116,38 @@ pub fn load(policy: &SamplePolicy) -> Result<Corpus, String> {
         true
     })?;
 
-    // Equal bytes per size bucket; a global byte budget would starve the
-    // largest documents and leave that bucket empty.
-    let quota = policy.quota(BUCKETS.len());
     let per_bucket = if policy.all { usize::MAX } else { PER_BUCKET };
-    let selected: Vec<Candidate> = (0..BUCKETS.len())
-        .flat_map(|bucket| {
-            candidates[bucket].sort_by_key(|candidate| (candidate.hash, candidate.index));
-            candidates[bucket].truncate(per_bucket);
-            let sizes: Vec<usize> = candidates[bucket].iter().map(|c| c.size).collect();
-            select(&sizes, &quota)
-                .into_iter()
-                .map(|i| candidates[bucket][i])
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    for bucket in candidates.iter_mut() {
+        bucket.sort_by_key(|candidate| (candidate.hash, candidate.index));
+        bucket.truncate(per_bucket);
+    }
+    let selected: Vec<Candidate> = if stratified {
+        let quota = policy.quota(BUCKETS.len());
+        candidates
+            .iter()
+            .flat_map(|bucket| {
+                let sizes: Vec<usize> = bucket.iter().map(|c| c.size).collect();
+                select(&sizes, &quota)
+                    .into_iter()
+                    .map(|i| bucket[i])
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    } else {
+        // NOTE: the pool order decides which documents the stride picks;
+        // changing it changes every Common Crawl benchmark number.
+        let mut order: Vec<usize> = (0..BUCKETS.len()).collect();
+        order.sort_by_key(|&bucket| BUCKETS[bucket]);
+        let pool: Vec<Candidate> = order
+            .into_iter()
+            .flat_map(|bucket| candidates[bucket].iter().copied())
+            .collect();
+        let sizes: Vec<usize> = pool.iter().map(|c| c.size).collect();
+        select(&sizes, &policy.quota(1))
+            .into_iter()
+            .map(|i| pool[i])
+            .collect()
+    };
     let positions: HashMap<usize, usize> = selected
         .iter()
         .enumerate()
@@ -155,8 +174,13 @@ pub fn load(policy: &SamplePolicy) -> Result<Corpus, String> {
 
     let query_sets = crate::read_selector_sets(&paths::selectors_dir().join("cc"));
 
+    let name = if stratified {
+        format!("{} (size buckets)", Dataset::CommonCrawl.label())
+    } else {
+        Dataset::CommonCrawl.label().to_string()
+    };
     Ok(Corpus {
-        name: Dataset::CommonCrawl.label().to_string(),
+        name,
         docs,
         query_sets,
     })

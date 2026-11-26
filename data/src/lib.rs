@@ -84,8 +84,23 @@ pub struct Corpus {
 
 impl Corpus {
     pub fn load(dataset: Dataset) -> Option<Self> {
+        Self::report(dataset, Self::load_with(dataset, &SamplePolicy::active()))
+    }
+
+    /// Common Crawl sampled with one byte quota per document-size bucket, for
+    /// the per-size figures; other datasets load as usual.
+    pub fn load_stratified(dataset: Dataset) -> Option<Self> {
         let policy = SamplePolicy::active();
-        match Self::load_with(dataset, &policy) {
+        let result = match dataset {
+            Dataset::CommonCrawl => cc::load(&policy, true),
+            Dataset::Swde => Self::load_with(dataset, &policy),
+        };
+        Self::report(dataset, result)
+    }
+
+    fn report(dataset: Dataset, result: Result<Self, String>) -> Option<Self> {
+        let policy = SamplePolicy::active();
+        match result {
             Ok(corpus) if !corpus.docs.is_empty() => {
                 println!(
                     "{}: {} docs, {:.1} MiB (limit {})",
@@ -107,7 +122,7 @@ impl Corpus {
 
     pub fn load_with(dataset: Dataset, policy: &SamplePolicy) -> Result<Self, String> {
         match dataset {
-            Dataset::CommonCrawl => cc::load(policy),
+            Dataset::CommonCrawl => cc::load(policy, false),
             Dataset::Swde => swde::load(policy),
         }
     }

@@ -207,14 +207,21 @@ fn main() {
                 docs: cc.docs.iter().collect(),
             };
             bench_common(&mut c, "extract/commoncrawl", &whole, &sets, None);
-            for (index, (bucket, ids)) in cc.buckets_by_size().into_iter().enumerate() {
-                let subset = cc.subset(&bucket, &ids);
-                if subset.is_empty() {
-                    continue;
-                }
-                let name = format!("extract/commoncrawl/{bucket}");
-                bench_common(&mut c, &name, &subset, &sets, Some((index, &bucket)));
+        }
+    }
+
+    // Size buckets come from a separate sample so they do not skew the
+    // whole-corpus numbers above.
+    if let Some(buckets) = Corpus::load_stratified(Dataset::CommonCrawl) {
+        found = true;
+        let sets = buckets.workload_sets();
+        for (index, (bucket, ids)) in buckets.buckets_by_size().into_iter().enumerate() {
+            let subset = buckets.subset(&bucket, &ids);
+            if subset.is_empty() {
+                continue;
             }
+            let name = format!("extract/commoncrawl/{bucket}");
+            bench_common(&mut c, &name, &subset, &sets, Some((index, &bucket)));
         }
     }
 
