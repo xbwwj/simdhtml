@@ -5,6 +5,7 @@ use simdhtml::document::id::{DOC_ROOT, NO_NODE, NO_TAG, NodeId};
 use simdhtml::document::node::NodeKind;
 
 use crate::bitset::BitSet;
+use crate::error::{CssError, Error, Result};
 use crate::record::{MatchKind, MatchRecord};
 
 use super::ast::{
@@ -12,7 +13,6 @@ use super::ast::{
     SelectorList,
 };
 use super::cache::{ChildIndex, QueryCache};
-use crate::error::{CssError, Error};
 
 const MAX_DEPTH: usize = 64;
 
@@ -134,7 +134,7 @@ impl<'a> Eval<'a> {
         &self,
         selector: &SelectorList,
         roots: Option<&[NodeId]>,
-    ) -> Result<BitSet, Error> {
+    ) -> Result<BitSet> {
         self.set_scope(roots);
         let mut mask = self.selector_mask(selector, 0)?;
         if let Some(roots) = roots
@@ -207,16 +207,12 @@ impl<'a> Eval<'a> {
         &self,
         selector: &SelectorList,
         roots: Option<&[NodeId]>,
-    ) -> Result<Vec<MatchRecord>, Error> {
+    ) -> Result<Vec<MatchRecord>> {
         let mask = self.mask_for(selector, roots)?;
         Ok(self.records_for(selector, &mask))
     }
 
-    pub(super) fn count(
-        &self,
-        selector: &SelectorList,
-        roots: Option<&[NodeId]>,
-    ) -> Result<usize, Error> {
+    pub(super) fn count(&self, selector: &SelectorList, roots: Option<&[NodeId]>) -> Result<usize> {
         let mask = self.mask_for(selector, roots)?;
         if common_pseudo(selector).is_some() {
             Ok(self.records_for(selector, &mask).len())
@@ -225,7 +221,7 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet, Error> {
+    fn selector_mask(&self, selector: &SelectorList, depth: usize) -> Result<BitSet> {
         if depth > MAX_DEPTH {
             return Err(Error::Css(CssError::DepthLimit));
         }
@@ -239,7 +235,7 @@ impl<'a> Eval<'a> {
 
     /// Evaluates a complex selector left-to-right: the final bitset equals the
     /// rightmost compound's matches, without per-element ancestor walks.
-    fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet, Error> {
+    fn complex_mask(&self, complex: &Complex, depth: usize) -> Result<BitSet> {
         if depth > MAX_DEPTH {
             return Err(Error::Css(CssError::DepthLimit));
         }
@@ -330,7 +326,7 @@ impl<'a> Eval<'a> {
         compound: &Compound,
         windows: &[(NodeId, NodeId)],
         depth: usize,
-    ) -> Result<Vec<NodeId>, Error> {
+    ) -> Result<Vec<NodeId>> {
         let candidates = compound
             .tag
             .as_ref()
@@ -452,7 +448,7 @@ impl<'a> Eval<'a> {
 
     /// Evaluates one compound into a bitset: type selectors use the lazy tag
     /// index, attribute keys the query-side index, pseudos filter afterwards.
-    fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet, Error> {
+    fn compound_mask(&self, compound: &Compound, depth: usize) -> Result<BitSet> {
         if depth > MAX_DEPTH {
             return Err(Error::Css(CssError::DepthLimit));
         }
@@ -648,7 +644,7 @@ impl<'a> Eval<'a> {
         pseudo: &Pseudo,
         tag: Option<&str>,
         depth: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(Error::Css(CssError::DepthLimit));
         }
@@ -709,7 +705,7 @@ impl<'a> Eval<'a> {
         Ok(())
     }
 
-    fn complex_list_mask(&self, list: &[Complex], depth: usize) -> Result<BitSet, Error> {
+    fn complex_list_mask(&self, list: &[Complex], depth: usize) -> Result<BitSet> {
         let mut out = BitSet::new(self.n);
         for complex in list {
             out.or_assign(&self.complex_mask(complex, depth)?);
@@ -717,7 +713,7 @@ impl<'a> Eval<'a> {
         Ok(out)
     }
 
-    fn relative_mask(&self, relative: &RelativeSelector, depth: usize) -> Result<BitSet, Error> {
+    fn relative_mask(&self, relative: &RelativeSelector, depth: usize) -> Result<BitSet> {
         let nested = self.complex_mask(&relative.complex, depth)?;
         Ok(match relative.relation {
             Combinator::Descendant => self.ancestors(&nested),

@@ -1,5 +1,3 @@
-//! CSS selector AST, parsing, and set-at-a-time matching.
-
 pub mod ast;
 pub mod cache;
 pub mod eval;
@@ -8,11 +6,12 @@ pub mod select;
 
 #[cfg(test)]
 mod tests {
-    use super::parser::parse_selector;
-    use super::select::{extract, select, select_within};
     use simdhtml::document::Document;
     use simdhtml::document::id::NodeId;
     use simdhtml::parse::{ParseOptions, RepairMode};
+
+    use super::parser::parse_selector;
+    use super::select::{extract, select, select_within};
 
     fn doc(html: &str) -> Document<'_> {
         Document::parse_with(

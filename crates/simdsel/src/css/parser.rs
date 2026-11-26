@@ -1,4 +1,4 @@
-use crate::error::{CssError, Error};
+use crate::error::{CssError, Error, Result};
 
 use super::ast::{
     AttrOp, AttrPred, Combinator, Complex, Compound, Pseudo, PseudoElement, RelativeSelector,
@@ -6,7 +6,7 @@ use super::ast::{
 };
 
 /// Parses a CSS selector list.
-pub fn parse_selector(input: &str) -> Result<SelectorList, Error> {
+pub fn parse_selector(input: &str) -> Result<SelectorList> {
     parse_selector_kind(input).map_err(Error::Css)
 }
 

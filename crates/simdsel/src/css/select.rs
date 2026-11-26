@@ -4,7 +4,7 @@ use simdhtml::document::Document;
 use simdhtml::document::id::NodeId;
 
 use crate::bitset::BitSet;
-use crate::error::Error;
+use crate::error::Result;
 use crate::record::{MatchKind, MatchRecord};
 
 use super::ast::SelectorList;
@@ -22,7 +22,7 @@ pub trait Projection {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, Error>;
+    ) -> Result<Self::Output<'a>>;
 }
 
 /// Raw `MatchRecord` projection.
@@ -35,11 +35,9 @@ impl Projection for Records {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, Error> {
-        {
-            let cache = QueryCache::root();
-            Ok(Eval::new(doc, &cache).records_for(selector, &mask))
-        }
+    ) -> Result<Self::Output<'a>> {
+        let cache = QueryCache::root();
+        Ok(Eval::new(doc, &cache).records_for(selector, &mask))
     }
 }
 
@@ -53,12 +51,10 @@ impl Projection for Count {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, Error> {
+    ) -> Result<Self::Output<'a>> {
         if common_pseudo(selector).is_some() {
-            {
-                let cache = QueryCache::root();
-                Ok(Eval::new(doc, &cache).records_for(selector, &mask).len())
-            }
+            let cache = QueryCache::root();
+            Ok(Eval::new(doc, &cache).records_for(selector, &mask).len())
         } else {
             Ok(mask.count_ones() as usize)
         }
@@ -75,7 +71,7 @@ impl Projection for Html {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, Error> {
+    ) -> Result<Self::Output<'a>> {
         let cache = QueryCache::root();
         Ok(Eval::new(doc, &cache)
             .records_for(selector, &mask)
@@ -95,7 +91,7 @@ impl Projection for Texts {
         doc: &'a Document<'_>,
         selector: &SelectorList,
         mask: BitSet,
-    ) -> Result<Self::Output<'a>, Error> {
+    ) -> Result<Self::Output<'a>> {
         let cache = QueryCache::root();
         Ok(Eval::new(doc, &cache)
             .records_for(selector, &mask)
@@ -113,7 +109,7 @@ impl Projection for Texts {
 }
 
 /// Selects all elements matching `selector`, in document order.
-pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRecord>, Error> {
+pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRecord>> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     ctx.select(selector, None)
@@ -125,7 +121,7 @@ pub fn select_within(
     doc: &Document<'_>,
     selector: &SelectorList,
     roots: &[NodeId],
-) -> Result<Vec<MatchRecord>, Error> {
+) -> Result<Vec<MatchRecord>> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     ctx.select(selector, Some(roots))
@@ -137,7 +133,7 @@ pub fn select_within_cache(
     selector: &SelectorList,
     roots: &[NodeId],
     cache: &QueryCache,
-) -> Result<Vec<MatchRecord>, Error> {
+) -> Result<Vec<MatchRecord>> {
     Eval::new(doc, cache).select(selector, Some(roots))
 }
 
@@ -147,7 +143,7 @@ pub fn select_as_within_cache<'a, P: Projection>(
     selector: &SelectorList,
     roots: &[NodeId],
     cache: &QueryCache,
-) -> Result<P::Output<'a>, Error> {
+) -> Result<P::Output<'a>> {
     let ctx = Eval::new(doc, cache);
     let mask = ctx.mask_for(selector, Some(roots))?;
     P::finish(doc, selector, mask)
@@ -155,11 +151,9 @@ pub fn select_as_within_cache<'a, P: Projection>(
 
 /// Counts matches without materializing records.  Pseudo-elements fall back to
 /// record projection so `::text` / `::attr()` counts stay correct.
-pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize, Error> {
-    {
-        let cache = QueryCache::root();
-        Eval::new(doc, &cache).count(selector, None)
-    }
+pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize> {
+    let cache = QueryCache::root();
+    Eval::new(doc, &cache).count(selector, None)
 }
 
 /// Like [`select_count`], but restricted to the subtrees of `roots`.
@@ -167,18 +161,16 @@ pub fn select_count_within(
     doc: &Document<'_>,
     selector: &SelectorList,
     roots: &[NodeId],
-) -> Result<usize, Error> {
-    {
-        let cache = QueryCache::root();
-        Eval::new(doc, &cache).count(selector, Some(roots))
-    }
+) -> Result<usize> {
+    let cache = QueryCache::root();
+    Eval::new(doc, &cache).count(selector, Some(roots))
 }
 
 /// Evaluates `selector` and projects the result with `P`.
 pub fn select_as<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,
-) -> Result<P::Output<'a>, Error> {
+) -> Result<P::Output<'a>> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     let mask = ctx.mask_for(selector, None)?;
@@ -190,7 +182,7 @@ pub fn select_as_within<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,
     roots: &[NodeId],
-) -> Result<P::Output<'a>, Error> {
+) -> Result<P::Output<'a>> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
     let mask = ctx.mask_for(selector, Some(roots))?;
@@ -198,13 +190,11 @@ pub fn select_as_within<'a, P: Projection>(
 }
 
 /// Extracts the text/HTML represented by a match record.
-pub fn extract<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> std::borrow::Cow<'a, str> {
+pub fn extract<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Cow<'a, str> {
     match record.kind {
         MatchKind::Element => {
             let bytes = crate::dom::outer_html(doc, record.node);
-            std::borrow::Cow::Borrowed(
-                std::str::from_utf8(bytes).expect("Document input is valid UTF-8"),
-            )
+            Cow::Borrowed(std::str::from_utf8(bytes).expect("Document input is valid UTF-8"))
         }
         MatchKind::Text => doc.text(record.node),
         MatchKind::Attr => {

@@ -36,3 +36,5 @@ pub enum XPathError {
     #[error("xpath expression exceeded the evaluation budget")]
     TooComplex,
 }
+
+pub type Result<T, E = Error> = ::core::result::Result<T, E>;
