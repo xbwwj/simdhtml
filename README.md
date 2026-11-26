@@ -10,10 +10,14 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 - **Automatic**: Adapt to available CPU features at runtime. No configuration needed.
 - **Reliable**: Built in Rust, with `unsafe` strictly confined to low-level SIMD intrinsics.
 
+[![PyPI simdsel](https://img.shields.io/pypi/v/simdsel.svg?label=pypi)](https://pypi.org/project/simdsel/)
+[![docs.rs simdsel](https://docs.rs/simdsel/badge.svg)](https://docs.rs/simdsel)
+[![crates.io simdhtml](https://img.shields.io/crates/v/simdhtml.svg?label=simdhtml)](https://crates.io/crates/simdhtml)
+[![crates.io simdsel](https://img.shields.io/crates/v/simdsel.svg?label=simdsel)](https://crates.io/crates/simdsel)
 [![CI](https://github.com/xbwwj/simdhtml/actions/workflows/ci.yml/badge.svg)](https://github.com/xbwwj/simdhtml/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-**[Documentation](#)** · [Installation](#) · [Usage](#) · [Features](#)
+**[Documentation](https://docs.rs/simdsel)** · [Installation](https://pypi.org/project/simdsel/) · [Usage](#usage) · [Benchmarks](#benchmarks)
 
 ## Benchmarks
 
