@@ -22,7 +22,6 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 [Usage](#usage) ·
 [Benchmarks](#benchmarks)
 
-
 ## Performance results
 
 [![Common Crawl](./figures/cc.svg)](./figures/cc.svg)
@@ -33,16 +32,11 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 
 ## Usage
 
-```bash
-uv add simdsel        # Python
-cargo add simdsel     # Rust
-```
-
-The [Python documentation](https://xbwwj.github.io/simdhtml/) covers the full
-selector API, the XPath subset and Scrapy integration. Rust users can start at
-[docs.rs/simdsel](https://docs.rs/simdsel).
-
 ### Python
+
+```sh
+uv add simsel
+```
 
 ```python
 from simdsel.parsel import Selector
@@ -55,7 +49,14 @@ sel.css("a::attr(href)").get()         # '/one'
 sel.xpath("//div/@data-id").get()      # '1'
 ```
 
+The [Python documentation](https://xbwwj.github.io/simdhtml/) covers the full
+selector API, the XPath subset and Scrapy integration.
+
 ### Rust
+
+```bash
+cargo add simdsel
+```
 
 ```rust
 use simdsel::Selector;
@@ -71,11 +72,13 @@ fn main() -> Result<(), simdsel::Error> {
 }
 ```
 
+Rust users can start at [docs.rs/simdsel](https://docs.rs/simdsel).
+
 ## Development
 
 We use xtask for automating chores.
 
-```bash
+```sh
 # test parsel compatbility
 cargo xtask compat --parsel
 
