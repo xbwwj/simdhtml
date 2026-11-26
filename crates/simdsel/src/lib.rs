@@ -28,6 +28,7 @@ pub mod prelude {
     pub use crate::record::{MatchKind, MatchRecord};
     pub use crate::xpath::XPath;
     pub use crate::xpath::value::{NodeRef, RefKind, Value};
+
     pub use simdhtml::document::Document;
     pub use simdhtml::document::flags::{Diagnostic, DiagnosticKind, DocumentFlags};
     pub use simdhtml::document::id::{DOC_ROOT, NO_ATTR, NO_NODE, NO_TAG, NodeId, TagId};
