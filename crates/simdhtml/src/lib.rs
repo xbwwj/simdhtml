@@ -1,8 +1,8 @@
 //! simdhtml is a fast HTML parser powered by SIMD.
 //!
-//! See [`document::Document`] and [`document::Document::parse`] for a quickstart.
+//! This crate is not user-facing. For a parsel like facade, see [`simdsel`](https://docs.rs/simdsel/latest/simdsel).
 //!
-//! This crate is not user-facing. See `simdsel` which provides a parsel like facade.
+//! The entry point is [`document::Document::parse`].
 
 pub mod character_reference;
 pub mod document;
