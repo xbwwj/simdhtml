@@ -25,7 +25,6 @@ criterion = "0.8"
 dom_query = "0.29"
 encoding_rs = "0.8.44"
 entities = "1"
-flate2 = "1"
 httparse = "1"
 html5ever_039 = { package = "html5ever", version = "0.39" }
 markup5ever_rcdom = "0.39"
