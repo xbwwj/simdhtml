@@ -20,10 +20,6 @@ pub struct XPath {
 
 impl XPath {
     /// Compiles `expr`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::XPath`] for malformed input and unsupported syntax.
     pub fn new(expr: &str) -> Result<Self, Error> {
         Ok(Self {
             expr: parser::parse(expr).map_err(Error::XPath)?,
@@ -31,12 +27,6 @@ impl XPath {
     }
 
     /// Evaluates the expression against `doc`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::XPath`] for evaluation-time problems such as an unknown
-    /// function arity, or when the visit budget is exhausted (a guard against
-    /// `//a//b` style blow-up on huge documents).
     pub fn eval(&self, doc: &Document<'_>) -> Result<Value, Error> {
         eval::evaluate(doc, &self.expr).map_err(Error::XPath)
     }

@@ -18,11 +18,6 @@ pub trait Projection {
     type Output<'a>;
 
     /// Projects an already-computed match mask.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Css`] with [`CssErrorKind::DepthLimit`] if pseudo-element
-    /// projection recurses past the limit.
     fn finish<'a>(
         doc: &'a Document<'_>,
         selector: &SelectorList,
