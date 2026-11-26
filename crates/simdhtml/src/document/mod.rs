@@ -22,8 +22,9 @@ use self::tag::TagTable;
 use self::tape::NodeTape;
 use self::text::{normalize_newlines, replace_nulls};
 
-/// A parsed HTML document. It borrows the input when that already was UTF-8 and
-/// owns the transcoded bytes otherwise.
+/// A parsed HTML document.
+///
+/// It borrows the input when that already was UTF-8 and owns the transcoded bytes otherwise.
 #[derive(Clone, Debug)]
 pub struct Document<'a> {
     pub input: Cow<'a, [u8]>,
@@ -32,7 +33,7 @@ pub struct Document<'a> {
     /// Whether invalid bytes were replaced during decoding.
     pub had_encoding_errors: bool,
 
-    /// All nodes in preorder: a `kind` column plus an AoS record.
+    /// A tape recording of all nodes, see [`NodeTape`] for optimization details.
     pub nodes: NodeTape,
 
     pub tags: TagTable,

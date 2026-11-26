@@ -15,15 +15,17 @@ pub(crate) const DOCTYPE_BIT: u8 = 0b0100_0000;
 
 pub(crate) const KIND_MASK: u8 = 0b011;
 
-/// One `kind` byte plus one AoS `record` per node, in preorder: node `i`'s
-/// descendants are exactly `[i + 1, subtree_end[i])`.
+/// The `NodeTape` is a mixed SoA/AoS preorder recording of all the nodes in a document.
 ///
-/// The split exists for bulk passes that only ask "is this an element?" and so
-/// stream 1 byte per node; every other field stays in one record because
-/// matching and text walking read several of them per node.
+/// Preorder allows us to inspect a node `i` and its descendants with a dense scan range
+/// `[i, subtree_end[i]]`.
+///
+/// Mixed SoA/AoS: the `kind` field is pulled out individually, because for bulk passes we
+/// only ask "is this an element", while other fields keep staying together because matching
+/// and tree walking read several of them per node--the data locality overwhelms.
 #[derive(Clone, Debug, Default)]
 pub struct NodeTape {
-    /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].  This is the scan column.
+    /// `NodeKind` discriminant plus [`RAW_TEXT_BIT`].
     pub kind: Vec<u8>,
     pub record: Vec<NodeRecord>,
 }
