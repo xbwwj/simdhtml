@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")

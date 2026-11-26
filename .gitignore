@@ -14,3 +14,4 @@ crates/simdsel-py/docs/_build/
 /fuzz/corpus
 /fuzz/artifacts
 
+/data/swde/.tmp*

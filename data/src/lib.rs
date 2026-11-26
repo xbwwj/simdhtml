@@ -4,6 +4,7 @@
 // from the bounded working set under data/swde/html.
 
 mod cc;
+pub mod fetch;
 mod http;
 pub mod paths;
 mod sample;
