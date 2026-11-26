@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Once;
 
 use sha1_smol::Sha1;
 use warc::{RecordType, WarcHeader, WarcReader};
@@ -60,11 +61,16 @@ fn for_each_payload(
         let Ok(parsed) = http::parse(record.body()) else {
             continue;
         };
-        if parsed.status != "200" || !http::is_html(&parsed) {
+        if parsed.status != 200 || !http::is_html(&parsed) {
             continue;
         }
-        let Ok(payload) = http::decode_payload(&parsed) else {
-            continue;
+        let payload = match http::decode_payload(&parsed) {
+            Ok(payload) => payload,
+            Err(err) => {
+                static WARNED: Once = Once::new();
+                WARNED.call_once(|| eprintln!("cc: skipping stored-encoded responses: {err}"));
+                continue;
+            }
         };
         if payload.is_empty() || payload.len() > policy.max_doc_bytes {
             continue;
@@ -72,7 +78,7 @@ fn for_each_payload(
         let url = record
             .header(WarcHeader::TargetURI)
             .map_or_else(|| index.to_string(), |value| value.into_owned());
-        if !f(index, url, payload) {
+        if !f(index, url, payload.to_vec()) {
             break;
         }
         index += 1;
