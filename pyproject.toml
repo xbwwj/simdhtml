@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "simdsel"
-version = "0.1.1-dev"
+dynamic = ["version"]
 description = "Fast HTML parsing and CSS/XPath selection (parsel-compatible subset)"
 readme = "crates/simdsel-py/README.md"
 requires-python = ">=3.9"

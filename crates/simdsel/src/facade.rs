@@ -54,7 +54,7 @@ impl<'a> Selector<'a> {
     }
 
     /// Parses already decoded `text` (parsel's `text=`) and selects from its
-    /// root.  No BOM or `<meta charset>` sniffing: a `&str` is already text.
+    /// root. No BOM or `<meta charset>` sniffing: a `&str` is already text.
     pub fn from_text(text: &'a str) -> Result<Self> {
         Self::from_bytes_with(
             text.as_bytes(),
