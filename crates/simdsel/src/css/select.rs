@@ -113,11 +113,6 @@ impl Projection for Texts {
 }
 
 /// Selects all elements matching `selector`, in document order.
-///
-/// # Errors
-///
-/// Returns [`Error::Css`] with [`CssErrorKind::DepthLimit`] for pathologically nested
-/// pseudo classes.
 pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRecord>, Error> {
     let cache = QueryCache::root();
     let ctx = Eval::new(doc, &cache);
@@ -126,10 +121,6 @@ pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRe
 
 /// Selects matching elements inside the subtrees of `roots`: what chained
 /// `SelectorList.css()` uses.
-///
-/// # Errors
-///
-/// Same as [`select`].
 pub fn select_within(
     doc: &Document<'_>,
     selector: &SelectorList,
@@ -141,10 +132,6 @@ pub fn select_within(
 }
 
 /// Selects within `roots` using a chain-local cache.
-///
-/// # Errors
-///
-/// Same as [`select`].
 pub fn select_within_cache(
     doc: &Document<'_>,
     selector: &SelectorList,
@@ -155,10 +142,6 @@ pub fn select_within_cache(
 }
 
 /// Evaluates a projection within `roots` using a chain-local cache.
-///
-/// # Errors
-///
-/// Same as [`select_as`].
 pub fn select_as_within_cache<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,
@@ -172,11 +155,6 @@ pub fn select_as_within_cache<'a, P: Projection>(
 
 /// Counts matches without materializing records.  Pseudo-elements fall back to
 /// record projection so `::text` / `::attr()` counts stay correct.
-///
-/// # Errors
-///
-/// Returns [`Error::Css`] with [`CssErrorKind::DepthLimit`] for pathologically nested
-/// pseudo classes.
 pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize, Error> {
     {
         let cache = QueryCache::root();
@@ -185,10 +163,6 @@ pub fn select_count(doc: &Document<'_>, selector: &SelectorList) -> Result<usize
 }
 
 /// Like [`select_count`], but restricted to the subtrees of `roots`.
-///
-/// # Errors
-///
-/// Same as [`select_count`].
 pub fn select_count_within(
     doc: &Document<'_>,
     selector: &SelectorList,
@@ -201,11 +175,6 @@ pub fn select_count_within(
 }
 
 /// Evaluates `selector` and projects the result with `P`.
-///
-/// # Errors
-///
-/// Returns [`Error::Css`] with [`CssErrorKind::DepthLimit`] for pathologically nested
-/// pseudo classes.
 pub fn select_as<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,
@@ -217,10 +186,6 @@ pub fn select_as<'a, P: Projection>(
 }
 
 /// Like [`select_as`], but restricted to the subtrees of `roots`.
-///
-/// # Errors
-///
-/// Same as [`select_as`].
 pub fn select_as_within<'a, P: Projection>(
     doc: &'a Document<'_>,
     selector: &SelectorList,

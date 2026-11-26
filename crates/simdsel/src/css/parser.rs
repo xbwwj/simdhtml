@@ -6,10 +6,6 @@ use super::ast::{
 };
 
 /// Parses a CSS selector list.
-///
-/// # Errors
-///
-/// Returns [`Error::Css`] for unsupported or malformed selectors.
 pub fn parse_selector(input: &str) -> Result<SelectorList, Error> {
     parse_selector_kind(input).map_err(Error::Css)
 }
