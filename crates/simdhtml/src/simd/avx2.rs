@@ -1,19 +1,16 @@
 use super::{BLOCK_SIZE, StructuralMasks};
 
 /// AVX2 implementation of [`super::classify`].
-#[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     unsafe { classify_markup_avx2(block) }
 }
 
 /// PCLMULQDQ implementation of [`super::prefix_xor`].
-#[must_use]
 pub fn prefix_xor(x: u64) -> u64 {
     unsafe { prefix_xor_clmul(x) }
 }
 
 /// AVX2 implementation of [`super::probe_lt`].
-#[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     unsafe { probe_lt_inline(block) }
 }

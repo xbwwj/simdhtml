@@ -18,7 +18,6 @@ impl Default for SamplePolicy {
 }
 
 impl SamplePolicy {
-    #[must_use]
     pub fn active() -> Self {
         if cfg!(feature = "quick") {
             Self::quick()
@@ -27,7 +26,6 @@ impl SamplePolicy {
         }
     }
 
-    #[must_use]
     pub fn quick() -> Self {
         Self {
             limit: 60,
@@ -36,7 +34,6 @@ impl SamplePolicy {
         }
     }
 
-    #[must_use]
     pub fn quota(&self, bucket_count: usize) -> crate::Quota {
         let buckets = bucket_count.max(1);
         if self.all {
@@ -51,7 +48,6 @@ impl SamplePolicy {
         }
     }
 
-    #[must_use]
     pub fn describe(&self) -> String {
         if self.all {
             "all documents".to_string()

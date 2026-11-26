@@ -38,12 +38,10 @@ impl NodeTape {
         }
     }
 
-    #[must_use]
     pub fn len(&self) -> usize {
         self.record.len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.record.is_empty()
     }
@@ -87,7 +85,6 @@ impl NodeTape {
     }
 
     /// Element namespace; [`Namespace::HTML`] for text and document nodes.
-    #[must_use]
     pub fn namespace_of(&self, id: NodeId) -> Namespace {
         Namespace::from_bits((self.kind[self.idx(id)] & NS_MASK) >> NS_SHIFT)
     }

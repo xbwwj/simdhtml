@@ -18,7 +18,6 @@ pub struct Decoded<'a> {
 
 /// Decodes `input` to UTF-8, sniffing the charset and consuming a leading byte
 /// order mark.
-#[must_use]
 pub fn decode(input: &[u8]) -> Decoded<'_> {
     if let Some((encoding, bom_len)) = Encoding::for_bom(input) {
         let body = &input[bom_len..];
@@ -66,7 +65,6 @@ pub fn decode(input: &[u8]) -> Decoded<'_> {
 /// Decodes `input` as `encoding`, skipping the prescan.  This is the transport
 /// level of the algorithm: it outranks `<meta charset>`, but a byte order mark
 /// still wins.
-#[must_use]
 pub fn decode_with<'a>(input: &'a [u8], encoding: &'static Encoding) -> Decoded<'a> {
     if Encoding::for_bom(input).is_some() {
         return decode(input);
@@ -88,13 +86,11 @@ pub fn decode_with<'a>(input: &'a [u8], encoding: &'static Encoding) -> Decoded<
 
 /// [`decode`] for an owned buffer: the bytes are moved, never copied, and a
 /// stripped BOM prefix is drained in place.
-#[must_use]
 pub fn decode_owned(input: Vec<u8>) -> Decoded<'static> {
     take_ownership(input, decode)
 }
 
 /// [`decode_with`] for an owned buffer.
-#[must_use]
 pub fn decode_with_owned(input: Vec<u8>, encoding: &'static Encoding) -> Decoded<'static> {
     take_ownership(input, |bytes| decode_with(bytes, encoding))
 }
@@ -137,13 +133,11 @@ where
 }
 
 /// Looks up a charset label (`"gbk"`, `"windows-1252"`, ...).
-#[must_use]
 pub fn lookup(label: &str) -> Option<&'static Encoding> {
     Encoding::for_label(label.as_bytes())
 }
 
 /// The encoding a browser would try first, without validating the document.
-#[must_use]
 pub fn sniff(input: &[u8]) -> &'static Encoding {
     if let Some((encoding, _)) = Encoding::for_bom(input) {
         return encoding;

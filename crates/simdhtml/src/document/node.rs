@@ -12,26 +12,22 @@ pub struct Node<'a> {
 }
 
 impl Node<'_> {
-    #[must_use]
     #[inline]
     pub fn kind(&self) -> NodeKind {
         NodeKind::from_bits(self.tape.kind[self.tape.idx(self.id)])
     }
 
-    #[must_use]
     #[inline]
     pub fn is_element(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Element.bits()
     }
 
-    #[must_use]
     #[inline]
     pub fn is_text(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Text.bits()
     }
 
     /// Element namespace; integration points report their foreign namespace.
-    #[must_use]
     #[inline]
     pub fn namespace(&self) -> Namespace {
         match self.tape.namespace_of(self.id) {
@@ -42,45 +38,38 @@ impl Node<'_> {
     }
 
     /// Whether this node is a comment, PI or bogus comment.
-    #[must_use]
     #[inline]
     pub fn is_comment(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & KIND_MASK == NodeKind::Comment.bits()
     }
 
     /// Whether this node is a comment that came from a doctype.
-    #[must_use]
     #[inline]
     pub fn is_doctype(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & DOCTYPE_BIT != 0
     }
 
     /// Whether this text node is the content of a raw text element (never decoded).
-    #[must_use]
     #[inline]
     pub fn is_raw_text(&self) -> bool {
         self.tape.kind[self.tape.idx(self.id)] & RAW_TEXT_BIT != 0
     }
 
-    #[must_use]
     #[inline]
     pub fn parent(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].parent
     }
 
-    #[must_use]
     #[inline]
     pub fn first_child(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].first_child
     }
 
-    #[must_use]
     #[inline]
     pub fn next_sibling(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].next_sibling
     }
 
-    #[must_use]
     pub fn prev_element_sibling(&self) -> NodeId {
         let parent = self.parent();
         if parent == NO_NODE {
@@ -97,25 +86,21 @@ impl Node<'_> {
         prev
     }
 
-    #[must_use]
     #[inline]
     pub fn subtree_end(&self) -> NodeId {
         self.tape.record[self.tape.idx(self.id)].subtree_end
     }
 
-    #[must_use]
     #[inline]
     pub fn span(&self) -> Range<u32> {
         self.tape.record[self.tape.idx(self.id)].span.clone()
     }
 
-    #[must_use]
     #[inline]
     pub fn tag_token(&self) -> TagId {
         self.tape.record[self.tape.idx(self.id)].tag_token
     }
 
-    #[must_use]
     #[inline]
     pub fn outer_end(&self) -> u32 {
         self.tape.record[self.tape.idx(self.id)].outer_end

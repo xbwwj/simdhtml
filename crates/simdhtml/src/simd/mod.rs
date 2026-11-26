@@ -121,7 +121,6 @@ const FALLBACK: Implementation = Implementation {
 };
 
 // Whether the AVX-512 block loop can be used.
-#[must_use]
 #[inline]
 pub fn avx512_available() -> bool {
     implementation().avx512
@@ -130,21 +129,18 @@ pub fn avx512_available() -> bool {
 // Whether the AVX2 block loop can be used.  Called once per document: the scan
 // instantiates its whole block loop per ISA instead of calling a classifier
 // through a function pointer per block.
-#[must_use]
 #[inline]
 pub fn avx2_available() -> bool {
     implementation().avx2
 }
 
 // Whether the NEON block loop can be used.
-#[must_use]
 #[inline]
 pub fn neon_available() -> bool {
     implementation().neon
 }
 
 /// Classifies one block, using the selected ISA.
-#[must_use]
 #[inline]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     (implementation().classify)(block)
@@ -152,14 +148,12 @@ pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
 
 /// Classifies only `<`, returning `None` when the block has none: the
 /// text/rawtext fast path.
-#[must_use]
 #[inline]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     (implementation().probe_lt)(block)
 }
 
 /// Cumulative XOR of the bits of `x`.
-#[must_use]
 #[inline]
 pub fn prefix_xor(x: u64) -> u64 {
     (implementation().prefix_xor)(x)
@@ -167,7 +161,6 @@ pub fn prefix_xor(x: u64) -> u64 {
 
 /// [`prefix_xor`], inverted when `carry` is set: the block-boundary carry.
 #[inline]
-#[must_use]
 pub fn prefix_xor_with_carry(x: u64, carry: bool) -> u64 {
     let p = prefix_xor(x);
     if carry { !p } else { p }
@@ -183,7 +176,6 @@ pub struct InstructionSets {
 }
 
 /// Runtime-selected features of the current CPU.
-#[must_use]
 pub fn instruction_sets() -> InstructionSets {
     let k = implementation();
     InstructionSets {

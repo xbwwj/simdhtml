@@ -8,7 +8,6 @@ pub struct BitSet {
 }
 
 impl BitSet {
-    #[must_use]
     pub fn new(len: usize) -> Self {
         Self {
             words: vec![0; len.div_ceil(64)],
@@ -16,12 +15,10 @@ impl BitSet {
         }
     }
 
-    #[must_use]
     pub const fn len(&self) -> usize {
         self.len
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.words.iter().all(|&w| w == 0)
     }
@@ -38,7 +35,6 @@ impl BitSet {
         self.words[id / 64] &= !(1u64 << (id % 64));
     }
 
-    #[must_use]
     pub fn get(&self, id: NodeId) -> bool {
         let id = id.index();
         debug_assert!(id < self.len);
@@ -79,7 +75,6 @@ impl BitSet {
         self.mask_tail();
     }
 
-    #[must_use]
     pub fn count_ones(&self) -> u32 {
         self.words.iter().map(|w| w.count_ones()).sum()
     }

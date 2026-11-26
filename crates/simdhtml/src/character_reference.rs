@@ -20,7 +20,6 @@ fn entity_map() -> &'static HashMap<&'static str, &'static str> {
 /// Decodes HTML character references.  `in_attribute` applies the HTML rule that
 /// a named reference without `;` is not decoded when followed by an
 /// alphanumeric or `=`; unknown or malformed references stay literal.
-#[must_use]
 pub fn decode_character_references(input: &str, in_attribute: bool) -> Cow<'_, str> {
     if !input.as_bytes().contains(&b'&') {
         return Cow::Borrowed(input);

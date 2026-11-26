@@ -14,25 +14,21 @@ pub struct TagId(u32);
 macro_rules! id_type {
     ($name:ident) => {
         impl $name {
-            #[must_use]
             #[inline(always)]
             pub const fn new(index: u32) -> Self {
                 Self(index)
             }
 
-            #[must_use]
             #[inline(always)]
             pub const fn get(self) -> u32 {
                 self.0
             }
 
-            #[must_use]
             #[inline(always)]
             pub const fn index(self) -> usize {
                 self.0 as usize
             }
 
-            #[must_use]
             #[inline(always)]
             pub const fn is_none(self) -> bool {
                 self.0 == u32::MAX

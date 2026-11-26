@@ -37,17 +37,14 @@ pub struct TagTable {
 }
 
 impl TagTable {
-    #[must_use]
     pub fn len(&self) -> usize {
         self.tokens.len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
 
-    #[must_use]
     #[inline]
     pub fn token(&self, tag: TagId) -> &TagToken {
         &self.tokens[tag.index()]

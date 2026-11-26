@@ -12,12 +12,10 @@ impl Namespace {
     /// An SVG element whose children are HTML (`foreignObject`, `desc`, `title`).
     pub const SVG_HTML_POINT: Self = Self(4);
 
-    #[must_use]
     pub(crate) const fn from_bits(bits: u8) -> Self {
         Self(bits)
     }
 
-    #[must_use]
     pub(crate) const fn bits(self) -> u8 {
         self.0
     }

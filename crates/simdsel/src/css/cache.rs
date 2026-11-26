@@ -30,7 +30,6 @@ pub struct QueryCache {
 
 impl QueryCache {
     /// Creates an empty query cache.
-    #[must_use]
     pub fn root() -> Self {
         Self::default()
     }

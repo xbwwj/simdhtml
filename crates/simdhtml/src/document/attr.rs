@@ -19,12 +19,10 @@ pub struct AttrTable {
 }
 
 impl AttrTable {
-    #[must_use]
     pub fn len(&self) -> usize {
         self.tag.len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tag.is_empty()
     }

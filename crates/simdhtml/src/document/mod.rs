@@ -49,7 +49,6 @@ pub struct Document<'a> {
 
 impl Document<'_> {
     /// Borrowed view of one node.
-    #[must_use]
     #[inline]
     pub fn node(&self, id: NodeId) -> Node<'_> {
         Node {
@@ -58,7 +57,6 @@ impl Document<'_> {
         }
     }
 
-    #[must_use]
     pub fn tag_name(&self, tag: TagId) -> &str {
         if tag.get() >= self.tags.source_count {
             return self.tags.implied_names[(tag.get() - self.tags.source_count) as usize];
@@ -96,7 +94,6 @@ impl Document<'_> {
 
     /// Attribute name as the HTML tree model stores it (ASCII lowercase, except
     /// for adjusted foreign names).
-    #[must_use]
     pub fn attr_name(&self, attr: u32) -> Cow<'_, str> {
         if let Some(&index) = self.attrs.name_override.get(attr as usize)
             && index != 0
@@ -114,7 +111,6 @@ impl Document<'_> {
     }
 
     /// Decoded character data of a text node or comment; raw text is verbatim.
-    #[must_use]
     pub fn text(&self, id: NodeId) -> Cow<'_, str> {
         let node = self.node(id);
         debug_assert!(node.is_text() || node.is_comment());

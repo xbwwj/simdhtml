@@ -238,7 +238,6 @@ pub fn select_as_within<'a, P: Projection>(
 }
 
 /// Extracts the text/HTML represented by a match record.
-#[must_use]
 pub fn extract<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> std::borrow::Cow<'a, str> {
     match record.kind {
         MatchKind::Element => {

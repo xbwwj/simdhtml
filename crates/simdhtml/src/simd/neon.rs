@@ -1,13 +1,11 @@
 use super::{BLOCK_SIZE, NEED_ALL, NEED_GT, NEED_LT, NEED_QUOTES, StructuralMasks};
 
 /// NEON [`super::classify`].
-#[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     unsafe { classify_neon(block) }
 }
 
 /// NEON [`super::probe_lt`].
-#[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     unsafe { probe_lt_neon(block) }
 }

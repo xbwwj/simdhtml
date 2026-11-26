@@ -1,13 +1,11 @@
 use super::{BLOCK_SIZE, NEED_ALL, NEED_GT, NEED_LT, NEED_QUOTES, StructuralMasks};
 
 /// AVX-512 [`super::classify`].
-#[must_use]
 pub fn classify(block: &[u8; BLOCK_SIZE]) -> StructuralMasks {
     unsafe { classify_avx512(block) }
 }
 
 /// AVX-512 [`super::probe_lt`].
-#[must_use]
 pub fn probe_lt(block: &[u8; BLOCK_SIZE]) -> Option<StructuralMasks> {
     unsafe { probe_lt_avx512(block) }
 }

@@ -26,7 +26,6 @@ pub enum Dataset {
 impl Dataset {
     pub const ALL: [Dataset; 2] = [Self::CommonCrawl, Self::Swde];
 
-    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::CommonCrawl => "cc",
@@ -34,7 +33,6 @@ impl Dataset {
         }
     }
 
-    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::CommonCrawl => "commoncrawl",
@@ -42,7 +40,6 @@ impl Dataset {
         }
     }
 
-    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "cc" | "commoncrawl" => Some(Self::CommonCrawl),
@@ -63,12 +60,10 @@ pub struct Doc {
 }
 
 impl Doc {
-    #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -88,7 +83,6 @@ pub struct Corpus {
 }
 
 impl Corpus {
-    #[must_use]
     pub fn load(dataset: Dataset) -> Option<Self> {
         let policy = SamplePolicy::active();
         match Self::load_with(dataset, &policy) {
@@ -118,22 +112,18 @@ impl Corpus {
         }
     }
 
-    #[must_use]
     pub fn len(&self) -> usize {
         self.docs.len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.docs.is_empty()
     }
 
-    #[must_use]
     pub fn total_bytes(&self) -> u64 {
         self.docs.iter().map(|doc| doc.bytes.len() as u64).sum()
     }
 
-    #[must_use]
     pub fn mib(&self) -> f64 {
         self.total_bytes() as f64 / (1024.0 * 1024.0)
     }
@@ -146,7 +136,6 @@ impl Corpus {
         out
     }
 
-    #[must_use]
     pub fn subset(&self, name: &str, ids: &[usize]) -> Subset<'_> {
         Subset {
             name: name.to_string(),
@@ -154,7 +143,6 @@ impl Corpus {
         }
     }
 
-    #[must_use]
     pub fn workload_sets(&self) -> Vec<(String, Vec<String>)> {
         self.query_sets
             .iter()
@@ -170,28 +158,23 @@ pub struct Subset<'a> {
 }
 
 impl Subset<'_> {
-    #[must_use]
     pub fn len(&self) -> usize {
         self.docs.len()
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.docs.is_empty()
     }
 
-    #[must_use]
     pub fn total_bytes(&self) -> u64 {
         self.docs.iter().map(|doc| doc.bytes.len() as u64).sum()
     }
 
-    #[must_use]
     pub fn mib(&self) -> f64 {
         self.total_bytes() as f64 / (1024.0 * 1024.0)
     }
 }
 
-#[must_use]
 pub fn read_selector_sets(dir: &Path) -> Vec<QuerySet> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -212,7 +195,6 @@ pub fn read_selector_sets(dir: &Path) -> Vec<QuerySet> {
         .collect()
 }
 
-#[must_use]
 pub fn parse_selectors(text: &str) -> Vec<String> {
     text.lines()
         .map(str::trim)
@@ -221,7 +203,6 @@ pub fn parse_selectors(text: &str) -> Vec<String> {
         .collect()
 }
 
-#[must_use]
 pub fn size_bucket(bytes: usize) -> &'static str {
     match bytes {
         0..=8191 => "<8KiB",

@@ -34,7 +34,6 @@ impl<'a> Selector<'a> {
     /// let sel = Selector::new(Document::parse_owned(body)?);
     /// # Ok::<(), Error>(())
     /// ```
-    #[must_use]
     pub fn new(doc: Document<'a>) -> Self {
         Self {
             doc: Rc::new(doc),
@@ -45,29 +44,17 @@ impl<'a> Selector<'a> {
     }
 
     /// Parses `input` as bytes (parsel's `body=`) and selects from its root.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Parse`] if the input is too large or cannot be decoded.
     pub fn from_bytes(input: &'a [u8]) -> Result<Self, Error> {
         Ok(Self::new(Document::parse(input)?))
     }
 
     /// [`Self::from_bytes`] with explicit [`ParseOptions`].
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Parse`] if parsing failed.
     pub fn from_bytes_with(input: &'a [u8], options: ParseOptions) -> Result<Self, Error> {
         Ok(Self::new(Document::parse_with(input, options)?))
     }
 
     /// Parses already decoded `text` (parsel's `text=`) and selects from its
     /// root.  No BOM or `<meta charset>` sniffing: a `&str` is already text.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Parse`] if the input is too large.
     pub fn from_text(text: &'a str) -> Result<Self, Error> {
         Self::from_bytes_with(
             text.as_bytes(),
@@ -80,7 +67,6 @@ impl<'a> Selector<'a> {
 
     /// Splits a result set into one single-result selector per record; the
     /// derived selectors share the document and the query cache.
-    #[must_use]
     pub fn split(&self) -> Vec<Self> {
         self.records
             .iter()
@@ -94,31 +80,26 @@ impl<'a> Selector<'a> {
     }
 
     /// The document this selector owns.
-    #[must_use]
     pub fn doc(&self) -> &Document<'a> {
         &self.doc
     }
 
     /// Current search roots.
-    #[must_use]
     pub fn roots(&self) -> &[NodeId] {
         &self.roots
     }
 
     /// Current records.
-    #[must_use]
     pub fn records(&self) -> &[MatchRecord] {
         &self.records
     }
 
     /// Number of records.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.records.len()
     }
 
     /// Whether there are no records.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
@@ -151,11 +132,6 @@ impl<'a> Selector<'a> {
     }
 
     /// Compiles and evaluates a CSS selector inside the current roots.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Selector`] for an invalid selector, [`Error::Match`] for
-    /// evaluation limits.
     pub fn css(&self, query: &str) -> Result<Self, Error> {
         let parsed = Self::compiled(query)?;
         let records = select_within_cache(&self.doc, &parsed, &self.roots, &self.cache)?;
@@ -170,29 +146,18 @@ impl<'a> Selector<'a> {
 
     /// Evaluates CSS and projects the result: `Count` avoids materializing
     /// records, `Texts` borrows from the document input.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Selector`] for an invalid selector, [`Error::Match`] for
-    /// evaluation limits.
     pub fn css_as<'b, P: Projection>(&'b self, query: &str) -> Result<P::Output<'b>, Error> {
         let parsed = Self::compiled(query)?;
         select_as_within_cache::<P>(&self.doc, &parsed, &self.roots, &self.cache)
     }
 
     /// Counts CSS matches without materializing records.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Selector`] for an invalid selector, [`Error::Match`] for
-    /// evaluation limits.
     pub fn css_count(&self, query: &str) -> Result<usize, Error> {
         self.css_as::<Count>(query)
     }
 
     /// First result's extracted string.  Element results are the original source
     /// slice, not a re-serialization; text and attribute results are decoded.
-    #[must_use]
     pub fn get(&self) -> Option<Cow<'_, str>> {
         self.records
             .first()
@@ -200,7 +165,6 @@ impl<'a> Selector<'a> {
     }
 
     /// All result strings.
-    #[must_use]
     pub fn getall(&self) -> Vec<Cow<'_, str>> {
         self.records
             .iter()
@@ -209,7 +173,6 @@ impl<'a> Selector<'a> {
     }
 
     /// First result's text content.
-    #[must_use]
     pub fn text(&self) -> Option<Cow<'_, str>> {
         self.records
             .first()
@@ -217,7 +180,6 @@ impl<'a> Selector<'a> {
     }
 
     /// All result text contents.
-    #[must_use]
     pub fn texts(&self) -> Vec<Cow<'_, str>> {
         self.records
             .iter()
@@ -226,7 +188,6 @@ impl<'a> Selector<'a> {
     }
 
     /// Attributes of the first element result.
-    #[must_use]
     pub fn attrib(&self) -> Option<Vec<(String, String)>> {
         record_attrib(&self.doc, self.records.first()?)
     }
@@ -243,29 +204,17 @@ impl Selector<'static> {
     /// let sel = Selector::from_vec(body)?;
     /// # Ok::<(), Error>(())
     /// ```
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Parse`] if the input is too large or cannot be decoded.
     pub fn from_vec(input: Vec<u8>) -> Result<Self, Error> {
         Ok(Self::new(Document::parse_owned(input)?))
     }
 
     /// [`Self::from_vec`] with explicit [`ParseOptions`].
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Parse`] if parsing failed.
     pub fn from_vec_with(input: Vec<u8>, options: ParseOptions) -> Result<Self, Error> {
         Ok(Self::new(Document::parse_owned_with(input, options)?))
     }
 
     /// [`Selector::from_text`] for an owned string: it neither borrows nor
     /// copies, and no charset sniffing runs.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Parse`] if the input is too large.
     pub fn from_string(text: String) -> Result<Self, Error> {
         Self::from_vec_with(
             text.into_bytes(),
@@ -286,11 +235,6 @@ impl<'a> From<Document<'a>> for Selector<'a> {
 /// Compiles `query` (through the per-thread intern table) and evaluates it
 /// inside `roots`, reusing the chain-local [`QueryCache`].  Used by language
 /// bindings to run one query without rebuilding a [`Selector`].
-///
-/// # Errors
-///
-/// [`Error::Selector`] for an invalid selector, [`Error::Match`] for evaluation
-/// limits.
 pub fn select_query_within_cache(
     doc: &Document<'_>,
     roots: &[NodeId],
@@ -303,7 +247,6 @@ pub fn select_query_within_cache(
 
 /// Text content of one match record: subtree text for elements, the decoded
 /// node for text records, nothing for attributes.
-#[must_use]
 pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Cow<'a, str>> {
     match record.kind {
         MatchKind::Element => Some(Cow::Owned(crate::dom::text_content(doc, record.node))),
@@ -314,7 +257,6 @@ pub fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Co
 
 /// Attributes of one element match record, deduplicated first-wins.  `None` for
 /// text and attribute records.
-#[must_use]
 pub fn record_attrib(doc: &Document<'_>, record: &MatchRecord) -> Option<Vec<(String, String)>> {
     if record.kind != MatchKind::Element {
         return None;
