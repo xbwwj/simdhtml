@@ -10,15 +10,17 @@
 //!
 //! Documents are streamed from the real corpora by `simdhtml-data`; CC uses
 //! the checked-in selector sets (`bench/selectors/cc`), SWDE the per-site
-//! selectors (`bench/selectors/swde`).
+//! selectors (`bench/selectors/swde`).  Common Crawl is measured both as one
+//! mixed corpus and per document-size bucket, which is what shows the
+//! fixed-per-document cost of the DOM engines.
 
 use std::hint::black_box;
 
 use criterion::{BenchmarkGroup, Criterion, measurement::WallTime};
 use simdhtml::document::Document;
 use simdhtml::parse::{ParseOptions, RepairMode};
-use simdhtml_bench::corpus::{Corpus, Dataset};
-use simdhtml_bench::{bytes_group, env};
+use simdhtml_bench::corpus::{Corpus, Dataset, Doc, Subset};
+use simdhtml_bench::{bytes_group, env, record_input};
 use simdsel::prelude::Selector;
 
 /// Per-document selectors, when the corpus carries them (SWDE).
@@ -29,7 +31,7 @@ fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {
 
 fn bench_simdsel_common(
     group: &mut BenchmarkGroup<'_, WallTime>,
-    corpus: &Corpus,
+    docs: &[&Doc],
     sets: &[(String, Vec<String>)],
     mode: RepairMode,
 ) {
@@ -37,7 +39,7 @@ fn bench_simdsel_common(
     group.bench_function(&id, |b| {
         b.iter(|| {
             let mut matches = 0usize;
-            for doc in &corpus.docs {
+            for doc in docs {
                 let parsed = Document::parse_with(
                     black_box(&doc.bytes),
                     ParseOptions {
@@ -89,16 +91,22 @@ fn bench_simdsel_per_doc(
     });
 }
 
-fn bench_common(c: &mut Criterion, corpus: &Corpus, sets: &[(String, Vec<String>)]) {
-    let strings: Vec<String> = corpus
+fn bench_common(
+    c: &mut Criterion,
+    name: &str,
+    subset: &Subset<'_>,
+    sets: &[(String, Vec<String>)],
+    bucket: Option<(usize, &str)>,
+) {
+    let strings: Vec<String> = subset
         .docs
         .iter()
         .map(|doc| String::from_utf8_lossy(&doc.bytes).into_owned())
         .collect();
-    let mut group = bytes_group(c, &format!("extract/{}", corpus.name), corpus.total_bytes());
+    let mut group = bytes_group(c, name, subset.total_bytes());
 
     for mode in [RepairMode::None, RepairMode::Spec] {
-        bench_simdsel_common(&mut group, corpus, sets, mode);
+        bench_simdsel_common(&mut group, &subset.docs, sets, mode);
     }
 
     group.bench_function("scraper", |b| {
@@ -132,6 +140,8 @@ fn bench_common(c: &mut Criterion, corpus: &Corpus, sets: &[(String, Vec<String>
         });
     });
     group.finish();
+
+    record_input(name, subset.len(), subset.total_bytes(), bucket);
 }
 
 fn bench_per_doc(c: &mut Criterion, corpus: &Corpus, queries: &[Vec<String>]) {
@@ -173,6 +183,13 @@ fn bench_per_doc(c: &mut Criterion, corpus: &Corpus, queries: &[Vec<String>]) {
         });
     });
     group.finish();
+
+    record_input(
+        &format!("extract/{}", corpus.name),
+        corpus.len(),
+        corpus.total_bytes(),
+        None,
+    );
 }
 
 fn main() {
@@ -185,7 +202,19 @@ fn main() {
         if sets.is_empty() {
             eprintln!("extract/cc: no selectors under bench/selectors/cc; skipped");
         } else {
-            bench_common(&mut c, &cc, &sets);
+            let whole = Subset {
+                name: cc.name.clone(),
+                docs: cc.docs.iter().collect(),
+            };
+            bench_common(&mut c, "extract/commoncrawl", &whole, &sets, None);
+            for (index, (bucket, ids)) in cc.buckets_by_size().into_iter().enumerate() {
+                let subset = cc.subset(&bucket, &ids);
+                if subset.is_empty() {
+                    continue;
+                }
+                let name = format!("extract/commoncrawl/{bucket}");
+                bench_common(&mut c, &name, &subset, &sets, Some((index, &bucket)));
+            }
         }
     }
 

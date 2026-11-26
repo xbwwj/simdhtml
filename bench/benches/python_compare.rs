@@ -20,9 +20,9 @@ use std::hint::black_box;
 use criterion::{BenchmarkGroup, Criterion, measurement::WallTime};
 use pyo3_embed::prelude::*;
 use pyo3_embed::types::PyAny;
-use simdhtml_bench::corpus::{Corpus, Dataset};
+use simdhtml_bench::corpus::{Corpus, Dataset, Subset};
 use simdhtml_bench::python::add_venv_sys_path;
-use simdhtml_bench::{bytes_group, env};
+use simdhtml_bench::{bytes_group, env, record_input};
 
 fn per_doc_queries(corpus: &Corpus) -> Option<Vec<Vec<String>>> {
     let any = corpus.docs.iter().any(|doc| !doc.queries.is_empty());
@@ -78,21 +78,23 @@ impl PyEngine {
 
 fn bench_common(
     c: &mut Criterion,
-    corpus: &Corpus,
+    name: &str,
+    subset: &Subset<'_>,
     sets: &[(String, Vec<String>)],
-    strings: &[String],
+    bucket: Option<(usize, &str)>,
 ) {
-    let mut group = bytes_group(
-        c,
-        &format!("python/{}/common", corpus.name),
-        corpus.total_bytes(),
-    );
+    let strings: Vec<String> = subset
+        .docs
+        .iter()
+        .map(|doc| String::from_utf8_lossy(&doc.bytes).into_owned())
+        .collect();
+    let mut group = bytes_group(c, name, subset.total_bytes());
     for engine in PyEngine::ALL {
         group.bench_function(engine.name(), |b| {
             b.iter(|| {
                 Python::attach(|py| {
                     let mut matches = 0usize;
-                    for html in strings {
+                    for html in &strings {
                         let tree = engine.parse(py, black_box(html)).expect("python parse");
                         for (_, queries) in sets {
                             for query in queries {
@@ -110,14 +112,13 @@ fn bench_common(
         });
     }
     group.finish();
+
+    record_input(name, subset.len(), subset.total_bytes(), bucket);
 }
 
 fn bench_per_doc(c: &mut Criterion, corpus: &Corpus, queries: &[Vec<String>], strings: &[String]) {
-    let mut group = bytes_group(
-        c,
-        &format!("python/{}/per-site", corpus.name),
-        corpus.total_bytes(),
-    );
+    let name = format!("python/{}/per-site", corpus.name);
+    let mut group = bytes_group(c, &name, corpus.total_bytes());
     for engine in PyEngine::ALL {
         group.bench_function(engine.name(), |b| {
             b.iter(|| {
@@ -142,6 +143,8 @@ fn bench_per_doc(c: &mut Criterion, corpus: &Corpus, queries: &[Vec<String>], st
         });
     }
     group.finish();
+
+    record_input(&name, corpus.len(), corpus.total_bytes(), None);
 }
 
 /// Keep the type visible to rustdoc without forcing the bench group helper to
@@ -168,16 +171,23 @@ fn main() {
 
     if let Some(cc) = Corpus::load(Dataset::CommonCrawl) {
         found = true;
-        let strings: Vec<String> = cc
-            .docs
-            .iter()
-            .map(|doc| String::from_utf8_lossy(&doc.bytes).into_owned())
-            .collect();
         let sets = cc.workload_sets();
         if sets.is_empty() {
             eprintln!("python/cc: no selectors under bench/selectors/cc; skipped");
         } else {
-            bench_common(&mut c, &cc, &sets, &strings);
+            let whole = Subset {
+                name: cc.name.clone(),
+                docs: cc.docs.iter().collect(),
+            };
+            bench_common(&mut c, "python/commoncrawl/common", &whole, &sets, None);
+            for (index, (bucket, ids)) in cc.buckets_by_size().into_iter().enumerate() {
+                let subset = cc.subset(&bucket, &ids);
+                if subset.is_empty() {
+                    continue;
+                }
+                let name = format!("python/commoncrawl/{bucket}");
+                bench_common(&mut c, &name, &subset, &sets, Some((index, &bucket)));
+            }
         }
     }
 

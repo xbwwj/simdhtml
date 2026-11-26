@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::root;
+use crate::{criterion_dir, meta, root};
 
 const W: f64 = 1900.0;
 const H: f64 = 980.0;
@@ -25,276 +26,336 @@ const ROW_TOP: f64 = 240.0;
 const ROW_PITCH: f64 = 100.0;
 const BAR_H: f64 = 50.0;
 
+const CELL_TOP: f64 = 240.0;
+const CELL_MARGIN: f64 = 80.0;
+const CELL_GAP: f64 = 80.0;
+const CELL_COLS: usize = 2;
+const CELL_LABEL_W: f64 = 176.0;
+const CELL_PLOT_W: f64 = 470.0;
+const CELL_PITCH: f64 = 32.0;
+const CELL_BAR_H: f64 = 19.0;
+const CELL_HEADER: f64 = 40.0;
+const CELL_FOOTER: f64 = 46.0;
+
 const FONT: &str = "Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif";
-const META: &str =
-    "simdsel 0.1 · Rust v1.99.1 release · AMD Ryzen 5 5600 (Zen 3, AVX2, single core)";
-const AXIS_TITLE: &str = "Extraction speed (GB/s per core, higher is better)";
 
-const ENGINES: [(&str, &str, &str); 7] = [
-    ("none", "simdsel", "Rust"),
-    ("spec", "simdsel (spec)", "Rust"),
-    ("dom_query", "dom_query", "Rust"),
-    ("selectolax", "selectolax", "Python"),
-    ("scraper", "scraper", "Rust"),
-    ("parsel", "parsel", "Python"),
-    ("beautifulsoup4", "beautifulsoup4", "Python"),
-];
-
-struct CorpusData {
-    key: &'static str,
-    bytes: f64,
-    docs: f64,
-    times: Vec<Time>,
+struct Engine {
+    /// Criterion benchmark id inside the group.
+    id: &'static str,
+    label: &'static str,
+    lang: &'static str,
+    python: bool,
 }
 
-struct Time {
-    key: &'static str,
-    seconds: f64,
-    group: &'static str,
-    bench: &'static str,
+const ENGINES: [Engine; 7] = [
+    Engine {
+        id: "simdhtml-None",
+        label: "simdsel",
+        lang: "Rust",
+        python: false,
+    },
+    Engine {
+        id: "simdhtml-Spec",
+        label: "simdsel (spec)",
+        lang: "Rust",
+        python: false,
+    },
+    Engine {
+        id: "dom_query",
+        label: "dom_query",
+        lang: "Rust",
+        python: false,
+    },
+    Engine {
+        id: "python-selectolax",
+        label: "selectolax",
+        lang: "Python",
+        python: true,
+    },
+    Engine {
+        id: "scraper",
+        label: "scraper",
+        lang: "Rust",
+        python: false,
+    },
+    Engine {
+        id: "python-parsel",
+        label: "parsel",
+        lang: "Python",
+        python: true,
+    },
+    Engine {
+        id: "python-beautifulsoup4",
+        label: "beautifulsoup4",
+        lang: "Python",
+        python: true,
+    },
+];
+
+#[derive(Clone, Copy)]
+enum Metric {
+    /// Bytes per second, drawn in GB/s.
+    Bytes,
+    /// Documents per second.
+    Pages,
+}
+
+enum Layout {
+    /// One group of engines over the whole corpus.
+    Whole {
+        rust: &'static str,
+        python: &'static str,
+    },
+    /// One section per document-size bucket, ordered small to large.
+    Buckets {
+        rust_prefix: &'static str,
+        python_prefix: &'static str,
+    },
 }
 
 struct ChartSpec {
-    corpus: &'static str,
     out: &'static str,
     title: &'static str,
     subtitle: &'static str,
+    axis: &'static str,
+    metric: Metric,
+    layout: Layout,
 }
 
-const CHARTS: [ChartSpec; 2] = [
+const CHARTS: [ChartSpec; 3] = [
     ChartSpec {
-        corpus: "cc",
         out: "cc",
         title: "Main Content & Link Extraction",
         subtitle: "Common Crawl dataset stratified (CC-MAIN-2026-43, October 2026)",
+        axis: "Extraction speed (GB/s per core, higher is better)",
+        metric: Metric::Bytes,
+        layout: Layout::Whole {
+            rust: "extract/commoncrawl",
+            python: "python/commoncrawl/common",
+        },
     },
     ChartSpec {
-        corpus: "swde",
+        out: "cc-size",
+        title: "Main Content & Link Extraction",
+        subtitle: "Common Crawl dataset grouped by document size (CC-MAIN-2026-43, October 2026)",
+        axis: "Extraction speed (pages/s per core, higher is better)",
+        metric: Metric::Pages,
+        layout: Layout::Buckets {
+            rust_prefix: "extract/commoncrawl",
+            python_prefix: "python/commoncrawl",
+        },
+    },
+    ChartSpec {
         out: "swde",
         title: "Structured Data Extraction",
         subtitle: "SWDE dataset, tag heavy documents",
+        axis: "Extraction speed (GB/s per core, higher is better)",
+        metric: Metric::Bytes,
+        layout: Layout::Whole {
+            rust: "extract/swde",
+            python: "python/swde/per-site",
+        },
     },
 ];
 
-fn table() -> Vec<CorpusData> {
-    vec![
-        CorpusData {
-            key: "cc",
-            bytes: 15_898_182.0,
-            docs: 56.0,
-            times: vec![
-                Time {
-                    key: "none",
-                    seconds: 0.012713,
-                    group: "extract_commoncrawl",
-                    bench: "simdhtml-None",
-                },
-                Time {
-                    key: "spec",
-                    seconds: 0.034555,
-                    group: "extract_commoncrawl",
-                    bench: "simdhtml-Spec",
-                },
-                Time {
-                    key: "dom_query",
-                    seconds: 0.093123,
-                    group: "extract_commoncrawl",
-                    bench: "dom_query",
-                },
-                Time {
-                    key: "selectolax",
-                    seconds: 0.090699,
-                    group: "python_commoncrawl_common",
-                    bench: "python-selectolax",
-                },
-                Time {
-                    key: "scraper",
-                    seconds: 0.095067,
-                    group: "extract_commoncrawl",
-                    bench: "scraper",
-                },
-                Time {
-                    key: "parsel",
-                    seconds: 0.148228,
-                    group: "python_commoncrawl_common",
-                    bench: "python-parsel",
-                },
-                Time {
-                    key: "beautifulsoup4",
-                    seconds: 2.100715,
-                    group: "python_commoncrawl_common",
-                    bench: "python-beautifulsoup4",
-                },
-            ],
-        },
-        CorpusData {
-            key: "swde",
-            bytes: 5_017_058.0,
-            docs: 64.0,
-            times: vec![
-                Time {
-                    key: "none",
-                    seconds: 0.010684,
-                    group: "extract_swde",
-                    bench: "simdhtml-None",
-                },
-                Time {
-                    key: "spec",
-                    seconds: 0.026690,
-                    group: "extract_swde",
-                    bench: "simdhtml-Spec",
-                },
-                Time {
-                    key: "dom_query",
-                    seconds: 0.087097,
-                    group: "extract_swde",
-                    bench: "dom_query",
-                },
-                Time {
-                    key: "selectolax",
-                    seconds: 0.037652,
-                    group: "python_swde_per-site",
-                    bench: "python-selectolax",
-                },
-                Time {
-                    key: "scraper",
-                    seconds: 0.086466,
-                    group: "extract_swde",
-                    bench: "scraper",
-                },
-                Time {
-                    key: "parsel",
-                    seconds: 0.112277,
-                    group: "python_swde_per-site",
-                    bench: "python-parsel",
-                },
-                Time {
-                    key: "beautifulsoup4",
-                    seconds: 1.889298,
-                    group: "python_swde_per-site",
-                    bench: "python-beautifulsoup4",
-                },
-            ],
-        },
-    ]
+struct Section {
+    bucket: Option<String>,
+    docs: f64,
+    bytes: f64,
+    rust_group: String,
+    python_group: String,
 }
 
-pub fn run(from_table: bool, allow_missing: bool) -> Result<()> {
-    let root = root();
-    let mut data = table();
-    if !from_table {
-        let missing = load_from_criterion(&root.join("target/criterion"), &mut data)?;
-        if !missing.is_empty() && !allow_missing {
-            let list: Vec<String> = missing
-                .iter()
-                .map(|(corpus, key)| format!("{corpus}/{key}"))
-                .collect();
-            bail!(
-                "no criterion result for {} benchmark(s):\n  {}\nrun `cargo xtask bench --compare` or pass --from-table",
-                list.len(),
-                list.join("\n  ")
-            );
-        }
-    }
+struct Row {
+    label: &'static str,
+    lang: &'static str,
+    value: f64,
+    pages: f64,
+    accent: bool,
+}
 
-    let out = root.join("figures");
+struct Results {
+    times: BTreeMap<String, f64>,
+    inputs: Value,
+    env: Value,
+}
+
+pub fn run(allow_missing: bool) -> Result<()> {
+    let dir = criterion_dir();
+    let results = Results::load(&dir)?;
+    let out = root().join("figures");
     fs::create_dir_all(&out)?;
     for spec in &CHARTS {
-        let corpus = data.iter().find(|d| d.key == spec.corpus).expect("corpus");
+        let sections = sections(spec, &results)?;
+        let rows: Vec<Vec<Row>> = sections
+            .iter()
+            .map(|section| rows(section, &results, spec.metric, allow_missing))
+            .collect::<Result<_>>()?;
+        let svg = match &spec.layout {
+            Layout::Whole { .. } => whole_chart(spec, &rows[0], &results.env),
+            Layout::Buckets { .. } => bucket_chart(spec, &sections, &rows, &results.env),
+        };
         let path = out.join(format!("{}.svg", spec.out));
-        fs::write(&path, chart(spec, corpus))?;
+        fs::write(&path, svg).with_context(|| format!("write {}", path.display()))?;
         println!("wrote {}", path.display());
     }
     Ok(())
 }
 
-fn load_from_criterion(
-    criterion: &Path,
-    data: &mut [CorpusData],
-) -> Result<Vec<(&'static str, &'static str)>> {
-    let mut missing = Vec::new();
-    for corpus in data.iter_mut() {
-        for time in &mut corpus.times {
-            let base = criterion.join(time.group).join(time.bench).join("new");
-            let estimates = base.join("estimates.json");
-            if !estimates.exists() {
-                missing.push((corpus.key, time.key));
-                continue;
-            }
-            let json: Value = serde_json::from_str(
-                &fs::read_to_string(&estimates)
-                    .with_context(|| format!("read {}", estimates.display()))?,
-            )?;
-            time.seconds = json["median"]["point_estimate"]
-                .as_f64()
-                .with_context(|| format!("median in {}", estimates.display()))?
-                / 1e9;
-            let benchmark = base.join("benchmark.json");
-            if benchmark.exists() {
-                let json: Value = serde_json::from_str(&fs::read_to_string(&benchmark)?)?;
-                if let Some(bytes) = json["throughput"]["Bytes"].as_f64() {
-                    corpus.bytes = bytes;
-                }
-            }
+impl Results {
+    fn load(dir: &Path) -> Result<Self> {
+        let mut times = BTreeMap::new();
+        scan(dir, &mut times)?;
+        if times.is_empty() {
+            bail!(
+                "no criterion results under {}; run `cargo xtask bench --compare`",
+                dir.display()
+            );
         }
+        Ok(Self {
+            times,
+            inputs: read_json(&dir.join("corpora.json")).unwrap_or(Value::Null),
+            env: meta::load(&dir.join("env.json")),
+        })
     }
-    Ok(missing)
+
+    fn input(&self, group: &str) -> Result<&Value> {
+        self.inputs.get(group).with_context(|| {
+            format!("no recorded input for `{group}`; re-run `cargo xtask bench --compare`")
+        })
+    }
 }
 
-fn chart(spec: &ChartSpec, data: &CorpusData) -> String {
-    let mut rows: Vec<Row> = ENGINES
-        .iter()
-        .map(|(key, label, lang)| {
-            let seconds = data
-                .times
-                .iter()
-                .find(|t| t.key == *key)
-                .expect("engine")
-                .seconds;
-            Row {
-                key,
-                label,
-                lang,
-                gb: data.bytes / seconds / 1e9,
-                pages: data.docs / seconds,
+/// Every result criterion wrote, keyed by its full benchmark id.
+fn scan(dir: &Path, times: &mut BTreeMap<String, f64>) -> Result<()> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let new = path.join("new");
+        if !new.is_dir() {
+            scan(&path, times)?;
+            continue;
+        }
+        let (Some(estimates), Some(benchmark)) = (
+            read_json(&new.join("estimates.json")),
+            read_json(&new.join("benchmark.json")),
+        ) else {
+            continue;
+        };
+        let id = benchmark.get("full_id").and_then(Value::as_str);
+        let median = estimates
+            .pointer("/median/point_estimate")
+            .and_then(Value::as_f64);
+        if let (Some(id), Some(median)) = (id, median) {
+            times.insert(id.to_string(), median / 1e9);
+        }
+    }
+    Ok(())
+}
+
+fn sections(spec: &ChartSpec, results: &Results) -> Result<Vec<Section>> {
+    match &spec.layout {
+        Layout::Whole { rust, python } => {
+            let input = results.input(rust)?;
+            Ok(vec![Section {
+                bucket: None,
+                docs: number(input, "docs")?,
+                bytes: number(input, "bytes")?,
+                rust_group: (*rust).to_string(),
+                python_group: (*python).to_string(),
+            }])
+        }
+        Layout::Buckets {
+            rust_prefix,
+            python_prefix,
+        } => {
+            let Some(entries) = results.inputs.as_object() else {
+                bail!("{}/{rust_prefix} missing from corpora.json", rust_prefix);
+            };
+            let prefix = format!("{rust_prefix}/");
+            let mut buckets: Vec<(u64, &str, &Value)> = Vec::new();
+            for (group, input) in entries {
+                if !group.starts_with(&prefix) || !input["bucket"].is_string() {
+                    continue;
+                }
+                let index = input["bucket_index"].as_u64().unwrap_or(u64::MAX);
+                buckets.push((index, group.as_str(), input));
             }
-        })
-        .collect();
-    rows.sort_by(|a, b| b.gb.total_cmp(&a.gb));
+            buckets.sort_by_key(|(index, _, _)| *index);
+            if buckets.is_empty() {
+                bail!(
+                    "no size buckets recorded for `{rust_prefix}/`; run `cargo xtask bench --compare`"
+                );
+            }
+            buckets
+                .into_iter()
+                .map(|(_, group, input)| {
+                    let bucket = string(input, "bucket");
+                    Ok(Section {
+                        bucket: Some(bucket.clone()),
+                        docs: number(input, "docs")?,
+                        bytes: number(input, "bytes")?,
+                        rust_group: group.to_string(),
+                        python_group: format!("{python_prefix}/{bucket}"),
+                    })
+                })
+                .collect()
+        }
+    }
+}
 
-    let (top, ticks) = nice_axis(rows[0].gb);
-    let mb_below = if spec.corpus == "swde" { 0.1 } else { 0.01 };
+fn rows(
+    section: &Section,
+    results: &Results,
+    metric: Metric,
+    allow_missing: bool,
+) -> Result<Vec<Row>> {
+    let mut rows = Vec::new();
+    let mut missing = Vec::new();
+    for engine in &ENGINES {
+        let group = if engine.python {
+            &section.python_group
+        } else {
+            &section.rust_group
+        };
+        let id = format!("{group}/{}", engine.id);
+        match results.times.get(&id) {
+            Some(seconds) if *seconds > 0.0 => rows.push(Row {
+                label: engine.label,
+                lang: engine.lang,
+                value: match metric {
+                    Metric::Bytes => section.bytes / seconds / 1e9,
+                    Metric::Pages => section.docs / seconds,
+                },
+                pages: section.docs / seconds,
+                accent: engine.label.starts_with("simdsel"),
+            }),
+            _ => missing.push(id),
+        }
+    }
+    if !missing.is_empty() && !allow_missing {
+        bail!(
+            "no criterion result for {} benchmark(s):\n  {}\nrun `cargo xtask bench --compare` or pass --allow-missing",
+            missing.len(),
+            missing.join("\n  ")
+        );
+    }
+    rows.sort_by(|a, b| b.value.total_cmp(&a.value));
+    Ok(rows)
+}
+
+fn whole_chart(spec: &ChartSpec, rows: &[Row], env: &Value) -> String {
+    let (top, ticks) = nice_axis(rows[0].value);
     let height = H.max(ROW_TOP + rows.len() as f64 * ROW_PITCH + 130.0);
-
-    let mut out = Vec::new();
-    out.push(format!(
-        concat!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{:.0}\" height=\"{:.0}\" ",
-            "viewBox=\"0 0 {:.0} {:.0}\" role=\"img\" aria-label=\"{}\">"
-        ),
-        W,
-        height,
-        W,
-        height,
-        escape(spec.title)
-    ));
-    out.push(format!("<title>{}</title>", escape(spec.title)));
-    out.push(format!(
-        "<rect width=\"{W:.0}\" height=\"{height:.0}\" fill=\"{BG}\"/>"
-    ));
-    out.push(text(80.0, 84.0, spec.title, 42.0, FG, 600, "start"));
-    out.push(text(
-        80.0,
-        132.0,
-        spec.subtitle,
-        24.0,
-        FG_SOFT,
-        400,
-        "start",
-    ));
-    out.push(text(80.0, 172.0, META, 19.0, FG_DIM, 400, "start"));
-
     let axis_y = ROW_TOP + rows.len() as f64 * ROW_PITCH - (ROW_PITCH - BAR_H) / 2.0 + 8.0;
+
+    let mut out = frame(spec, &meta::line(env), height);
+
     for tick in &ticks {
         let x = PLOT_LEFT + tick / top * PLOT_W;
         out.push(format!(
@@ -320,26 +381,18 @@ fn chart(spec: &ChartSpec, data: &CorpusData) -> String {
 
     for (i, row) in rows.iter().enumerate() {
         let cy = ROW_TOP + i as f64 * ROW_PITCH + ROW_PITCH / 2.0;
-        let width = row.gb / top * PLOT_W;
-        let accent = row.key == "none" || row.key == "spec";
+        let width = row.value / top * PLOT_W;
         out.push(format!(
             "<rect x=\"{PLOT_LEFT:.1}\" y=\"{:.1}\" width=\"{width:.1}\" height=\"{BAR_H:.0}\" fill=\"{}\"/>",
             cy - BAR_H / 2.0,
-            if accent { BAR_ACCENT } else { BAR }
+            if row.accent { BAR_ACCENT } else { BAR }
         ));
         out.push(text(LABEL_X, cy - 6.0, row.label, 30.0, FG, 400, "end"));
         out.push(text(LABEL_X, cy + 25.0, row.lang, 20.0, FG_DIM, 400, "end"));
         let label_x = PLOT_LEFT + width + 20.0;
-        if accent {
-            out.push(text(
-                label_x,
-                cy - 4.0,
-                &fmt_speed(row.gb, places(row.gb), mb_below),
-                25.0,
-                FG,
-                400,
-                "start",
-            ));
+        let value = value_label(spec.metric, row);
+        if row.accent {
+            out.push(text(label_x, cy - 4.0, &value, 25.0, FG, 400, "start"));
             out.push(text(
                 label_x,
                 cy + 22.0,
@@ -350,21 +403,13 @@ fn chart(spec: &ChartSpec, data: &CorpusData) -> String {
                 "start",
             ));
         } else {
-            out.push(text(
-                label_x,
-                cy + 9.0,
-                &fmt_speed(row.gb, places(row.gb), mb_below),
-                25.0,
-                FG,
-                400,
-                "start",
-            ));
+            out.push(text(label_x, cy + 9.0, &value, 25.0, FG, 400, "start"));
         }
     }
     out.push(text(
         PLOT_LEFT + PLOT_W / 2.0,
         axis_y + 86.0,
-        AXIS_TITLE,
+        spec.axis,
         22.0,
         FG_SOFT,
         400,
@@ -374,17 +419,125 @@ fn chart(spec: &ChartSpec, data: &CorpusData) -> String {
     out.join("\n") + "\n"
 }
 
-struct Row<'a> {
-    key: &'a str,
-    label: &'a str,
-    lang: &'a str,
-    gb: f64,
-    pages: f64,
+fn bucket_chart(spec: &ChartSpec, sections: &[Section], rows: &[Vec<Row>], env: &Value) -> String {
+    let widest = rows.iter().map(Vec::len).max().unwrap_or(1);
+    let per_col = sections.len().div_ceil(CELL_COLS).max(1);
+    let cell_w = (W - 2.0 * CELL_MARGIN - CELL_GAP * (CELL_COLS as f64 - 1.0)) / CELL_COLS as f64;
+    let cell_h = CELL_HEADER + widest as f64 * CELL_PITCH + CELL_FOOTER;
+    let height = CELL_TOP + per_col as f64 * cell_h + 110.0;
+
+    let mut out = frame(spec, &meta::line(env), height);
+
+    for (index, (section, rows)) in sections.iter().zip(rows).enumerate() {
+        let col = index / per_col;
+        let line_index = index % per_col;
+        let x0 = CELL_MARGIN + col as f64 * (cell_w + CELL_GAP);
+        let y0 = CELL_TOP + line_index as f64 * cell_h;
+        let plot_left = x0 + CELL_LABEL_W;
+        let bars_top = y0 + CELL_HEADER;
+        let axis_y = bars_top + rows.len() as f64 * CELL_PITCH + 6.0;
+
+        let bucket = section.bucket.as_deref().unwrap_or("all");
+        out.push(text(x0, y0, bucket, 23.0, FG, 600, "start"));
+
+        // Each section gets its own linear scale, so the parsers stay
+        // comparable inside a size class.
+        let maximum = rows.iter().map(|row| row.value).fold(0.0, f64::max);
+        let (top, ticks) = nice_axis(maximum);
+        for tick in &ticks {
+            let x = plot_left + tick / top * CELL_PLOT_W;
+            out.push(format!(
+                "<line x1=\"{x:.1}\" y1=\"{:.1}\" x2=\"{x:.1}\" y2=\"{axis_y:.1}\" stroke=\"{GRID}\" stroke-width=\"1\"/>",
+                bars_top - 6.0
+            ));
+            out.push(text(
+                x,
+                axis_y + 24.0,
+                &fmt_axis_tick(*tick),
+                15.0,
+                FG_DIM,
+                400,
+                "middle",
+            ));
+        }
+        out.push(format!(
+            "<line x1=\"{plot_left:.1}\" y1=\"{axis_y:.1}\" x2=\"{:.1}\" y2=\"{axis_y:.1}\" stroke=\"{AXIS}\" stroke-width=\"1.5\"/>",
+            plot_left + CELL_PLOT_W
+        ));
+
+        for (i, row) in rows.iter().enumerate() {
+            let cy = bars_top + i as f64 * CELL_PITCH + CELL_PITCH / 2.0;
+            let width = (row.value / top * CELL_PLOT_W).max(1.5);
+            out.push(format!(
+                "<rect x=\"{plot_left:.1}\" y=\"{:.1}\" width=\"{width:.1}\" height=\"{CELL_BAR_H:.0}\" fill=\"{}\"/>",
+                cy - CELL_BAR_H / 2.0,
+                if row.accent { BAR_ACCENT } else { BAR }
+            ));
+            out.push(text(
+                x0 + CELL_LABEL_W - 12.0,
+                cy + 6.0,
+                row.label,
+                16.0,
+                FG,
+                400,
+                "end",
+            ));
+            out.push(text(
+                plot_left + width + 8.0,
+                cy + 6.0,
+                &fmt_pages_compact(row.value),
+                16.0,
+                if row.accent { FG } else { FG_SOFT },
+                400,
+                "start",
+            ));
+        }
+    }
+
+    out.push(text(
+        CELL_MARGIN + (W - 2.0 * CELL_MARGIN) / 2.0,
+        height - 34.0,
+        spec.axis,
+        21.0,
+        FG_SOFT,
+        400,
+        "middle",
+    ));
+    out.push("</svg>".to_string());
+    out.join("\n") + "\n"
+}
+
+fn frame(spec: &ChartSpec, meta_line: &str, height: f64) -> Vec<String> {
+    vec![
+        format!(
+            concat!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{:.0}\" height=\"{:.0}\" ",
+                "viewBox=\"0 0 {:.0} {:.0}\" role=\"img\" aria-label=\"{}\">"
+            ),
+            W,
+            height,
+            W,
+            height,
+            escape(spec.title)
+        ),
+        format!("<title>{}</title>", escape(spec.title)),
+        format!("<rect width=\"{W:.0}\" height=\"{height:.0}\" fill=\"{BG}\"/>"),
+        text(80.0, 84.0, spec.title, 42.0, FG, 600, "start"),
+        text(80.0, 132.0, spec.subtitle, 24.0, FG_SOFT, 400, "start"),
+        text(80.0, 172.0, meta_line, 19.0, FG_DIM, 400, "start"),
+    ]
+}
+
+fn value_label(metric: Metric, row: &Row) -> String {
+    match metric {
+        Metric::Bytes => fmt_speed(row.value),
+        Metric::Pages => fmt_pages(row.value),
+    }
 }
 
 fn nice_axis(maximum: f64) -> (f64, Vec<f64>) {
     let mut steps = Vec::new();
-    for k in -4..2 {
+    for k in -4..8 {
         for m in [1.0, 2.0, 2.5, 5.0] {
             steps.push(m * 10f64.powi(k));
         }
@@ -397,13 +550,13 @@ fn nice_axis(maximum: f64) -> (f64, Vec<f64>) {
             return (top, (0..labels).map(|i| step * i as f64).collect());
         }
     }
-    let step = 5.0 * 10f64.powi(1);
+    let step = 10f64.powf((maximum / 6.0).log10().ceil());
     (step * 6.0, (0..7).map(|i| step * i as f64).collect())
 }
 
-fn places(value: f64) -> i32 {
+fn places(value: f64) -> usize {
     if value > 0.0 {
-        (1 - value.log10().floor() as i32).max(2)
+        (1 - value.log10().floor() as i32).max(2) as usize
     } else {
         2
     }
@@ -418,11 +571,38 @@ fn fmt_tick(value: f64) -> String {
     }
 }
 
-fn fmt_speed(gb: f64, places: i32, mb_below: f64) -> String {
-    if gb < mb_below {
+fn fmt_speed(gb: f64) -> String {
+    if gb < 0.01 {
         format!("{:.1} MB/s", gb * 1000.0)
     } else {
-        format!("{gb:.places$} GB/s", places = places as usize)
+        format!("{gb:.places$} GB/s", places = places(gb))
+    }
+}
+
+fn fmt_axis_tick(value: f64) -> String {
+    if value >= 1_000_000.0 {
+        scaled(value, 1e6, "M")
+    } else if value >= 1_000.0 {
+        scaled(value, 1e3, "k")
+    } else {
+        fmt_tick(value)
+    }
+}
+
+fn scaled(value: f64, unit: f64, suffix: &str) -> String {
+    let value = value / unit;
+    if value.fract().abs() < 0.05 {
+        format!("{value:.0}{suffix}")
+    } else {
+        format!("{value:.1}{suffix}")
+    }
+}
+
+fn fmt_pages_compact(pages: f64) -> String {
+    if pages >= 1_000.0 {
+        format!("{} page/s", scaled(pages, 1e3, "k"))
+    } else {
+        fmt_pages(pages)
     }
 }
 
@@ -434,6 +614,26 @@ fn fmt_pages(pages: f64) -> String {
     } else {
         format!("{pages:.2} page/s")
     }
+}
+
+fn number(value: &Value, key: &str) -> Result<f64> {
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .with_context(|| format!("`{key}` missing in corpora.json"))
+}
+
+fn string(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn read_json(path: &Path) -> Option<Value> {
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 fn text(x: f64, y: f64, s: &str, size: f64, fill: &str, weight: i32, anchor: &str) -> String {

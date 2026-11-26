@@ -8,7 +8,7 @@ pub use simdhtml_data as corpus;
 pub use simdhtml_data::paths as env;
 
 pub use corpus::{Corpus, Dataset, Doc, Subset};
-pub use criterion_helpers::{bench_parse, bytes_group, count_group};
+pub use criterion_helpers::{bench_parse, bytes_group, count_group, record_input};
 
 pub mod criterion_helpers;
 #[cfg(feature = "python")]

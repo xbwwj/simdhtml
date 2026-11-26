@@ -1,5 +1,6 @@
 mod bench;
 mod data;
+mod meta;
 mod plot;
 
 use std::path::{Path, PathBuf};
@@ -36,10 +37,7 @@ enum Task {
     },
     /// Draw the performance figures from target/criterion.
     Plot {
-        /// Use the table in xtask instead of target/criterion.
-        #[arg(long)]
-        from_table: bool,
-        /// Keep table values for benchmarks without a criterion result.
+        /// Skip engines without a criterion result instead of failing.
         #[arg(long)]
         allow_missing: bool,
     },
@@ -59,10 +57,7 @@ fn main() -> Result<()> {
             compare,
             targets,
         } => bench::run(quick, compare, &targets),
-        Task::Plot {
-            from_table,
-            allow_missing,
-        } => plot::run(from_table, allow_missing),
+        Task::Plot { allow_missing } => plot::run(allow_missing),
         Task::Compat { parsel } => {
             if !parsel {
                 bail!("select a compatibility target: --parsel");
@@ -84,6 +79,17 @@ pub fn root() -> PathBuf {
         .parent()
         .expect("workspace root")
         .to_path_buf()
+}
+
+/// Criterion's result directory, resolved the same way criterion does.
+pub fn criterion_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("CRITERION_HOME") {
+        return PathBuf::from(dir);
+    }
+    if let Some(dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        return PathBuf::from(dir).join("criterion");
+    }
+    root().join("target/criterion")
 }
 
 pub fn exec(command: &mut Command) -> Result<()> {

@@ -4,7 +4,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-use crate::{exec, root};
+use crate::{criterion_dir, exec, meta, root};
 
 const ALL: [&str; 7] = [
     "markup",
@@ -20,6 +20,7 @@ const COMPARE: [&str; 2] = ["extract", "python_compare"];
 
 pub fn run(quick: bool, compare: bool, targets: &[String]) -> Result<()> {
     let root = root();
+    meta::write(&criterion_dir().join("env.json")).context("record benchmark environment")?;
     let names: Vec<&str> = if !targets.is_empty() {
         targets.iter().map(String::as_str).collect()
     } else if compare {

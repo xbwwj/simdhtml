@@ -28,6 +28,7 @@ html5ever_039 = { workspace = true, optional = true }
 markup5ever_rcdom = { workspace = true, optional = true }
 pyo3-embed = { workspace = true, optional = true }
 scraper = { workspace = true, optional = true }
+serde_json = { workspace = true }
 simdhtml = { workspace = true }
 simdhtml-data = { workspace = true }
 simdsel = { workspace = true }

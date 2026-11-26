@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use sha1_smol::Sha1;
 use warc::{RecordType, WarcHeader, WarcReader};
 
-use crate::{Corpus, Dataset, Doc, SamplePolicy, http, paths};
+use crate::{Corpus, Dataset, Doc, Quota, SamplePolicy, http, paths};
 
-const BUCKETS: [&str; 6] = [
+pub(crate) const BUCKETS: [&str; 6] = [
     "<8KiB",
     "8-32KiB",
     "32-128KiB",
@@ -22,6 +22,11 @@ struct Candidate {
     index: usize,
     size: usize,
     hash: [u8; 20],
+}
+
+/// Position of `name` in the size stratification, `None` for site buckets.
+pub(crate) fn bucket_rank(name: &str) -> Option<usize> {
+    BUCKETS.iter().position(|bucket| *bucket == name)
 }
 
 fn bucket_index(len: usize) -> usize {
@@ -75,11 +80,12 @@ fn for_each_payload(
     Ok(())
 }
 
-fn select(sizes: &[usize], policy: &SamplePolicy) -> Vec<usize> {
-    if policy.all || sizes.is_empty() {
-        return (0..sizes.len()).collect();
+/// Strided pick inside one size bucket, bounded by that bucket's quota.
+fn select(sizes: &[usize], quota: &Quota) -> Vec<usize> {
+    if sizes.is_empty() {
+        return Vec::new();
     }
-    let limit = policy.limit.min(sizes.len()).max(1);
+    let limit = quota.docs.min(sizes.len()).max(1);
     let step = sizes.len().div_ceil(limit);
     let mut selected = Vec::with_capacity(limit);
     let mut bytes = 0usize;
@@ -87,7 +93,7 @@ fn select(sizes: &[usize], policy: &SamplePolicy) -> Vec<usize> {
         if selected.len() >= limit {
             break;
         }
-        if bytes.saturating_add(size) > policy.bytes && !selected.is_empty() {
+        if bytes.saturating_add(size) > quota.bytes && !selected.is_empty() {
             break;
         }
         bytes += size;
@@ -108,20 +114,20 @@ pub fn load(policy: &SamplePolicy) -> Result<Corpus, String> {
         true
     })?;
 
+    // Equal bytes per size bucket; a global byte budget would starve the
+    // largest documents and leave that bucket empty.
+    let quota = policy.quota(BUCKETS.len());
     let per_bucket = if policy.all { usize::MAX } else { PER_BUCKET };
-    let mut order: Vec<usize> = (0..BUCKETS.len()).collect();
-    order.sort_by_key(|&bucket| BUCKETS[bucket]);
-    let mut pool = Vec::new();
-    for bucket in order {
-        candidates[bucket].sort_by_key(|candidate| (candidate.hash, candidate.index));
-        candidates[bucket].truncate(per_bucket);
-        pool.extend_from_slice(&candidates[bucket]);
-    }
-
-    let sizes: Vec<usize> = pool.iter().map(|candidate| candidate.size).collect();
-    let selected: Vec<Candidate> = select(&sizes, policy)
-        .into_iter()
-        .map(|i| pool[i])
+    let selected: Vec<Candidate> = (0..BUCKETS.len())
+        .flat_map(|bucket| {
+            candidates[bucket].sort_by_key(|candidate| (candidate.hash, candidate.index));
+            candidates[bucket].truncate(per_bucket);
+            let sizes: Vec<usize> = candidates[bucket].iter().map(|c| c.size).collect();
+            select(&sizes, &quota)
+                .into_iter()
+                .map(|i| candidates[bucket][i])
+                .collect::<Vec<_>>()
+        })
         .collect();
     let positions: HashMap<usize, usize> = selected
         .iter()

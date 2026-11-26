@@ -136,6 +136,18 @@ impl Corpus {
         out
     }
 
+    /// Buckets ordered by document size; datasets without a size
+    /// stratification keep their name order.
+    pub fn buckets_by_size(&self) -> Vec<(String, Vec<usize>)> {
+        let mut buckets: Vec<(String, Vec<usize>)> = self.buckets().into_iter().collect();
+        buckets.sort_by(|a, b| {
+            cc::bucket_rank(&a.0)
+                .cmp(&cc::bucket_rank(&b.0))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        buckets
+    }
+
     pub fn subset(&self, name: &str, ids: &[usize]) -> Subset<'_> {
         Subset {
             name: name.to_string(),

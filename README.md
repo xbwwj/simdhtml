@@ -20,9 +20,11 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 
 ## Benchmarks
 
-[![Common Crawl: parse + 18 CSS selectors](./figures/cc.svg)](./figures/cc.svg)
+[![Common Crawl](./figures/cc.svg)](./figures/cc.svg)
 
-[![SWDE: per-site structured extraction](./figures/swde.svg)](./figures/swde.svg)
+[![Common Crawl by size](./figures/cc.svg)](./figures/cc-size.svg)
+
+[![SWDE](./figures/swde.svg)](./figures/swde.svg)
 
 ## Usage
 

@@ -1,0 +1,204 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1280" viewBox="0 0 1900 1280" role="img" aria-label="Main Content &amp; Link Extraction">
+<title>Main Content &amp; Link Extraction</title>
+<rect width="1900" height="1280" fill="#0d0d0d"/>
+<text x="80.0" y="84.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="42" fill="#f2f2f2" font-weight="600">Main Content &amp; Link Extraction</text>
+<text x="80.0" y="132.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="24" fill="#c9c9c9">Common Crawl dataset grouped by document size (CC-MAIN-2026-43, October 2026)</text>
+<text x="80.0" y="172.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="19" fill="#8b8b8b">simdsel 0.1.1-dev · Rust v1.99.1 release · AMD Ryzen 5 5600 (AVX2, single core)</text>
+<text x="80.0" y="240.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="23" fill="#f2f2f2" font-weight="600">&lt;8KiB</text>
+<line x1="256.0" y1="274.0" x2="256.0" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="256.0" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">0</text>
+<line x1="373.5" y1="274.0" x2="373.5" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="373.5" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">20k</text>
+<line x1="491.0" y1="274.0" x2="491.0" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="491.0" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">40k</text>
+<line x1="608.5" y1="274.0" x2="608.5" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="608.5" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">60k</text>
+<line x1="726.0" y1="274.0" x2="726.0" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="726.0" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">80k</text>
+<line x1="256.0" y1="510.0" x2="726.0" y2="510.0" stroke="#3a3a3a" stroke-width="1.5"/>
+<rect x="256.0" y="286.5" width="391.5" height="19" fill="#3b82f6"/>
+<text x="244.0" y="302.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel</text>
+<text x="655.5" y="302.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">66.6k page/s</text>
+<rect x="256.0" y="318.5" width="230.1" height="19" fill="#3b82f6"/>
+<text x="244.0" y="334.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel (spec)</text>
+<text x="494.1" y="334.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">39.2k page/s</text>
+<rect x="256.0" y="350.5" width="94.4" height="19" fill="#454545"/>
+<text x="244.0" y="366.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">dom_query</text>
+<text x="358.4" y="366.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">16.1k page/s</text>
+<rect x="256.0" y="382.5" width="93.3" height="19" fill="#454545"/>
+<text x="244.0" y="398.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">scraper</text>
+<text x="357.3" y="398.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">15.9k page/s</text>
+<rect x="256.0" y="414.5" width="88.9" height="19" fill="#454545"/>
+<text x="244.0" y="430.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">selectolax</text>
+<text x="352.9" y="430.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">15.1k page/s</text>
+<rect x="256.0" y="446.5" width="31.9" height="19" fill="#454545"/>
+<text x="244.0" y="462.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">parsel</text>
+<text x="295.9" y="462.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">5.4k page/s</text>
+<rect x="256.0" y="478.5" width="3.2" height="19" fill="#454545"/>
+<text x="244.0" y="494.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">beautifulsoup4</text>
+<text x="267.2" y="494.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">550 page/s</text>
+<text x="80.0" y="550.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="23" fill="#f2f2f2" font-weight="600">8-32KiB</text>
+<line x1="256.0" y1="584.0" x2="256.0" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="256.0" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">0</text>
+<line x1="373.5" y1="584.0" x2="373.5" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="373.5" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">5k</text>
+<line x1="491.0" y1="584.0" x2="491.0" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="491.0" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">10k</text>
+<line x1="608.5" y1="584.0" x2="608.5" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="608.5" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">15k</text>
+<line x1="726.0" y1="584.0" x2="726.0" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="726.0" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">20k</text>
+<line x1="256.0" y1="820.0" x2="726.0" y2="820.0" stroke="#3a3a3a" stroke-width="1.5"/>
+<rect x="256.0" y="596.5" width="458.7" height="19" fill="#3b82f6"/>
+<text x="244.0" y="612.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel</text>
+<text x="722.7" y="612.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">19.5k page/s</text>
+<rect x="256.0" y="628.5" width="211.2" height="19" fill="#3b82f6"/>
+<text x="244.0" y="644.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel (spec)</text>
+<text x="475.2" y="644.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">9.0k page/s</text>
+<rect x="256.0" y="660.5" width="136.8" height="19" fill="#454545"/>
+<text x="244.0" y="676.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">selectolax</text>
+<text x="400.8" y="676.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">5.8k page/s</text>
+<rect x="256.0" y="692.5" width="82.4" height="19" fill="#454545"/>
+<text x="244.0" y="708.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">dom_query</text>
+<text x="346.4" y="708.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">3.5k page/s</text>
+<rect x="256.0" y="724.5" width="81.0" height="19" fill="#454545"/>
+<text x="244.0" y="740.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">scraper</text>
+<text x="345.0" y="740.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">3.4k page/s</text>
+<rect x="256.0" y="756.5" width="45.8" height="19" fill="#454545"/>
+<text x="244.0" y="772.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">parsel</text>
+<text x="309.8" y="772.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">1.9k page/s</text>
+<rect x="256.0" y="788.5" width="2.8" height="19" fill="#454545"/>
+<text x="244.0" y="804.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">beautifulsoup4</text>
+<text x="266.8" y="804.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">120 page/s</text>
+<text x="80.0" y="860.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="23" fill="#f2f2f2" font-weight="600">32-128KiB</text>
+<line x1="256.0" y1="894.0" x2="256.0" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="256.0" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">0</text>
+<line x1="373.5" y1="894.0" x2="373.5" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="373.5" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">2k</text>
+<line x1="491.0" y1="894.0" x2="491.0" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="491.0" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">4k</text>
+<line x1="608.5" y1="894.0" x2="608.5" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="608.5" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">6k</text>
+<line x1="726.0" y1="894.0" x2="726.0" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="726.0" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">8k</text>
+<line x1="256.0" y1="1130.0" x2="726.0" y2="1130.0" stroke="#3a3a3a" stroke-width="1.5"/>
+<rect x="256.0" y="906.5" width="425.1" height="19" fill="#3b82f6"/>
+<text x="244.0" y="922.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel</text>
+<text x="689.1" y="922.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">7.2k page/s</text>
+<rect x="256.0" y="938.5" width="195.4" height="19" fill="#3b82f6"/>
+<text x="244.0" y="954.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel (spec)</text>
+<text x="459.4" y="954.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">3.3k page/s</text>
+<rect x="256.0" y="970.5" width="135.3" height="19" fill="#454545"/>
+<text x="244.0" y="986.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">selectolax</text>
+<text x="399.3" y="986.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">2.3k page/s</text>
+<rect x="256.0" y="1002.5" width="72.7" height="19" fill="#454545"/>
+<text x="244.0" y="1018.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">dom_query</text>
+<text x="336.7" y="1018.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">1.2k page/s</text>
+<rect x="256.0" y="1034.5" width="71.0" height="19" fill="#454545"/>
+<text x="244.0" y="1050.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">scraper</text>
+<text x="335.0" y="1050.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">1.2k page/s</text>
+<rect x="256.0" y="1066.5" width="43.2" height="19" fill="#454545"/>
+<text x="244.0" y="1082.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">parsel</text>
+<text x="307.2" y="1082.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">736 page/s</text>
+<rect x="256.0" y="1098.5" width="2.8" height="19" fill="#454545"/>
+<text x="244.0" y="1114.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">beautifulsoup4</text>
+<text x="266.8" y="1114.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">47.5 page/s</text>
+<text x="990.0" y="240.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="23" fill="#f2f2f2" font-weight="600">128-512KiB</text>
+<line x1="1166.0" y1="274.0" x2="1166.0" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1166.0" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">0</text>
+<line x1="1283.5" y1="274.0" x2="1283.5" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1283.5" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">1k</text>
+<line x1="1401.0" y1="274.0" x2="1401.0" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1401.0" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">2k</text>
+<line x1="1518.5" y1="274.0" x2="1518.5" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1518.5" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">3k</text>
+<line x1="1636.0" y1="274.0" x2="1636.0" y2="510.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1636.0" y="534.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">4k</text>
+<line x1="1166.0" y1="510.0" x2="1636.0" y2="510.0" stroke="#3a3a3a" stroke-width="1.5"/>
+<rect x="1166.0" y="286.5" width="395.6" height="19" fill="#3b82f6"/>
+<text x="1154.0" y="302.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel</text>
+<text x="1569.6" y="302.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">3.4k page/s</text>
+<rect x="1166.0" y="318.5" width="168.3" height="19" fill="#3b82f6"/>
+<text x="1154.0" y="334.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel (spec)</text>
+<text x="1342.3" y="334.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">1.4k page/s</text>
+<rect x="1166.0" y="350.5" width="119.0" height="19" fill="#454545"/>
+<text x="1154.0" y="366.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">selectolax</text>
+<text x="1293.0" y="366.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">1k page/s</text>
+<rect x="1166.0" y="382.5" width="67.1" height="19" fill="#454545"/>
+<text x="1154.0" y="398.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">dom_query</text>
+<text x="1241.1" y="398.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">571 page/s</text>
+<rect x="1166.0" y="414.5" width="65.1" height="19" fill="#454545"/>
+<text x="1154.0" y="430.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">scraper</text>
+<text x="1239.1" y="430.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">554 page/s</text>
+<rect x="1166.0" y="446.5" width="38.6" height="19" fill="#454545"/>
+<text x="1154.0" y="462.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">parsel</text>
+<text x="1212.6" y="462.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">328 page/s</text>
+<rect x="1166.0" y="478.5" width="2.8" height="19" fill="#454545"/>
+<text x="1154.0" y="494.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">beautifulsoup4</text>
+<text x="1176.8" y="494.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">24.2 page/s</text>
+<text x="990.0" y="550.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="23" fill="#f2f2f2" font-weight="600">512KiB-2MiB</text>
+<line x1="1166.0" y1="584.0" x2="1166.0" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1166.0" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">0</text>
+<line x1="1283.5" y1="584.0" x2="1283.5" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1283.5" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">1k</text>
+<line x1="1401.0" y1="584.0" x2="1401.0" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1401.0" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">2k</text>
+<line x1="1518.5" y1="584.0" x2="1518.5" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1518.5" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">3k</text>
+<line x1="1636.0" y1="584.0" x2="1636.0" y2="820.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1636.0" y="844.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">4k</text>
+<line x1="1166.0" y1="820.0" x2="1636.0" y2="820.0" stroke="#3a3a3a" stroke-width="1.5"/>
+<rect x="1166.0" y="596.5" width="358.0" height="19" fill="#3b82f6"/>
+<text x="1154.0" y="612.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel</text>
+<text x="1532.0" y="612.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">3k page/s</text>
+<rect x="1166.0" y="628.5" width="130.2" height="19" fill="#3b82f6"/>
+<text x="1154.0" y="644.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel (spec)</text>
+<text x="1304.2" y="644.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">1.1k page/s</text>
+<rect x="1166.0" y="660.5" width="84.5" height="19" fill="#454545"/>
+<text x="1154.0" y="676.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">selectolax</text>
+<text x="1258.5" y="676.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">719 page/s</text>
+<rect x="1166.0" y="692.5" width="52.6" height="19" fill="#454545"/>
+<text x="1154.0" y="708.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">dom_query</text>
+<text x="1226.6" y="708.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">448 page/s</text>
+<rect x="1166.0" y="724.5" width="51.1" height="19" fill="#454545"/>
+<text x="1154.0" y="740.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">scraper</text>
+<text x="1225.1" y="740.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">435 page/s</text>
+<rect x="1166.0" y="756.5" width="34.4" height="19" fill="#454545"/>
+<text x="1154.0" y="772.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">parsel</text>
+<text x="1208.4" y="772.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">293 page/s</text>
+<rect x="1166.0" y="788.5" width="2.8" height="19" fill="#454545"/>
+<text x="1154.0" y="804.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">beautifulsoup4</text>
+<text x="1176.8" y="804.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">24.3 page/s</text>
+<text x="990.0" y="860.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="23" fill="#f2f2f2" font-weight="600">&gt;2MiB</text>
+<line x1="1166.0" y1="894.0" x2="1166.0" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1166.0" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">0</text>
+<line x1="1322.7" y1="894.0" x2="1322.7" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1322.7" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">100</text>
+<line x1="1479.3" y1="894.0" x2="1479.3" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1479.3" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">200</text>
+<line x1="1636.0" y1="894.0" x2="1636.0" y2="1130.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1636.0" y="1154.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="15" fill="#8b8b8b" text-anchor="middle">300</text>
+<line x1="1166.0" y1="1130.0" x2="1636.0" y2="1130.0" stroke="#3a3a3a" stroke-width="1.5"/>
+<rect x="1166.0" y="906.5" width="420.2" height="19" fill="#3b82f6"/>
+<text x="1154.0" y="922.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel</text>
+<text x="1594.2" y="922.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">268 page/s</text>
+<rect x="1166.0" y="938.5" width="133.6" height="19" fill="#3b82f6"/>
+<text x="1154.0" y="954.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">simdsel (spec)</text>
+<text x="1307.6" y="954.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2">85.3 page/s</text>
+<rect x="1166.0" y="970.5" width="95.1" height="19" fill="#454545"/>
+<text x="1154.0" y="986.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">selectolax</text>
+<text x="1269.1" y="986.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">60.7 page/s</text>
+<rect x="1166.0" y="1002.5" width="58.3" height="19" fill="#454545"/>
+<text x="1154.0" y="1018.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">dom_query</text>
+<text x="1232.3" y="1018.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">37.2 page/s</text>
+<rect x="1166.0" y="1034.5" width="57.6" height="19" fill="#454545"/>
+<text x="1154.0" y="1050.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">scraper</text>
+<text x="1231.6" y="1050.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">36.8 page/s</text>
+<rect x="1166.0" y="1066.5" width="20.7" height="19" fill="#454545"/>
+<text x="1154.0" y="1082.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">parsel</text>
+<text x="1194.7" y="1082.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">13.2 page/s</text>
+<rect x="1166.0" y="1098.5" width="2.2" height="19" fill="#454545"/>
+<text x="1154.0" y="1114.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#f2f2f2" text-anchor="end">beautifulsoup4</text>
+<text x="1176.2" y="1114.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="16" fill="#c9c9c9">1.37 page/s</text>
+<text x="950.0" y="1246.0" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="21" fill="#c9c9c9" text-anchor="middle">Extraction speed (pages/s per core, higher is better)</text>
+</svg>
