@@ -9,7 +9,7 @@ use crate::css::ast::SelectorList;
 use crate::css::cache::QueryCache;
 use crate::css::parser::parse_selector;
 use crate::css::select::{Count, Projection, extract, select_as_within_cache, select_within_cache};
-use crate::error::Error;
+use crate::error::Result;
 use crate::record::{MatchKind, MatchRecord};
 
 /// An owned document or a result set, like parsel's `Selector`/`SelectorList`.
@@ -44,18 +44,18 @@ impl<'a> Selector<'a> {
     }
 
     /// Parses `input` as bytes (parsel's `body=`) and selects from its root.
-    pub fn from_bytes(input: &'a [u8]) -> Result<Self, Error> {
+    pub fn from_bytes(input: &'a [u8]) -> Result<Self> {
         Ok(Self::new(Document::parse(input)?))
     }
 
     /// [`Self::from_bytes`] with explicit [`ParseOptions`].
-    pub fn from_bytes_with(input: &'a [u8], options: ParseOptions) -> Result<Self, Error> {
+    pub fn from_bytes_with(input: &'a [u8], options: ParseOptions) -> Result<Self> {
         Ok(Self::new(Document::parse_with(input, options)?))
     }
 
     /// Parses already decoded `text` (parsel's `text=`) and selects from its
     /// root.  No BOM or `<meta charset>` sniffing: a `&str` is already text.
-    pub fn from_text(text: &'a str) -> Result<Self, Error> {
+    pub fn from_text(text: &'a str) -> Result<Self> {
         Self::from_bytes_with(
             text.as_bytes(),
             ParseOptions {
@@ -107,7 +107,7 @@ impl<'a> Selector<'a> {
     /// Per-thread compiled-selector intern table: `css*` takes selector text on
     /// every call, and parsing it costs ~11% of a warm query.  Bounded, so a
     /// query-generating crawler clears it instead of growing it.
-    fn compiled(query: &str) -> Result<Rc<SelectorList>, Error> {
+    fn compiled(query: &str) -> Result<Rc<SelectorList>> {
         use std::cell::RefCell;
         use std::collections::HashMap;
 
@@ -132,7 +132,7 @@ impl<'a> Selector<'a> {
     }
 
     /// Compiles and evaluates a CSS selector inside the current roots.
-    pub fn css(&self, query: &str) -> Result<Self, Error> {
+    pub fn css(&self, query: &str) -> Result<Self> {
         let parsed = Self::compiled(query)?;
         let records = select_within_cache(&self.doc, &parsed, &self.roots, &self.cache)?;
         let roots = records.iter().map(|record| record.node).collect::<Vec<_>>();
@@ -146,13 +146,13 @@ impl<'a> Selector<'a> {
 
     /// Evaluates CSS and projects the result: `Count` avoids materializing
     /// records, `Texts` borrows from the document input.
-    pub fn css_as<'b, P: Projection>(&'b self, query: &str) -> Result<P::Output<'b>, Error> {
+    pub fn css_as<'b, P: Projection>(&'b self, query: &str) -> Result<P::Output<'b>> {
         let parsed = Self::compiled(query)?;
         select_as_within_cache::<P>(&self.doc, &parsed, &self.roots, &self.cache)
     }
 
     /// Counts CSS matches without materializing records.
-    pub fn css_count(&self, query: &str) -> Result<usize, Error> {
+    pub fn css_count(&self, query: &str) -> Result<usize> {
         self.css_as::<Count>(query)
     }
 
@@ -204,18 +204,18 @@ impl Selector<'static> {
     /// let sel = Selector::from_vec(body)?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn from_vec(input: Vec<u8>) -> Result<Self, Error> {
+    pub fn from_vec(input: Vec<u8>) -> Result<Self> {
         Ok(Self::new(Document::parse_owned(input)?))
     }
 
     /// [`Self::from_vec`] with explicit [`ParseOptions`].
-    pub fn from_vec_with(input: Vec<u8>, options: ParseOptions) -> Result<Self, Error> {
+    pub fn from_vec_with(input: Vec<u8>, options: ParseOptions) -> Result<Self> {
         Ok(Self::new(Document::parse_owned_with(input, options)?))
     }
 
     /// [`Selector::from_text`] for an owned string: it neither borrows nor
     /// copies, and no charset sniffing runs.
-    pub fn from_string(text: String) -> Result<Self, Error> {
+    pub fn from_string(text: String) -> Result<Self> {
         Self::from_vec_with(
             text.into_bytes(),
             ParseOptions {
@@ -240,7 +240,7 @@ pub fn select_query_within_cache(
     roots: &[NodeId],
     cache: &QueryCache,
     query: &str,
-) -> Result<Vec<MatchRecord>, Error> {
+) -> Result<Vec<MatchRecord>> {
     let parsed = Selector::compiled(query)?;
     select_within_cache(doc, &parsed, roots, cache)
 }
