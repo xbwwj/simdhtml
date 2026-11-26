@@ -22,7 +22,7 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 
 [![Common Crawl](./figures/cc.svg)](./figures/cc.svg)
 
-[![Common Crawl by size](./figures/cc.svg)](./figures/cc-size.svg)
+[![Common Crawl by size](./figures/cc-size.svg)](./figures/cc-size.svg)
 
 [![SWDE](./figures/swde.svg)](./figures/swde.svg)
 
