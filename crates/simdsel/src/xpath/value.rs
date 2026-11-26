@@ -114,7 +114,11 @@ impl NodeRef {
         match self.kind {
             RefKind::Element => {
                 let tag = doc.node(self.id).tag_token();
-                if tag == TagId::NONE { "" } else { doc.tag_name(tag) }
+                if tag == TagId::NONE {
+                    ""
+                } else {
+                    doc.tag_name(tag)
+                }
             }
             RefKind::Attribute => std::str::from_utf8(attr_name(doc, self.attr))
                 .expect("Document input is valid UTF-8"),

@@ -689,7 +689,9 @@ impl<'a> Eval<'a> {
             Pseudo::Root => {
                 self.filter(mask, |id| Some(id) == self.root_element);
             }
-            Pseudo::Empty => self.filter(mask, |id| self.doc.node(id).first_child() == NodeId::NONE),
+            Pseudo::Empty => {
+                self.filter(mask, |id| self.doc.node(id).first_child() == NodeId::NONE)
+            }
             Pseudo::Scope => {
                 let scope = self.scope_mask().clone();
                 mask.and_assign(&scope);
