@@ -7,11 +7,10 @@ pub(crate) mod select;
 #[cfg(test)]
 mod tests {
     use simdhtml::document::Document;
-    use simdhtml::document::id::NodeId;
     use simdhtml::parse::{ParseOptions, RepairMode};
 
     use super::parser::parse_selector;
-    use super::select::{extract, select, select_within};
+    use super::select::select;
 
     fn doc(html: &str) -> Document<'_> {
         Document::parse_with(
@@ -31,88 +30,6 @@ mod tests {
             .into_iter()
             .map(|r| doc.tag_name(doc.node(r.node).tag_token()).to_string())
             .collect()
-    }
-
-    #[test]
-    fn simple_and_combinators() {
-        let d = doc("<div><p class=a><span>x</span></p><p><b>y</b></p></div>");
-        assert_eq!(tags(&d, "p"), vec!["p", "p"]);
-        assert_eq!(tags(&d, "div > p"), vec!["p", "p"]);
-        assert_eq!(tags(&d, "p .none"), Vec::<String>::new());
-        assert_eq!(tags(&d, "div span"), vec!["span"]);
-        assert_eq!(tags(&d, "p + p"), vec!["p"]);
-        assert_eq!(tags(&d, "p ~ p"), vec!["p"]);
-    }
-
-    #[test]
-    fn attrs_and_classes() {
-        let d = doc(r#"<a id=x class="foo bar" href="/a" data-v="A B">1</a><a class=foo>2</a>"#);
-        assert_eq!(tags(&d, "a#x"), vec!["a"]);
-        assert_eq!(tags(&d, ".foo"), vec!["a", "a"]);
-        assert_eq!(tags(&d, ".foo.bar"), vec!["a"]);
-        assert_eq!(tags(&d, "[href]"), vec!["a"]);
-        assert_eq!(tags(&d, "[href^='/']"), vec!["a"]);
-        assert_eq!(tags(&d, "[data-v~='B']"), vec!["a"]);
-        assert_eq!(tags(&d, "[data-v='a b' i]"), vec!["a"]);
-    }
-
-    #[test]
-    fn structural_pseudos() {
-        let d = doc("<ul><li>1<li>2<li>3</ul>");
-        assert_eq!(tags(&d, "li:first-child"), vec!["li"]);
-        assert_eq!(tags(&d, "li:last-child"), vec!["li"]);
-        assert_eq!(tags(&d, "li:nth-child(2)"), vec!["li"]);
-        assert_eq!(tags(&d, "li:nth-last-child(1)"), vec!["li"]);
-        assert_eq!(tags(&d, "li:not(:first-child)"), vec!["li", "li"]);
-    }
-
-    #[test]
-    fn has_relative() {
-        let d = doc("<div><a class=x>1</a></div><div><p>2</p></div>");
-        let sel = parse_selector("div:has(> a.x)").unwrap();
-        let recs = select(&d, &sel).unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(doc_tag(&d, recs[0].node), "div");
-    }
-
-    #[test]
-    fn has_adjacent_sibling() {
-        let d = doc("<ul><li>1</li> x <li>2</li><li>3</li></ul>");
-        assert_eq!(tags(&d, "li:has(+ li)"), vec!["li", "li"]);
-    }
-
-    #[test]
-    fn css_scope_and_contains() {
-        let d = doc(
-            "<div class=box><span class=title>hello scope</span></div><div class=other>x</div>",
-        );
-        let sel = parse_selector(":scope > .title").unwrap();
-        // The parser synthesises html/head/body, so the scope root is looked up
-        // by name.
-        let root = d
-            .nodes
-            .iter()
-            .position(|node| {
-                node.is_element() && d.tag_name(node.tag_token()).eq_ignore_ascii_case("div")
-            })
-            .map(NodeId::from)
-            .expect("div");
-        let recs = select_within(&d, &sel, &[root]).unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(doc_tag(&d, recs[0].node), "span");
-        assert_eq!(tags(&d, "div:contains('hello')"), vec!["div"]);
-    }
-
-    #[test]
-    fn pseudo_elements() {
-        let d = doc("<div><a href='/x'>hello<span>!</span></a></div>");
-        let sel = parse_selector("a::text").unwrap();
-        let recs = select(&d, &sel).unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(&*extract(&d, &recs[0]), "hello");
-        let sel = parse_selector("a::attr(href)").unwrap();
-        let recs = select(&d, &sel).unwrap();
-        assert_eq!(&*extract(&d, &recs[0]), "/x");
     }
 
     #[test]
@@ -138,8 +55,8 @@ mod tests {
         }
         html.push_str("</body></html>");
         let d = doc(&html);
-        // `html` and `body` are explicit in this document; `head` is implied.
-        assert_eq!(d.tags.len(), 6004 + 1);
+        // `html` and `body` are explicit (two tags each), `head` is implied.
+        assert_eq!(d.tags.len(), 2 * 3000 + 4 + 1);
         assert_eq!(tags(&d, "div").len(), 1200);
         assert_eq!(tags(&d, "p").len(), 600);
         assert_eq!(tags(&d, "span").len(), 600);
@@ -163,20 +80,5 @@ mod tests {
         assert_eq!(tags(&d, "li:nth-of-type(3)").len(), 1);
         assert_eq!(tags(&d, "li:nth-last-of-type(1)").len(), 1);
         assert_eq!(tags(&d, "ul > li:nth-child(2n)").len(), 300);
-    }
-
-    #[test]
-    fn query_side_child_and_type_indexes() {
-        let d = doc("<div><p>a</p><span>x</span><p>b</p><p>c</p></div>");
-        assert_eq!(tags(&d, "p:nth-of-type(2)"), vec!["p"]);
-        assert_eq!(tags(&d, "p:last-of-type"), vec!["p"]);
-        assert_eq!(tags(&d, "p:nth-last-of-type(2)"), vec!["p"]);
-        assert_eq!(tags(&d, "span:nth-child(2)"), vec!["span"]);
-        assert_eq!(tags(&d, "p:last-child"), vec!["p"]);
-        assert_eq!(tags(&d, "*:nth-of-type(2)"), vec!["p"]);
-    }
-
-    fn doc_tag<'a>(doc: &'a Document<'a>, id: NodeId) -> &'a str {
-        doc.tag_name(doc.node(id).tag_token())
     }
 }

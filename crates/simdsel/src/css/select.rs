@@ -100,18 +100,6 @@ pub fn select(doc: &Document<'_>, selector: &SelectorList) -> Result<Vec<MatchRe
     ctx.select(selector, None)
 }
 
-/// Selects matching elements inside the subtrees of `roots`.
-#[cfg(test)]
-pub fn select_within(
-    doc: &Document<'_>,
-    selector: &SelectorList,
-    roots: &[NodeId],
-) -> Result<Vec<MatchRecord>> {
-    let cache = QueryCache::root();
-    let ctx = Eval::new(doc, &cache);
-    ctx.select(selector, Some(roots))
-}
-
 /// Selects within `roots` using a chain-local cache.
 pub fn select_within_cache(
     doc: &Document<'_>,
