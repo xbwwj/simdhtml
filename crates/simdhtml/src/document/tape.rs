@@ -7,9 +7,6 @@ use super::node::{Node, NodeKind};
 /// Set on text nodes whose bytes came from rawtext/RCDATA.
 pub(crate) const RAW_TEXT_BIT: u8 = 0b100;
 
-/// Set on text nodes whose data needs input-stream newline preprocessing.
-pub(crate) const NORMALIZE_NEWLINES_BIT: u8 = 0b1000_0000;
-
 /// Set on [`NodeKind::Comment`] nodes that are doctypes.
 pub(crate) const DOCTYPE_BIT: u8 = 0b0100_0000;
 
@@ -59,18 +56,17 @@ impl NodeTape {
             init.kind.bits()
                 | if init.raw_text { RAW_TEXT_BIT } else { 0 }
                 | if init.doctype { DOCTYPE_BIT } else { 0 }
-                | if init.normalize_newlines {
-                    NORMALIZE_NEWLINES_BIT
-                } else {
-                    0
-                }
                 | ((init.ns.bits() << NS_SHIFT) & NS_MASK),
         );
         self.record.push(NodeRecord {
             parent: init.parent,
-            first_child: init.first_child,
-            next_sibling: init.next_sibling,
-            subtree_end: init.subtree_end,
+            first_child: NodeId::NONE,
+            next_sibling: NodeId::NONE,
+            subtree_end: if matches!(init.kind, NodeKind::Text | NodeKind::Comment) {
+                NodeId::new(id.get() + 1)
+            } else {
+                NodeId::NONE
+            },
             span: init.span,
             tag_token: init.tag_token,
             outer_end: init.outer_end,
@@ -132,19 +128,73 @@ pub struct NodeRecord {
 
 /// Everything needed to append one node; lives on the builder stack only.
 pub(crate) struct NodeRecordInit {
-    pub kind: NodeKind,
-    pub parent: NodeId,
-    pub first_child: NodeId,
-    pub next_sibling: NodeId,
-    pub subtree_end: NodeId,
-    pub span: Range<u32>,
-    pub tag_token: TagId,
-    pub outer_end: u32,
-    pub raw_text: bool,
+    kind: NodeKind,
+    parent: NodeId,
+    span: Range<u32>,
+    tag_token: TagId,
+    outer_end: u32,
+    raw_text: bool,
     /// Set on [`NodeKind::Comment`] nodes that came from a doctype.
-    pub doctype: bool,
-    /// Apply newline preprocessing to this text node's data.
-    pub normalize_newlines: bool,
+    doctype: bool,
     /// Element namespace.
-    pub ns: Namespace,
+    ns: Namespace,
+}
+
+impl NodeRecordInit {
+    pub(crate) fn document(input_len: u32) -> Self {
+        Self {
+            kind: NodeKind::Document,
+            ns: Namespace::HTML,
+            parent: NodeId::NONE,
+            span: 0..0,
+            tag_token: TagId::NONE,
+            outer_end: input_len,
+            raw_text: false,
+            doctype: false,
+        }
+    }
+
+    pub(crate) fn element(
+        span: Range<u32>,
+        tag_token: TagId,
+        ns: Namespace,
+        parent: NodeId,
+    ) -> Self {
+        Self {
+            kind: NodeKind::Element,
+            ns,
+            parent,
+            span,
+            tag_token,
+            outer_end: 0,
+            raw_text: false,
+            doctype: false,
+        }
+    }
+
+    pub(crate) fn text(span: Range<u32>, parent: NodeId, raw_text: bool) -> Self {
+        Self {
+            kind: NodeKind::Text,
+            ns: Namespace::HTML,
+            parent,
+            outer_end: span.end,
+            span,
+            tag_token: TagId::NONE,
+            raw_text,
+            doctype: false,
+        }
+    }
+
+    pub(crate) fn comment(span: Range<u32>, parent: NodeId, doctype: bool) -> Self {
+        Self {
+            kind: NodeKind::Comment,
+            ns: Namespace::HTML,
+            parent,
+            outer_end: span.end,
+            span,
+            tag_token: TagId::NONE,
+            raw_text: false,
+            doctype,
+        }
+    }
 }

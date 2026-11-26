@@ -5,7 +5,6 @@ use crate::document::attr::AttrTable;
 use crate::document::flags::{DiagnosticKind, DocumentFlags};
 use crate::document::id::{NodeId, TagId};
 use crate::document::namespace::Namespace;
-use crate::document::node::NodeKind;
 use crate::document::tag::TagTable;
 use crate::document::tape::{NodeRecordInit, NodeTape};
 use crate::markup::MarkupFlags;
@@ -403,20 +402,7 @@ struct TreeBuilder {
 impl TreeBuilder {
     fn new(input_len: u32, node_capacity: usize, tag_count: usize) -> Self {
         let mut nodes = NodeTape::with_capacity(node_capacity);
-        nodes.push(NodeRecordInit {
-            kind: NodeKind::Document,
-            ns: Namespace::HTML,
-            parent: NodeId::NONE,
-            first_child: NodeId::NONE,
-            next_sibling: NodeId::NONE,
-            subtree_end: NodeId::NONE,
-            span: 0..0,
-            tag_token: TagId::NONE,
-            outer_end: input_len,
-            raw_text: false,
-            doctype: false,
-            normalize_newlines: false,
-        });
+        nodes.push(NodeRecordInit::document(input_len));
         let mut stack = Vec::with_capacity(64);
         stack.push(NodeId::ROOT);
         // Only open elements need a "last child" cursor.  Keeping these
@@ -484,20 +470,9 @@ impl TreeBuilder {
 
     fn insert_element(&mut self, tag_token: TagId, span: Range<u32>, ns: Namespace) -> NodeId {
         let parent = *self.stack.last().expect("root is always open");
-        let id = self.nodes.push(NodeRecordInit {
-            kind: NodeKind::Element,
-            ns,
-            parent,
-            first_child: NodeId::NONE,
-            next_sibling: NodeId::NONE,
-            subtree_end: NodeId::NONE,
-            span,
-            tag_token,
-            outer_end: 0,
-            raw_text: false,
-            doctype: false,
-            normalize_newlines: false,
-        });
+        let id = self
+            .nodes
+            .push(NodeRecordInit::element(span, tag_token, ns, parent));
         self.append_child(parent, id);
         self.stack.push(id);
         self.last_child.push(NodeId::NONE);
@@ -507,44 +482,18 @@ impl TreeBuilder {
     /// Appends a comment or doctype node at the current position.
     fn insert_comment(&mut self, span: Range<u32>, is_doctype: bool) {
         let parent = *self.stack.last().expect("root is always open");
-        let id = NodeId::new(self.nodes.len() as u32);
-        self.nodes.push(NodeRecordInit {
-            kind: NodeKind::Comment,
-            doctype: is_doctype,
-            normalize_newlines: false,
-            ns: Namespace::HTML,
-            parent,
-            first_child: NodeId::NONE,
-            next_sibling: NodeId::NONE,
-            subtree_end: NodeId::new(id.get() + 1),
-            span: span.clone(),
-            tag_token: TagId::NONE,
-            outer_end: span.end,
-            raw_text: false,
-        });
+        let id = self
+            .nodes
+            .push(NodeRecordInit::comment(span, parent, is_doctype));
         self.append_child(parent, id);
     }
 
     /// Appends a text node.
     fn insert_characters(&mut self, run: TextRun) {
         let parent = *self.stack.last().expect("root is always open");
-        let id = NodeId::new(self.nodes.len() as u32);
-        let span = run.span;
-        let raw = run.raw_text;
-        self.nodes.push(NodeRecordInit {
-            kind: NodeKind::Text,
-            ns: Namespace::HTML,
-            parent,
-            first_child: NodeId::NONE,
-            next_sibling: NodeId::NONE,
-            subtree_end: NodeId::new(id.get() + 1),
-            span: span.clone(),
-            tag_token: TagId::NONE,
-            outer_end: span.end,
-            raw_text: raw,
-            doctype: false,
-            normalize_newlines: false,
-        });
+        let id = self
+            .nodes
+            .push(NodeRecordInit::text(run.span, parent, run.raw_text));
         self.append_child(parent, id);
     }
 
