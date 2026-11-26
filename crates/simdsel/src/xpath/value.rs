@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use simdhtml::document::Document;
 use simdhtml::document::id::{NO_ATTR, NodeId, TagId};
 
-use crate::dom::{attr_name, attr_value};
+use crate::access::{attr_name, attr_value};
 
 /// What a [`NodeRef`] points at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,7 +94,7 @@ impl NodeRef {
                     Cow::Owned(out)
                 }
             },
-            RefKind::Element => Cow::Owned(crate::dom::text_content(doc, self.id)),
+            RefKind::Element => Cow::Owned(crate::access::text_content(doc, self.id)),
             // The root node's string-value is that of its element child: text
             // before/after the root element is not in the XPath data model.
             RefKind::Document => {
@@ -102,7 +102,7 @@ impl NodeRef {
                 if root == NodeId::NONE {
                     Cow::Borrowed("")
                 } else {
-                    Cow::Owned(crate::dom::text_content(doc, root))
+                    Cow::Owned(crate::access::text_content(doc, root))
                 }
             }
         }

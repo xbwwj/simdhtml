@@ -91,9 +91,9 @@
 //!
 //! [compatibility.md]: https://github.com/xbwwj/simdhtml/blob/main/crates/simdsel-py/docs/compatibility.md
 
+mod access;
 mod bitset;
 mod css;
-mod dom;
 mod record;
 
 pub mod error;

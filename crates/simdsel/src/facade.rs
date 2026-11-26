@@ -382,7 +382,7 @@ fn format_number(value: f64) -> String {
 /// node for text records, nothing for attributes.
 pub(crate) fn record_text<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Option<Cow<'a, str>> {
     match record.kind {
-        MatchKind::Element => Some(Cow::Owned(crate::dom::text_content(doc, record.node))),
+        MatchKind::Element => Some(Cow::Owned(crate::access::text_content(doc, record.node))),
         MatchKind::Text => Some(doc.text(record.node)),
         MatchKind::Attr => None,
     }
@@ -400,8 +400,8 @@ pub(crate) fn record_attrib(
     }
     let mut out = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for attr in crate::dom::attr_range(doc, record.node) {
-        let name = crate::dom::attr_name(doc, attr);
+    for attr in crate::access::attr_range(doc, record.node) {
+        let name = crate::access::attr_name(doc, attr);
         if seen
             .iter()
             .any(|s| s.eq_ignore_ascii_case(std::str::from_utf8(name).unwrap_or("")))
@@ -410,7 +410,7 @@ pub(crate) fn record_attrib(
         }
         let name = String::from_utf8_lossy(name).to_ascii_lowercase();
         seen.push(name.clone());
-        out.push((name, crate::dom::attr_value(doc, attr).into_owned()));
+        out.push((name, crate::access::attr_value(doc, attr).into_owned()));
     }
     Some(out)
 }

@@ -412,7 +412,7 @@ impl<'a> Eval<'a> {
             &mut mask,
         );
         for &(_, node) in self.doc.extra_tag_elements() {
-            if crate::dom::find_attr_bytes(self.doc, node, name.as_bytes()).is_some() {
+            if crate::access::find_attr_bytes(self.doc, node, name.as_bytes()).is_some() {
                 mask.set(node);
             }
         }
@@ -516,12 +516,12 @@ impl<'a> Eval<'a> {
         }
 
         if let Some(id_value) = &compound.id {
-            let Some(attr) = crate::dom::find_attr(self.doc, id, "id") else {
+            let Some(attr) = crate::access::find_attr(self.doc, id, "id") else {
                 return false;
             };
-            let raw = crate::dom::attr_value_raw(self.doc, attr);
+            let raw = crate::access::attr_value_raw(self.doc, attr);
             if raw.contains(&b'&') {
-                if crate::dom::attr_value(self.doc, attr).as_ref() != id_value.as_str() {
+                if crate::access::attr_value(self.doc, attr).as_ref() != id_value.as_str() {
                     return false;
                 }
             } else if raw != id_value.as_bytes() {
@@ -530,13 +530,13 @@ impl<'a> Eval<'a> {
         }
 
         if !compound.classes.is_empty() {
-            let Some(attr) = crate::dom::find_attr(self.doc, id, "class") else {
+            let Some(attr) = crate::access::find_attr(self.doc, id, "class") else {
                 return false;
             };
-            let raw = crate::dom::attr_value_raw(self.doc, attr);
+            let raw = crate::access::attr_value_raw(self.doc, attr);
             if raw.contains(&b'&') {
                 // Rare: a class value with character references.
-                let value = crate::dom::attr_value(self.doc, attr);
+                let value = crate::access::attr_value(self.doc, attr);
                 for class in &compound.classes {
                     if !value.split_ascii_whitespace().any(|c| c == class) {
                         return false;
@@ -573,7 +573,7 @@ impl<'a> Eval<'a> {
     }
 
     fn has_attr(&self, id: NodeId, name: &str) -> bool {
-        crate::dom::find_attr(self.doc, id, name).is_some()
+        crate::access::find_attr(self.doc, id, name).is_some()
     }
 
     /// `:link`: `a`, `area` or `link` carrying an `href`.
@@ -636,9 +636,9 @@ impl<'a> Eval<'a> {
         while current != NodeId::NONE {
             let node = self.doc.node(current);
             if node.is_element()
-                && let Some(attr) = crate::dom::find_attr(self.doc, current, "lang")
+                && let Some(attr) = crate::access::find_attr(self.doc, current, "lang")
             {
-                let actual = crate::dom::attr_value(self.doc, attr);
+                let actual = crate::access::attr_value(self.doc, attr);
                 let actual = actual.trim().to_ascii_lowercase();
                 return actual == value
                     || (actual.len() > value.len()
@@ -698,7 +698,7 @@ impl<'a> Eval<'a> {
             }
             Pseudo::Contains(text) => {
                 self.filter(mask, |id| {
-                    crate::dom::text_content(self.doc, id).contains(text)
+                    crate::access::text_content(self.doc, id).contains(text)
                 });
             }
             Pseudo::OnlyOfType => {
@@ -1022,7 +1022,7 @@ impl<'a> Eval<'a> {
                 }
             }
             PseudoElement::Attr(name) => {
-                if let Some(attr) = crate::dom::find_attr(self.doc, record.node, name) {
+                if let Some(attr) = crate::access::find_attr(self.doc, record.node, name) {
                     let start = self.doc.attrs.value_start[attr as usize];
                     let span = start..start + self.doc.attrs.value_len[attr as usize];
                     out.push(MatchRecord {
@@ -1481,7 +1481,7 @@ pub(super) fn common_pseudo(selector: &SelectorList) -> Option<PseudoElement> {
 
 #[inline]
 fn matches_attr(doc: &Document<'_>, node: NodeId, pred: &AttrPred) -> bool {
-    let Some(attr) = crate::dom::find_attr(doc, node, &pred.name) else {
+    let Some(attr) = crate::access::find_attr(doc, node, &pred.name) else {
         return false;
     };
     // Presence needs no value, and a value without references needs no decoding,
@@ -1489,12 +1489,12 @@ fn matches_attr(doc: &Document<'_>, node: NodeId, pred: &AttrPred) -> bool {
     if pred.op == AttrOp::Exists {
         return true;
     }
-    let raw = crate::dom::attr_value_raw(doc, attr);
+    let raw = crate::access::attr_value_raw(doc, attr);
     if !raw.contains(&b'&') {
         let value = std::str::from_utf8(raw).expect("Document input is valid UTF-8");
         return matches_attr_value(value, pred);
     }
-    let value = crate::dom::attr_value(doc, attr);
+    let value = crate::access::attr_value(doc, attr);
     matches_attr_value(value.as_ref(), pred)
 }
 

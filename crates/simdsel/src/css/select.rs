@@ -81,11 +81,11 @@ impl Projection for Texts {
             .records_for(selector, &mask)
             .into_iter()
             .map(|record| match record.kind {
-                MatchKind::Element => Cow::Owned(crate::dom::text_content(doc, record.node)),
+                MatchKind::Element => Cow::Owned(crate::access::text_content(doc, record.node)),
                 MatchKind::Text => doc.text(record.node),
                 MatchKind::Attr => {
                     let span = record.attr.as_ref().expect("attr record");
-                    crate::dom::attr_value_span(doc, span)
+                    crate::access::attr_value_span(doc, span)
                 }
             })
             .collect())
@@ -126,13 +126,13 @@ pub fn select_as_within_cache<'a, P: Projection>(
 pub fn extract<'a>(doc: &'a Document<'_>, record: &MatchRecord) -> Cow<'a, str> {
     match record.kind {
         MatchKind::Element => {
-            let bytes = crate::dom::outer_html(doc, record.node);
+            let bytes = crate::access::outer_html(doc, record.node);
             Cow::Borrowed(std::str::from_utf8(bytes).expect("Document input is valid UTF-8"))
         }
         MatchKind::Text => doc.text(record.node),
         MatchKind::Attr => {
             let span = record.attr.as_ref().expect("attr record has a value span");
-            crate::dom::attr_value_span(doc, span)
+            crate::access::attr_value_span(doc, span)
         }
     }
 }
