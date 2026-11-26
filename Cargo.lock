@@ -1577,7 +1577,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "simdhtml"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "bitflags",
  "encoding_rs",
@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "simdhtml-bench"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "dom_query",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "simdhtml-data"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "httparse",
  "sha1_smol",
@@ -1615,7 +1615,7 @@ dependencies = [
 
 [[package]]
 name = "simdhtml-tests"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "simdhtml",
  "simdhtml-data",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "simdsel"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "rustc-hash",
  "simdhtml",
@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "simdsel-py"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "encoding_rs",
  "pyo3",
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
