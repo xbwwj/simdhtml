@@ -35,7 +35,7 @@ Parsing has been a huge bottleneck for large-scale web crawlers. simdhtml brings
 ### Python
 
 ```sh
-uv add simsel
+uv add simdsel
 ```
 
 ```python
